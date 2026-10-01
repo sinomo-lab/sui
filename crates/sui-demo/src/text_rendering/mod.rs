@@ -11,6 +11,7 @@ mod tests;
 
 use std::{cell::Cell, rc::Rc};
 
+use sui::Application;
 use sui::prelude::*;
 use sui::{
     FlexItem, TextRenderCoveragePolicy, TextRenderHinting, TextRenderMode, TextRenderPolicy,

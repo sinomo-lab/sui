@@ -315,7 +315,7 @@ fn toolbar(ctx: &StoryCtx) -> Vec<Section> {
         .theme(theme)
         .with_child(icon(IconGlyph::Undo, "Undo"))
         .with_child(icon(IconGlyph::Redo, "Redo"))
-        .with_child(Divider::vertical().theme(theme))
+        .with_child(Separator::vertical().theme(theme))
         .with_child(
             CommandGroup::horizontal("Zoom commands")
                 .theme(theme)
@@ -323,7 +323,7 @@ fn toolbar(ctx: &StoryCtx) -> Vec<Section> {
                 .with_child(icon(IconGlyph::FitView, "Fit canvas"))
                 .with_child(icon(IconGlyph::Add, "Zoom in")),
         )
-        .with_child(Divider::vertical().theme(theme))
+        .with_child(Separator::vertical().theme(theme))
         .with_child(Button::new("Share").theme(theme))
         .with_child(Button::primary("Publish").theme(theme));
     vec![

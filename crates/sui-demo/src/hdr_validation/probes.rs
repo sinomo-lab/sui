@@ -1,10 +1,11 @@
 //! Painted probes. Each draws known colors so the output's handling of
 //! them can be judged by eye and in a capture.
 
+use sui::diagnostics::fit_to_sdr;
 use sui::prelude::*;
 use sui::{
     Brush, ColorSpace, DisplayColorPrimaries, GradientStop, Rect, SemanticsNode, SemanticsRole,
-    SemanticsValue, TextStyle, WidgetId, fit_to_sdr, paint_text_line,
+    SemanticsValue, TextStyle, WidgetId, paint_text_line,
 };
 
 use super::live::{FollowedDiagnostics, HighlightFit, OutputSummary};

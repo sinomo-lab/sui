@@ -9,9 +9,12 @@ mod routes;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+use sui::Application;
+use sui::diagnostics::{CommandDispatchSample, window_command_dispatches_signal};
 use sui::{
-    CommandDelivery, CommandDispatchSample, CommandTarget, Signal, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowId, prelude::*, window_command_dispatches_signal,
+    CommandDelivery, CommandTarget, Signal, WidgetPodMutVisitor, WidgetPodVisitor, WindowId,
+    prelude::*,
 };
 
 use self::export::ExportState;

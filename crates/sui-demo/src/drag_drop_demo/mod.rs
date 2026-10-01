@@ -9,6 +9,8 @@ mod widgets;
 
 use std::{cell::Cell, rc::Rc};
 
+#[cfg(test)]
+use sui::Application;
 use sui::{
     DragDropScope, DragEvent, DragOutcome, DragPayload, DragPreview, DropEffect, DropEffects,
     DropHover, PointerButton, Signal, prelude::*,

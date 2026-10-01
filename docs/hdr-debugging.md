@@ -123,7 +123,7 @@ application through `TestApp`, and capture only after the runtime reaches idle:
 
 ```rust,no_run
 use sui::prelude::*;
-use sui::Error;
+use sui::{Application, WindowBuilder};
 use sui_render_wgpu::{
     DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest,
     DebugCaptureStage, DebugSdrVisualization,
@@ -173,11 +173,11 @@ wakes the widget, which collects it:
 
 ```rust,no_run
 use sui::prelude::*;
-use sui::{
+use sui::diagnostics::{
     DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
-    DebugCaptureTicket, PointerEventKind, WakeEvent, request_window_debug_capture,
-    take_window_debug_capture,
+    DebugCaptureTicket, request_window_debug_capture, take_window_debug_capture,
 };
+use sui::{PointerEventKind, WakeEvent};
 
 struct CaptureOnClick {
     ticket: Option<DebugCaptureTicket>,

@@ -17,9 +17,8 @@ the resulting domain values; widgets own the transient editing mechanics.
 | `DateTimeInput` | One `String` line | Suggested `YYYY-MM-DD HH:MM`; parsing and timezone policy are application-owned |
 | `TextArea` | Multiline `String` | Supports line breaks and optional submit-on-Enter behavior |
 | `TextSurface` | Multiline text/editor surface | Use for richer editor overlays, spans, and document-style behavior |
-| `NumberInput` / `SpinBox` | `f64` | Range, step, precision, keyboard editing, and steppers |
+| `NumberInput` | `f64` | Range, step, precision, keyboard editing, and steppers |
 
-`MultilineTextInput` is an alias of `TextArea`.
 
 The first constructor argument is the accessible name. Placeholder text is a
 visual editing hint; it is not a replacement for a durable name.

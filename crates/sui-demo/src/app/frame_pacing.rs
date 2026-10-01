@@ -1,9 +1,9 @@
 use super::*;
 use std::time::{Duration, Instant};
-use sui::{
-    FramePhase, PointerEvent, SceneStatisticsDetailMode, WindowColorManagementMode,
-    WindowDynamicRangeMode, WindowEvent, WindowPerformanceSnapshot, window_output_diagnostics,
+use sui::diagnostics::{
+    FramePhase, SceneStatisticsDetailMode, WindowPerformanceSnapshot, window_output_diagnostics,
 };
+use sui::{PointerEvent, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent};
 
 #[test]
 #[ignore = "diagnostic reproduction for drag-and-drop tab frame cadence"]
@@ -71,7 +71,7 @@ fn drag_drop_frame_pacing_benchmark() -> Result<()> {
             root.dispatch_event(Event::Pointer(down))?;
         }
         let mut frames = Vec::new();
-        let before = sui::window_performance_snapshot(window.id()).expect("frame");
+        let before = sui::diagnostics::window_performance_snapshot(window.id()).expect("frame");
         let start = Instant::now();
         for index in 0..180 {
             match phase {
@@ -99,7 +99,7 @@ fn drag_drop_frame_pacing_benchmark() -> Result<()> {
             if phase != "redraw" {
                 std::thread::sleep(Duration::from_millis(8));
             }
-            if let Some(frame) = sui::window_performance_snapshot(window.id())
+            if let Some(frame) = sui::diagnostics::window_performance_snapshot(window.id())
                 && frame.frame_index > before.frame_index
                 && frames
                     .last()
@@ -110,7 +110,7 @@ fn drag_drop_frame_pacing_benchmark() -> Result<()> {
                 frames.push(frame);
             }
         }
-        let last = sui::window_performance_snapshot(window.id()).expect("frame");
+        let last = sui::diagnostics::window_performance_snapshot(window.id()).expect("frame");
         println!(
             "DRAG_PACING phase={phase} elapsed={:?} frame_delta={} samples={} last_interval={:?} last_work_ms={:.3}",
             start.elapsed(),
@@ -165,7 +165,10 @@ fn picker_frame_pacing_vsync_hdr_benchmark() -> Result<()> {
         true,
     )?;
     let window = app.main_window()?;
-    sui::set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+    sui::diagnostics::set_window_scene_statistics_detail_mode(
+        window.id(),
+        SceneStatisticsDetailMode::Detailed,
+    );
     let initial = window.snapshot()?;
     if let Some(output) = window_output_diagnostics(window.id()) {
         println!("PACING_OUTPUT {:?}", output.active_output_strategy);
@@ -209,7 +212,7 @@ fn picker_frame_pacing_vsync_hdr_benchmark() -> Result<()> {
             if phase == "idle" {
                 std::thread::sleep(Duration::from_millis(40));
             }
-            if let Some(snapshot) = sui::window_performance_snapshot(window.id())
+            if let Some(snapshot) = sui::diagnostics::window_performance_snapshot(window.id())
                 && frames
                     .last()
                     .is_none_or(|last| last.frame_index != snapshot.frame_index)
@@ -279,10 +282,12 @@ fn picker_frame_pacing_vsync_hdr_benchmark() -> Result<()> {
         .with_name(ANIMATION_DEMO_TAB_LABEL)
         .click()?;
     std::thread::sleep(Duration::from_millis(300));
-    let before = sui::window_performance_snapshot(window.id()).expect("animation frame");
+    let before =
+        sui::diagnostics::window_performance_snapshot(window.id()).expect("animation frame");
     let started = Instant::now();
     std::thread::sleep(Duration::from_secs(2));
-    let after = sui::window_performance_snapshot(window.id()).expect("animation frame");
+    let after =
+        sui::diagnostics::window_performance_snapshot(window.id()).expect("animation frame");
     let elapsed = started.elapsed().as_secs_f64();
     let frame_count = after.frame_index - before.frame_index;
     assert!(

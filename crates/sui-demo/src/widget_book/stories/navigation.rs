@@ -36,9 +36,9 @@ pub(super) const STORIES: [Story; 4] = [
     Story {
         id: "breadcrumb",
         title: "Breadcrumb",
-        api: "Breadcrumb, PathBar",
+        api: "Breadcrumb",
         summary: "Shows the path to the current location; earlier segments navigate back.",
-        keywords: "path bar location hierarchy",
+        keywords: "path bar location hierarchy pathbar",
         category: Category::Navigation,
         build: breadcrumb,
     },
@@ -173,7 +173,7 @@ fn breadcrumb(ctx: &StoryCtx) -> Vec<Section> {
             (
                 "Path bar",
                 boxed(
-                    PathBar::new("Asset path bar")
+                    Breadcrumb::new("Asset path bar")
                         .items(items(&["Assets", "Textures", "hero.png"]))
                         .current(2)
                         .theme(theme),

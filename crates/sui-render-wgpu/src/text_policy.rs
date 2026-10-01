@@ -33,82 +33,13 @@ impl FeatheringOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TextRenderMode {
-    #[default]
-    Grayscale,
-    LcdSubpixel,
-}
+pub use sui_scene::TextRenderMode;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TextHinting {
-    None,
-    Slight { max_ppem: f32 },
-}
+/// The renderer's name for [`sui_scene::TextRenderHinting`].
+pub type TextHinting = sui_scene::TextRenderHinting;
 
-pub(crate) const DEFAULT_TEXT_HINTING_MAX_PPEM: f32 = 96.0;
-
-impl Default for TextHinting {
-    fn default() -> Self {
-        Self::Slight {
-            max_ppem: DEFAULT_TEXT_HINTING_MAX_PPEM,
-        }
-    }
-}
-
-impl TextHinting {
-    pub fn normalized(self) -> Self {
-        match self {
-            Self::None => Self::None,
-            Self::Slight { max_ppem } if max_ppem.is_finite() && max_ppem > 0.0 => {
-                Self::Slight { max_ppem }
-            }
-            Self::Slight { .. } => Self::None,
-        }
-    }
-
-    pub fn should_hint(self, ppem: f32) -> bool {
-        match self.normalized() {
-            Self::None => false,
-            Self::Slight { max_ppem } => ppem.is_finite() && ppem <= max_ppem,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub enum StemDarkening {
-    #[default]
-    None,
-    Enabled {
-        max_ppem: f32,
-        amount: f32,
-    },
-}
-
-impl StemDarkening {
-    pub fn normalized(self) -> Self {
-        match self {
-            Self::None => Self::None,
-            Self::Enabled { max_ppem, amount }
-                if max_ppem.is_finite() && max_ppem > 0.0 && amount.is_finite() && amount > 0.0 =>
-            {
-                Self::Enabled {
-                    max_ppem,
-                    amount: amount.clamp(0.0, 1.0),
-                }
-            }
-            Self::Enabled { .. } => Self::None,
-        }
-    }
-
-    pub fn effective_amount(self, ppem: f32) -> f32 {
-        match self.normalized() {
-            Self::None => 0.0,
-            Self::Enabled { max_ppem, amount } if ppem.is_finite() && ppem <= max_ppem => amount,
-            Self::Enabled { .. } => 0.0,
-        }
-    }
-}
+/// The renderer's name for [`sui_scene::TextRenderStemDarkening`].
+pub type StemDarkening = sui_scene::TextRenderStemDarkening;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TextCoveragePolicy {

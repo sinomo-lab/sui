@@ -18,9 +18,9 @@ Use the narrowest built-in policy for the interaction:
 | Hover help | `Tooltip` | Non-modal and non-dismissible; does not move focus |
 | Anchored transient content | `Popover` | Collision-aware placement, Escape/outside dismissal, normal Tab navigation |
 | Commands at a pointer target | `ContextMenu` | Menu semantics, arrow-key navigation, nested-overlay participation |
-| Blocking task or confirmation | `Dialog` / `Modal` | Modal hit testing, focus trap, Escape and optional scrim dismissal |
+| Blocking task or confirmation | `Dialog` | Modal hit testing, focus trap, Escape and optional scrim dismissal |
 | Search application commands | `CommandPalette` | Dialog lifecycle with command-palette diagnostics; query and ranking stay application-owned |
-| Edge presentation | `SideSheet`, `Drawer`, `BottomSheet` | Modal sheet lifecycle and focus restoration |
+| Edge presentation | `SideSheet`, `BottomSheet` | Modal sheet lifecycle and focus restoration |
 | Transient status | `NotificationHost` | Non-interactive overlay stack with live-region semantics and timed expiry |
 
 Windows are stacking hosts automatically. `OverlayHost` creates an independent
@@ -35,6 +35,7 @@ retain their own paint-bounds clip and remain subject to the window viewport.
 presentations can call `place_overlay` directly:
 
 ```rust
+use sui::place_overlay;
 use sui::prelude::*;
 
 let result = place_overlay(

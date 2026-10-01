@@ -29,7 +29,7 @@ pub(super) const STORIES: [Story; 8] = [
     Story {
         id: "separator",
         title: "Separator and section label",
-        api: "Separator, Divider, SectionLabel",
+        api: "Separator, SectionLabel",
         summary: "Hairlines between groups and small labels that title a group.",
         keywords: "divider rule hairline heading",
         category: Category::Layout,
@@ -56,9 +56,9 @@ pub(super) const STORIES: [Story; 8] = [
     Story {
         id: "split-view",
         title: "Split view",
-        api: "SplitView, ResizablePane",
+        api: "SplitView",
         summary: "Two panes separated by a draggable divider.",
-        keywords: "splitter resizable panes divider",
+        keywords: "splitter resizable panes divider resizablepane",
         category: Category::Layout,
         build: split_view,
     },
@@ -575,7 +575,7 @@ fn split_view(ctx: &StoryCtx) -> Vec<Section> {
         example(
             "Vertical",
             SizedBox::new().width(360.0).height(200.0).with_child(
-                ResizablePane::vertical(
+                SplitView::vertical(
                     pane("Editor", "Source text", SurfaceRole::Window),
                     pane("Console", "Build output", SurfaceRole::Panel),
                 )

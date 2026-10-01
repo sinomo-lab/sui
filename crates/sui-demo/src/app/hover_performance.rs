@@ -1,8 +1,7 @@
 use super::*;
 use std::time::Instant;
-use sui::{
-    FramePhase, PointerEvent, Runtime, SceneStatisticsDetailMode, WgpuRenderer, WindowEvent,
-};
+use sui::diagnostics::{FramePhase, SceneStatisticsDetailMode};
+use sui::{PointerEvent, Runtime, WgpuRenderer, WindowEvent};
 
 fn picker_cards(nodes: &[SemanticsNode]) -> [SemanticsNode; 2] {
     [WIDGET_BOOK_TAB_LABEL, THEME_EDITOR_TAB_LABEL].map(|name| {
@@ -110,7 +109,10 @@ fn picker_hover_repaints_only_animating_cards() -> Result<()> {
 fn picker_card_hover_native_benchmark() -> Result<()> {
     let app = sui_testing::TestApp::new_visible_no_vsync(|| build_dev_application().build())?;
     let window = app.main_window()?;
-    sui::set_window_scene_statistics_detail_mode(window.id(), SceneStatisticsDetailMode::Detailed);
+    sui::diagnostics::set_window_scene_statistics_detail_mode(
+        window.id(),
+        SceneStatisticsDetailMode::Detailed,
+    );
     let initial = window.snapshot()?;
     let cards = picker_cards(&initial.accessibility.nodes);
     let root = window.root();
@@ -120,18 +122,18 @@ fn picker_card_hover_native_benchmark() -> Result<()> {
         for index in 0..120 {
             root.dispatch_event(hover_event(&cards, index, moving))?;
             std::thread::sleep(std::time::Duration::from_millis(8));
-            if let Some(snapshot) = sui::window_performance_snapshot(window.id())
-                && snapshots
-                    .last()
-                    .is_none_or(|previous: &sui::WindowPerformanceSnapshot| {
+            if let Some(snapshot) = sui::diagnostics::window_performance_snapshot(window.id())
+                && snapshots.last().is_none_or(
+                    |previous: &sui::diagnostics::WindowPerformanceSnapshot| {
                         previous.frame_index != snapshot.frame_index
-                    })
+                    },
+                )
             {
                 snapshots.push(snapshot);
             }
         }
         assert!(!snapshots.is_empty(), "native host must publish frames");
-        let mean = |sample: fn(&sui::WindowPerformanceSnapshot) -> f64| {
+        let mean = |sample: fn(&sui::diagnostics::WindowPerformanceSnapshot) -> f64| {
             snapshots.iter().map(sample).sum::<f64>() / snapshots.len() as f64
         };
         println!(
@@ -170,7 +172,10 @@ fn run_picker_hover_benchmark(scale: f64) -> Result<()> {
             suggested_size: Some(Size::new(1920.0, 1080.0)),
         }),
     )?;
-    sui::set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
+    sui::diagnostics::set_window_scene_statistics_detail_mode(
+        window_id,
+        SceneStatisticsDetailMode::Detailed,
+    );
     let initial = runtime.render(window_id)?;
     let cards = picker_cards(&initial.semantics);
     let mut renderer = WgpuRenderer::new();

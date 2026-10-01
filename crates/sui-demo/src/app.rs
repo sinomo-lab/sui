@@ -16,7 +16,7 @@ use crate::text_shaping::build_text_shaping_surface_with_theme;
 use crate::widget_book::build_widget_book_gallery;
 use crate::widget_book::{build_widget_book_gallery_with_theme, register_widget_book_images};
 use sui::{
-    HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
+    Application, HdrThemeMode, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
     PointerButton, PointerEventKind, SemanticsAction, SemanticsNode, SemanticsRole, SemanticsValue,
     ToggleState, Vector, WidgetPodMutVisitor, WidgetPodVisitor, WindowRenderOptions,
     default_sui_logo_image, paint_text_line, prelude::*,
@@ -1933,6 +1933,7 @@ mod frame_pacing;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sui::WindowBuilder;
 
     use crate::paint_demo::{
         PAINT_ACTUAL_SIZE_NAME, PAINT_BLEND_MODE_NAME, PAINT_BRUSH_COLOR_NAME,
@@ -1956,15 +1957,18 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
-    use sui::{
-        Brush, Event, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
-        PointerEventKind, Rect, RenderOutput, Result, Runtime, SceneCommand,
-        SceneStatisticsDetailMode, ScrollDelta, SemanticsNode, SemanticsRole, StackOrderPolicy,
-        Vector, WindowColorManagementMode, WindowDynamicRangeMode, WindowEvent, WindowId,
-        WindowOutputColorPrimaries, WindowPerformanceSnapshot, WindowRenderOptions,
-        WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting, WindowToneMappingMode,
+    use sui::diagnostics::{
+        SceneStatisticsDetailMode, WindowPerformanceSnapshot,
         set_window_scene_statistics_detail_mode, window_performance_snapshot,
         window_scene_statistics_detail_mode,
+    };
+    use sui::{
+        Brush, Event, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
+        PointerEventKind, Rect, RenderOutput, Result, Runtime, SceneCommand, ScrollDelta,
+        SemanticsNode, SemanticsRole, StackOrderPolicy, Vector, WindowColorManagementMode,
+        WindowDynamicRangeMode, WindowEvent, WindowId, WindowOutputColorPrimaries,
+        WindowRenderOptions, WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting,
+        WindowToneMappingMode,
     };
     use sui_render_wgpu::{
         DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
@@ -5632,7 +5636,7 @@ mod tests {
         hdr_headroom_heatmap(&image, 1.0)?.write_png(artifact_dir.join("headroom-map.png"))?;
         hdr_clip_mask(&image, 1.0)?.write_png(artifact_dir.join("clip-mask.png"))?;
 
-        let diagnostics = sui::window_output_diagnostics(window.id())
+        let diagnostics = sui::diagnostics::window_output_diagnostics(window.id())
             .expect("output diagnostics should be published for visible HDR debug capture");
         std::fs::write(
             artifact_dir.join("output-diagnostics.txt"),

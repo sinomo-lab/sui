@@ -25,17 +25,17 @@ use sui_core::WindowId;
 use sui_render_wgpu::{
     ColorManagementMode, RendererFrameStats, RequestedColorManagementMode,
     RequestedDynamicRangeMode, RequestedOutputColorPrimaries, RequestedToneMappingMode,
-    StemDarkening, TextCoveragePolicy, TextHinting, TextSubpixelOrder, WgpuRenderer,
+    TextCoveragePolicy, WgpuRenderer,
 };
 use sui_runtime::{
     CacheMetrics, FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RenderOutput,
     RendererSubmissionDiagnostics, RetainedPacketHotspotDiagnostics,
     RetainedPacketRebuildDiagnostics, SceneStatistics, TextCacheDiagnostics,
     WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-    WindowPerformanceSnapshot, WindowStemDarkening, WindowTextCoveragePolicy, WindowTextHinting,
-    WindowTextSubpixelOrder, WindowToneMappingMode, clear_window_performance_snapshot,
-    clear_window_performance_snapshots, publish_window_performance_snapshot,
-    window_performance_text_caches, window_scene_statistics_detail_mode,
+    WindowPerformanceSnapshot, WindowTextCoveragePolicy, WindowToneMappingMode,
+    clear_window_performance_snapshot, clear_window_performance_snapshots,
+    publish_window_performance_snapshot, window_performance_text_caches,
+    window_scene_statistics_detail_mode,
 };
 
 pub(crate) use accessibility::AccessibilityBridge;
@@ -73,22 +73,6 @@ pub(crate) fn reset_window_performance_store() {
     clear_window_output_diagnostics_all();
 }
 
-pub(crate) fn map_window_text_hinting(hinting: WindowTextHinting) -> TextHinting {
-    match hinting.normalized() {
-        WindowTextHinting::None => TextHinting::None,
-        WindowTextHinting::Slight { max_ppem } => TextHinting::Slight { max_ppem },
-    }
-}
-
-pub(crate) fn map_window_stem_darkening(darkening: WindowStemDarkening) -> StemDarkening {
-    match darkening.normalized() {
-        WindowStemDarkening::None => StemDarkening::None,
-        WindowStemDarkening::Enabled { max_ppem, amount } => {
-            StemDarkening::Enabled { max_ppem, amount }
-        }
-    }
-}
-
 pub(crate) fn map_window_text_coverage_policy(
     policy: WindowTextCoveragePolicy,
 ) -> TextCoveragePolicy {
@@ -102,14 +86,6 @@ pub(crate) fn map_window_text_coverage_policy(
         WindowTextCoveragePolicy::TwoCoverageMinusCoverageSq => {
             TextCoveragePolicy::TwoCoverageMinusCoverageSq
         }
-    }
-}
-
-pub(crate) fn map_window_text_subpixel_order(order: WindowTextSubpixelOrder) -> TextSubpixelOrder {
-    match order {
-        WindowTextSubpixelOrder::None => TextSubpixelOrder::None,
-        WindowTextSubpixelOrder::Rgb => TextSubpixelOrder::Rgb,
-        WindowTextSubpixelOrder::Bgr => TextSubpixelOrder::Bgr,
     }
 }
 

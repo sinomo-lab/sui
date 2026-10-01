@@ -15,11 +15,11 @@ families to learn rather than an exhaustive symbol inventory.
 | Family | Common types | Use for |
 | --- | --- | --- |
 | Text, documents, and actions | `Label`, `RichText`, `RichDocumentView`, `Button`, `IconButton`, `Link` | Display text or streaming Markdown and invoke commands |
-| Boolean and choice controls | `Checkbox`, `Switch`, `RadioGroup`, `SegmentedControl`, `Select`, `ComboBox` | Small finite choices |
-| Text and numeric input | `TextInput`, `PasswordInput`, `DateTimeInput`, `TextArea`, `NumberInput`, `SpinBox`, `Slider` | Editable values and ranges |
+| Boolean and choice controls | `Checkbox`, `Switch`, `RadioGroup`, `SegmentedControl`, `Select` | Small finite choices |
+| Text and numeric input | `TextInput`, `PasswordInput`, `DateTimeInput`, `TextArea`, `NumberInput`, `Slider` | Editable values and ranges |
 | Basic layout | `Padding`, `Align`, `SizedBox`, `Stack`, `Flex`, `Grid`, `AspectRatio`, `Background` | Size and position ordinary widget trees |
 | Viewport and structure | `ScrollView`, `VirtualScrollView`, `SplitView`, `AdaptiveView`, `ConstraintView`, `ResponsiveSidebar`, `MasterDetail`, `SafeArea` | Overflow, panes, and adaptive workspace structure |
-| Overlays and shells | `Dialog`, `Modal`, `CommandPalette`, `Popover`, `ContextMenu`, `Tooltip`, `Drawer`, `SideSheet`, `BottomSheet` | Managed transient or elevated interface layers |
+| Overlays and shells | `Dialog`, `CommandPalette`, `Popover`, `ContextMenu`, `Tooltip`, `SideSheet`, `BottomSheet` | Managed transient or elevated interface layers |
 | Data and navigation | `ListView`, `VirtualList`, `TreeView`, `Table`, `VirtualTable`, `Breadcrumb`, `TabBar`, `Tabs` | Collections and navigation state |
 | Creative tools | `Canvas`, `PixelCanvas`, `ColorPicker`, `LayerList`, `BrushPreview` | Editor-style and graphics interfaces |
 
@@ -62,8 +62,7 @@ fn account_form() -> impl Widget {
 ```
 
 `TextInput` is single-line and owns its editing selection, caret, clipboard,
-and IME state. `TextArea` (also exported as `MultilineTextInput`) is the
-multiline editor. `PasswordInput` masks rendering, but its callback and stored
+and IME state. `TextArea` is the multiline editor. `PasswordInput` masks rendering, but its callback and stored
 value are the real string; masking is not secret-memory protection.
 
 `DateTimeInput` is deliberately a lightweight string field. Its suggested
@@ -400,7 +399,7 @@ split remains proportional.
 
 ## Drawers and Bottom Sheets
 
-`SideSheet` (also exported as `Drawer`) anchors to the left or right edge.
+`SideSheet` anchors to the left or right edge.
 `BottomSheet` uses the same modal scrim, actions, dismissal, entrance motion,
 dialog semantics, and focus-return contract while exposing height rather than
 width. Use `SheetState` to let sibling controls present either sheet without

@@ -4,7 +4,6 @@ use crate::theme::BindingTheme;
 use crate::values::{BindingBool, BindingNumber, BindingText};
 use std::sync::Arc;
 use sui::ArrangeCtx;
-use sui::BusyIndicator;
 use sui::Checkbox;
 #[cfg(feature = "desktop")]
 use sui::CommandKey;
@@ -25,6 +24,7 @@ use sui::SemanticsNode;
 use sui::SemanticsRole;
 use sui::SideSheet;
 use sui::Size;
+use sui::Spinner;
 use sui::SplitView;
 use sui::Switch;
 use sui::TextArea;
@@ -261,8 +261,8 @@ pub(crate) struct BindingBusyIndicatorWidget {
 }
 
 impl BindingBusyIndicatorWidget {
-    pub(crate) fn inner(&self) -> BusyIndicator {
-        let mut indicator = BusyIndicator::new(self.name.resolve()).size(self.size);
+    pub(crate) fn inner(&self) -> Spinner {
+        let mut indicator = Spinner::new(self.name.resolve()).size(self.size);
         if let Some(label) = &self.label {
             indicator = indicator.label(label.resolve());
         }

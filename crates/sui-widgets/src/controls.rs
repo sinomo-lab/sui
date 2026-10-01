@@ -247,14 +247,16 @@ pub const BUILTIN_ICON_GLYPHS: &[IconGlyph] = &[
     IconGlyph::Workflow,
 ];
 
+/// Does nothing: built-in widgets paint their Lucide icons directly, so there
+/// are no icon resources to register.
+#[deprecated(note = "built-in icons need no registration; remove the call")]
 pub fn register_builtin_icon_resources(
     _application: &mut sui_runtime::Application,
 ) -> sui_core::Result<()> {
-    // Built-in widgets paint Lucide geometry directly. Keep this compatibility hook so
-    // applications do not need to change their startup path.
     Ok(())
 }
 
+#[doc(alias = "Divider")]
 pub struct Separator {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -4460,6 +4462,7 @@ enum NumberInputStepperPart {
     Decrement,
 }
 
+#[doc(alias = "SpinBox")]
 pub struct NumberInput {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -5028,6 +5031,7 @@ impl Widget for NumberInput {
     }
 }
 
+#[doc(alias = "MultilineTextInput")]
 pub struct TextArea {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -6001,6 +6005,7 @@ impl Widget for SelectMenuSurface {
     }
 }
 
+#[doc(alias = "ComboBox")]
 pub struct Select {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -6779,9 +6784,17 @@ impl Widget for Select {
     }
 }
 
+/// Former name of [`Separator`].
+#[deprecated(note = "use `Separator`")]
 pub type Divider = Separator;
+/// Former name of [`NumberInput`].
+#[deprecated(note = "use `NumberInput`")]
 pub type SpinBox = NumberInput;
+/// Former name of [`TextArea`].
+#[deprecated(note = "use `TextArea`")]
 pub type MultilineTextInput = TextArea;
+/// Former name of [`Select`].
+#[deprecated(note = "use `Select`")]
 pub type ComboBox = Select;
 
 const PASSWORD_MASK: &str = "•";

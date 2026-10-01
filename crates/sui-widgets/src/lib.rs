@@ -57,44 +57,54 @@ pub use collection::{
     VirtualListSelectionMode, VirtualListState, VirtualViewportSnapshot,
 };
 pub use composites::{
-    ActionCard, ActionTilePaint, BottomSheet, BrowserTabBar, BusyIndicator, CalloutPaint,
-    CodePanelPaint, CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonFill,
-    CommandButtonPaint, CommandGroup, CommandPalette, ContextMenu, ContextMenuHandle, CoverageDots,
-    CoverageDotsConfig, DetailRow, Dialog, DisclosureButtonPaint, DockPanel, Drawer, EmptyState,
-    EmptyStatePaint, FieldGroup, FormRow, FormSection, FramedField, HairlineEdge, Menu, MenuItem,
-    Modal, PanelSection, PlacementBadge, PlacementBadgePaint, Popover, PopoverAlignment,
-    PresetStrip, ProgressBar, PropertyRow, PropertyRowLayout, SectionLabel, SectionLabelPaint,
-    SectionPanelGeometry, SectionPanelPaint, SegmentedControl, SegmentedControlItem, ShadowBox,
-    SheetState, SideSheet, SideSheetPlacement, Spinner, StatusBadge, StatusBar, StatusBarHost,
-    StatusBarSegment, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation, SurfaceRole,
-    TabBar, TabBarItem, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment,
-    TooltipPlacement, detail_row_height_for_value, paint_action_tile, paint_border, paint_callout,
-    paint_code_lines, paint_code_panel, paint_command_button, paint_coverage_dots,
-    paint_coverage_dots_with_config, paint_detail_row_at, paint_disclosure_button,
-    paint_empty_state, paint_hairline, paint_placement_badge, paint_placement_badge_with,
-    paint_progress_bar, paint_rounded_panel, paint_rounded_rect, paint_section_label,
-    paint_section_label_detail, paint_section_panel, paint_status_badge,
+    ActionCard, ActionTilePaint, BottomSheet, BrowserTabBar, CalloutPaint, CodePanelPaint,
+    CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonFill, CommandButtonPaint, CommandGroup,
+    CommandPalette, ContextMenu, ContextMenuHandle, CoverageDots, CoverageDotsConfig, DetailRow,
+    Dialog, DisclosureButtonPaint, DockPanel, EmptyState, EmptyStatePaint, FieldGroup, FormRow,
+    FormSection, FramedField, HairlineEdge, Menu, MenuItem, PanelSection, PlacementBadge,
+    PlacementBadgePaint, Popover, PopoverAlignment, PresetStrip, ProgressBar, PropertyRow,
+    PropertyRowLayout, SectionLabel, SectionLabelPaint, SectionPanelGeometry, SectionPanelPaint,
+    SegmentedControl, SegmentedControlItem, ShadowBox, SheetState, SideSheet, SideSheetPlacement,
+    Spinner, StatusBadge, StatusBar, StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance,
+    SurfaceBorder, SurfaceElevation, SurfaceRole, TabBar, TabBarItem, Tabs, ToolPalette,
+    ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment, TooltipPlacement,
+    detail_row_height_for_value, paint_action_tile, paint_border, paint_callout, paint_code_lines,
+    paint_code_panel, paint_command_button, paint_coverage_dots, paint_coverage_dots_with_config,
+    paint_detail_row_at, paint_disclosure_button, paint_empty_state, paint_hairline,
+    paint_placement_badge, paint_placement_badge_with, paint_progress_bar, paint_rounded_panel,
+    paint_rounded_rect, paint_section_label, paint_section_label_detail, paint_section_panel,
+    paint_status_badge,
 };
+// Former names, kept so existing code keeps building; naming one warns.
+#[allow(deprecated)]
+pub use composites::{BusyIndicator, Drawer, Modal};
 pub use containers::{
     Align, Background, ContentExtent, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow,
     Padding, RebuildOnChange, RebuildOnConstraints, ScrollAxes, ScrollBar, ScrollState, ScrollView,
     SemanticRegion, SizedBox, Stack, SwitchView, TrailingSlotRow, VirtualScrollView,
 };
+#[allow(deprecated)]
+pub use controls::register_builtin_icon_resources;
 pub use controls::{
     BUILTIN_ICON_GLYPHS, Button, ButtonAppearance, Checkbox, CheckboxIndicatorState,
-    ChoiceAppearance, ComboBox, DateTimeInput, Divider, FieldAppearance, Icon, IconButton,
-    IconButtonPaint, IconGlyph, InteractionPreview, Label, Link, MultilineTextInput, NumberInput,
-    PasswordInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox, Switch, TextArea,
-    TextInput, draw_glyph, paint_checkbox_indicator, paint_icon_button,
-    register_builtin_icon_resources,
+    ChoiceAppearance, DateTimeInput, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph,
+    InteractionPreview, Label, Link, NumberInput, PasswordInput, RadioButton, RadioGroup, Select,
+    Separator, Slider, Switch, TextArea, TextInput, draw_glyph, paint_checkbox_indicator,
+    paint_icon_button,
 };
+// Former names, kept so existing code keeps building; naming one warns.
+#[allow(deprecated)]
+pub use controls::{ComboBox, Divider, MultilineTextInput, SpinBox};
 pub use data::{
-    Breadcrumb, BreadcrumbItem, DataGrid, LayerList, LayerListItem, LayerListReorderChange,
-    LeadingLabelCellPaint, ListItem, ListView, PathBar, Table, TableColumn, TableColumnAlignment,
-    TableRow, TextBlockPaint, TextCellPaint, TreeItem, TreeView, VirtualTable, VirtualTableColumn,
+    Breadcrumb, BreadcrumbItem, LayerList, LayerListItem, LayerListReorderChange,
+    LeadingLabelCellPaint, ListItem, ListView, Table, TableColumn, TableColumnAlignment, TableRow,
+    TextBlockPaint, TextCellPaint, TreeItem, TreeView, VirtualTable, VirtualTableColumn,
     VirtualTableRowActivationKind, VirtualTableRowContext, VirtualTableSortDirection,
     VirtualTableState, paint_leading_label_cell, paint_text_block, paint_text_cell,
 };
+// Former names, kept so existing code keeps building; naming one warns.
+#[allow(deprecated)]
+pub use data::{DataGrid, PathBar};
 pub use docking::{
     DockFloatingGroup, DockLayoutError, DockNode, DockPanelId, DockWorkspace,
     DockWorkspaceSnapshot, DockWorkspaceState, DockZone,
@@ -122,9 +132,11 @@ pub use overlay::{
 };
 pub use panes::{
     FloatingStack, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,
-    FloatingWorkspaceState, ResizablePane, SplitExtent, SplitPaneSide, SplitState,
-    SplitStateSnapshot, SplitView,
+    FloatingWorkspaceState, SplitExtent, SplitPaneSide, SplitState, SplitStateSnapshot, SplitView,
 };
+// Former names, kept so existing code keeps building; naming one warns.
+#[allow(deprecated)]
+pub use panes::ResizablePane;
 pub use presence::{KeyedStack, Presence, PresenceTransition};
 pub use reorderable::{ReorderableList, ReorderableListChange};
 pub use rich_document::{

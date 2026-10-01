@@ -4,7 +4,7 @@
 
 use std::fmt::Write as _;
 
-use sui::{HdrRgbaImage, OutputStrategy, WindowOutputDiagnostics};
+use sui::diagnostics::{HdrRgbaImage, OutputStrategy, WindowOutputDiagnostics};
 
 /// The value SDR white has in a final-output capture. Native HDR output is
 /// scRGB, where 1.0 is 80 nits, so SDR white sits at its brightness over 80.
@@ -195,7 +195,8 @@ pub(crate) use native::*;
 mod native {
     use std::{fs, path::Path};
 
-    use sui::{DebugCaptureArtifact, Error, HdrRgbaImage, Result};
+    use sui::diagnostics::{DebugCaptureArtifact, HdrRgbaImage};
+    use sui::{Error, Result};
     use sui_testing::{
         Screenshot, hdr_clip_mask, hdr_headroom_heatmap, hdr_luminance_heatmap, write_hdr_avif,
         write_hdr_exr,

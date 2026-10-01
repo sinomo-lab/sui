@@ -1,6 +1,6 @@
+use sui::diagnostics::WindowPerformanceSnapshot;
 use sui::{
-    Application, DefaultTheme, Result, SemanticsRole, SemanticsValue, Size, SizedBox,
-    WindowBuilder, WindowPerformanceSnapshot,
+    Application, DefaultTheme, Result, SemanticsRole, SemanticsValue, Size, SizedBox, WindowBuilder,
 };
 use sui_testing::prelude::*;
 

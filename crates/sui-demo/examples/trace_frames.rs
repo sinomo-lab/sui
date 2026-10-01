@@ -9,10 +9,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use sui::{
-    DesktopPlatform, Result, SceneStatisticsDetailMode, set_window_render_options,
-    set_window_scene_statistics_detail_mode, window_performance_summary,
+use sui::diagnostics::{
+    SceneStatisticsDetailMode, set_window_scene_statistics_detail_mode, window_performance_summary,
 };
+use sui::{DesktopPlatform, Result, set_window_render_options};
 
 fn main() -> Result<()> {
     let app = sui_demo_app::build_dev_application();

@@ -3,10 +3,11 @@
 
 use std::{cell::RefCell, rc::Rc};
 
+use sui::diagnostics::{WindowOutputDiagnostics, window_output_diagnostics_signal};
 use sui::prelude::*;
 use sui::{
-    HdrThemeMode, OutputColorRange, WidgetPodMutVisitor, WidgetPodVisitor, WindowOutputDiagnostics,
-    window_output_color_range_signal, window_output_diagnostics_signal,
+    HdrThemeMode, OutputColorRange, WidgetPodMutVisitor, WidgetPodVisitor,
+    window_output_color_range_signal,
 };
 
 use super::controls::hdr_theme_mode_label;

@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
+use sui::diagnostics::WidgetGraphSnapshot;
 use sui::{
     CommandSender, DesktopExtensionContext, DesktopWindow, Error, Rect as SuiRect, Result,
-    WidgetGraphSnapshot, WidgetId, WindowId,
+    WidgetId, WindowId,
 };
 use wry::{
     Rect, WebViewBuilder,

@@ -143,6 +143,8 @@ fn set_focus_animation_target(
     )
 }
 
+/// Former name of [`SplitView`].
+#[deprecated(note = "use `SplitView`")]
 pub type ResizablePane = SplitView;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1494,6 +1496,7 @@ impl Default for SplitState {
     }
 }
 
+#[doc(alias = "ResizablePane")]
 pub struct SplitView {
     theme: Box<DefaultTheme>,
     theme_reader: Option<ThemeReader>,

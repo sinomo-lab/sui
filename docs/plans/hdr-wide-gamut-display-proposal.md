@@ -143,7 +143,7 @@ toggles need additional invalidation and reconfiguration handling.
 
 ## Inspecting the active output
 
-`sui::window_output_diagnostics(window_id)` returns the latest
+`sui::diagnostics::window_output_diagnostics(window_id)` returns the latest
 `WindowOutputDiagnostics` for a live window. It includes:
 
 - the detected `DisplayCapabilities`

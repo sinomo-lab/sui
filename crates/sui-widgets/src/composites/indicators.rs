@@ -751,6 +751,7 @@ impl Widget for ProgressBar {
     }
 }
 
+#[doc(alias = "BusyIndicator")]
 pub struct Spinner {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -881,6 +882,8 @@ impl Widget for Spinner {
     }
 }
 
+/// Former name of [`Spinner`].
+#[deprecated(note = "use `Spinner`")]
 pub type BusyIndicator = Spinner;
 
 pub(super) fn text_token_style(

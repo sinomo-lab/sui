@@ -249,8 +249,9 @@ pub enum WidgetShader {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TextRenderMode {
+    #[default]
     Grayscale,
     LcdSubpixel,
 }
@@ -269,6 +270,17 @@ pub enum TextRenderHinting {
     Slight { max_ppem: f32 },
 }
 
+/// The largest size, in pixels per em, that the default hinting hints.
+pub const DEFAULT_TEXT_HINTING_MAX_PPEM: f32 = 96.0;
+
+impl Default for TextRenderHinting {
+    fn default() -> Self {
+        Self::Slight {
+            max_ppem: DEFAULT_TEXT_HINTING_MAX_PPEM,
+        }
+    }
+}
+
 impl TextRenderHinting {
     pub fn normalized(self) -> Self {
         match self {
@@ -279,12 +291,24 @@ impl TextRenderHinting {
             Self::Slight { .. } => Self::None,
         }
     }
+
+    /// Whether text `ppem` pixels per em is hinted.
+    pub fn should_hint(self, ppem: f32) -> bool {
+        match self.normalized() {
+            Self::None => false,
+            Self::Slight { max_ppem } => ppem.is_finite() && ppem <= max_ppem,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TextRenderStemDarkening {
+    #[default]
     None,
-    Enabled { max_ppem: f32, amount: f32 },
+    Enabled {
+        max_ppem: f32,
+        amount: f32,
+    },
 }
 
 impl TextRenderStemDarkening {
@@ -302,10 +326,20 @@ impl TextRenderStemDarkening {
             Self::Enabled { .. } => Self::None,
         }
     }
+
+    /// How much stems of text `ppem` pixels per em are darkened.
+    pub fn effective_amount(self, ppem: f32) -> f32 {
+        match self.normalized() {
+            Self::None => 0.0,
+            Self::Enabled { max_ppem, amount } if ppem.is_finite() && ppem <= max_ppem => amount,
+            Self::Enabled { .. } => 0.0,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TextRenderCoveragePolicy {
+    #[default]
     Perceptual,
     Linear,
     Gamma(f32),

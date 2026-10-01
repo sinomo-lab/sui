@@ -10,13 +10,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use sui::diagnostics::window_performance_snapshot;
 use sui::{
     Alignment, App, Application, Background, Color, Error, Event, ImeEvent, Insets, Label,
     Modifiers, NumberInput, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
     PointerKind, RadioButton, RadioGroup, Rect, Result, SceneCommand, ScrollDelta, ScrollView,
     Select, SemanticsNode, SemanticsRole, SemanticsValue, Size, SizedBox, Slider, SplitView, Stack,
     Switch, Table, TableColumn, TableRow, TextArea, Vector, VirtualScrollView, WgpuRenderer,
-    Window as SuiWindow, WindowBuilder, WindowEvent, WindowId, window_performance_snapshot,
+    Window as SuiWindow, WindowBuilder, WindowEvent, WindowId,
 };
 use sui_demo_app::benchmarks::{
     RETAINED_TEXT_BENCHMARK_SCROLL_NAME, RETAINED_TEXT_BENCHMARK_TITLE,

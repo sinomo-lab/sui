@@ -22,7 +22,6 @@ doctest = false
 default = ["desktop", "wgpu"]
 desktop = ["wgpu", "dep:sui-platform"]
 mobile = ["wgpu", "dep:sui-platform"]
-testing = []
 web = ["wgpu", "dep:sui-platform"]
 wgpu = ["dep:sui-render-wgpu"]
 

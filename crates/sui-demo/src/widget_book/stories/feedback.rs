@@ -18,9 +18,9 @@ pub(super) const STORIES: [Story; 7] = [
     Story {
         id: "spinner",
         title: "Spinner and busy indicator",
-        api: "Spinner, BusyIndicator",
+        api: "Spinner",
         summary: "Indeterminate activity for work without a known duration.",
-        keywords: "loading busy activity indeterminate",
+        keywords: "loading busy activity indeterminate busyindicator",
         category: Category::Feedback,
         build: spinner,
     },
@@ -159,7 +159,7 @@ fn spinner(ctx: &StoryCtx) -> Vec<Section> {
             (
                 "Busy indicator",
                 boxed(
-                    BusyIndicator::new("Indexing busy indicator")
+                    Spinner::new("Indexing busy indicator")
                         .label("Indexing assets")
                         .theme(theme),
                 ),

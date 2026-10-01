@@ -177,6 +177,7 @@ impl Widget for DialogFocusSurface {
     }
 }
 
+#[doc(alias = "Modal")]
 pub struct Dialog {
     pub(super) theme: SharedTheme,
     pub(super) title: String,
@@ -952,6 +953,8 @@ impl Widget for CommandPalette {
     }
 }
 
+/// Former name of [`Dialog`].
+#[deprecated(note = "use `Dialog`")]
 pub type Modal = Dialog;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1004,6 +1007,7 @@ impl Default for SheetState {
 /// and focused configuration flows. It shares SUI's dialog surface, spacing,
 /// elevation, motion, focus, and semantic contracts while using a horizontal
 /// reveal appropriate to a drawer.
+#[doc(alias = "Drawer")]
 pub struct SideSheet {
     pub(super) theme: SharedTheme,
     pub(super) title: String,
@@ -1721,7 +1725,8 @@ impl Widget for SideSheet {
     }
 }
 
-/// A familiar alias for navigation-oriented side sheets.
+/// Former name of [`SideSheet`].
+#[deprecated(note = "use `SideSheet`")]
 pub type Drawer = SideSheet;
 
 /// A modal surface anchored to the bottom edge of its allocated viewport.

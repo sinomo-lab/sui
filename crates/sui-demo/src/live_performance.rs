@@ -4,13 +4,15 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use sui::prelude::*;
-use sui::{
-    FramePhase, InvalidationKind, InvalidationRequest, InvalidationTarget, Rect,
-    SceneStatisticsDetailMode, SemanticsNode, SemanticsRole, SemanticsValue, TextStyle,
-    WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, WindowPerformanceSnapshot, paint_text_line,
+use sui::diagnostics::{
+    FramePhase, SceneStatisticsDetailMode, WindowPerformanceSnapshot,
     set_window_scene_statistics_detail_mode, window_performance_snapshot,
     window_scene_statistics_detail_mode,
+};
+use sui::prelude::*;
+use sui::{
+    InvalidationKind, InvalidationRequest, InvalidationTarget, Rect, SemanticsNode, SemanticsRole,
+    SemanticsValue, TextStyle, WidgetPodMutVisitor, WidgetPodVisitor, WindowEvent, paint_text_line,
 };
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
 use sui_scene::LayerCompositionMode;

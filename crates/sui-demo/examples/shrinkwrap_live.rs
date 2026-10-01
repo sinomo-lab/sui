@@ -5,10 +5,11 @@ use std::{
     rc::Rc,
     time::{Duration, Instant},
 };
-use sui::{
-    DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, FramePhase,
-    SceneStatisticsDetailMode, SemanticsRole, Vector, WindowPerformanceSnapshot,
+use sui::diagnostics::{
+    DesktopAutomationAction, DesktopAutomationConfig, FramePhase, SceneStatisticsDetailMode,
+    WindowPerformanceSnapshot,
 };
+use sui::{DesktopPlatform, SemanticsRole, Vector};
 use sui_platform::{DesktopExtension, DesktopExtensionContext, DesktopFramePresented};
 
 #[derive(Debug, Default)]
@@ -28,7 +29,7 @@ impl DesktopExtension for Probe {
     ) -> sui::Result<()> {
         // Native window registration can reset diagnostics configured before
         // launch. Enable detail on the live window before the warmup interval.
-        sui::set_window_scene_statistics_detail_mode(
+        sui::diagnostics::set_window_scene_statistics_detail_mode(
             frame.window_id,
             SceneStatisticsDetailMode::Detailed,
         );
@@ -41,7 +42,7 @@ impl DesktopExtension for Probe {
                 host.inner_size(),
                 host.scale_factor(),
                 context.renderer().adapter_info(),
-                sui::window_output_diagnostics(frame.window_id)
+                sui::diagnostics::window_output_diagnostics(frame.window_id)
                     .map(|output| output.active_output_strategy),
                 std::env::var_os("WGPU_VALIDATION"),
                 std::env::var_os("WGPU_DEBUG")
@@ -52,7 +53,7 @@ impl DesktopExtension for Probe {
             .duration_since(samples.first_presented.unwrap())
             .as_secs_f64();
         if (2.0..15.0).contains(&elapsed)
-            && let Some(snapshot) = sui::window_performance_snapshot(frame.window_id)
+            && let Some(snapshot) = sui::diagnostics::window_performance_snapshot(frame.window_id)
         {
             assert_eq!(snapshot.frame_index, frame.frame_index);
             assert!(
@@ -82,7 +83,10 @@ fn percentile(values: &mut [f64], p: usize) -> f64 {
 fn main() -> sui::Result<()> {
     let runtime = sui_demo_app::build_shrinkwrap_application().build()?;
     for id in runtime.window_ids() {
-        sui::set_window_scene_statistics_detail_mode(id, SceneStatisticsDetailMode::Detailed);
+        sui::diagnostics::set_window_scene_statistics_detail_mode(
+            id,
+            SceneStatisticsDetailMode::Detailed,
+        );
     }
     let samples = Rc::new(RefCell::new(Samples::default()));
     DesktopPlatform::new()

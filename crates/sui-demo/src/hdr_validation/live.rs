@@ -1,10 +1,11 @@
 //! What the window's output does right now, read from the output
 //! diagnostics the platform publishes after each presented frame.
 
+use sui::diagnostics::{OutputStrategy, WindowOutputDiagnostics, window_output_diagnostics_signal};
 use sui::prelude::*;
 use sui::{
-    DisplayColorPrimaries, OutputStrategy, RequestedToneMappingMode, SemanticsNode, SemanticsRole,
-    WindowOutputDiagnostics, WindowToneMappingMode, window_output_diagnostics_signal,
+    DisplayColorPrimaries, RequestedToneMappingMode, SemanticsNode, SemanticsRole,
+    WindowToneMappingMode,
 };
 
 use crate::app::{DemoTextRole, DevThemeReader, demo_text_style};

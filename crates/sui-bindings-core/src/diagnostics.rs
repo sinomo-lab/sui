@@ -202,8 +202,8 @@ pub struct BindingWidgetRebuildTrace {
     pub reason: String,
 }
 
-impl From<sui::WindowInspectorSnapshot> for BindingInspectorSnapshot {
-    fn from(value: sui::WindowInspectorSnapshot) -> Self {
+impl From<sui::diagnostics::WindowInspectorSnapshot> for BindingInspectorSnapshot {
+    fn from(value: sui::diagnostics::WindowInspectorSnapshot) -> Self {
         let schedule = value.schedule;
         let mut scheduled_phases = Vec::new();
         for (name, scheduled) in [

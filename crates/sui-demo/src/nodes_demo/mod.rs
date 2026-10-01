@@ -19,6 +19,8 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(test)]
+use sui::Application;
 use sui::{
     ContextMenuHandle, PointerButton, Rect, SemanticRegion, Signal, WidgetPodMutVisitor,
     WidgetPodVisitor, prelude::*,

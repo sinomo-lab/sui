@@ -9,10 +9,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use sui::diagnostics::{
+    SceneStatisticsDetailMode, WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
+};
 use sui::{
-    Application, DefaultTheme, Event, RenderOutput, Result, SceneStatisticsDetailMode,
-    SemanticsRole, Size, SizedBox, Vector, Widget, WindowBuilder, WindowEvent,
-    WindowPerformanceSnapshot, set_window_scene_statistics_detail_mode,
+    Application, DefaultTheme, Event, RenderOutput, Result, SemanticsRole, Size, SizedBox, Vector,
+    Widget, WindowBuilder, WindowEvent,
 };
 use sui_scene::{Brush, SceneCommand};
 use sui_testing::prelude::*;

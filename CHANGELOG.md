@@ -44,6 +44,44 @@ Versioning, with the usual expectation that the API may change during the
   theme regardless of builder order and across live theme switches; added
   `Dialog::theme_when` and `ResponsiveSidebar::theme_when`.
 
+### Breaking: a clearer `sui` facade
+
+- `sui::Padding` is now the padding container widget at the crate root, as it
+  already was in the prelude. The insets value is `sui::Insets` everywhere.
+- Diagnostics plumbing moved from the crate root into `sui::diagnostics`:
+  window performance snapshots and summaries, scene statistics, inspector
+  snapshots and traces, cache and render diagnostics, renderer debug captures,
+  output diagnostics, desktop automation, and accessibility audits. Import
+  them from `sui::diagnostics` instead.
+- The prelude is smaller. It no longer brings in the low-level `Application`
+  and `WindowBuilder` (prefer `App` and `Window`, or import them), layout
+  algorithm functions and results, compiled animation and editor internals,
+  widget-specific `*Paint` structs and `paint_*` chrome painters (`paint_text`
+  and `paint_text_line` stay), text render policy enums, `TEXT_COMMAND`,
+  `WidgetDiagnosticsCtx`, or `set_window_render_options`. All remain at the
+  crate root. It now includes `Error`, `SemanticTone`, `Modifiers`,
+  `PointerButton`, `KeyState`, `EventPhase`, `Observer`, `Subscription`,
+  `WeakObserver`, `SemanticRegion`, and `PlacementBadge`.
+- `Result` takes an optional error type, `Result<T, E = Error>`, so a glob
+  import of the prelude no longer breaks `Result<T, E>`.
+- Text rendering settings are one set of types, defined in `sui-scene`:
+  `TextRenderMode`, `TextSubpixelOrder`, `TextRenderHinting`,
+  `TextRenderStemDarkening`, and `TextRenderCoveragePolicy`. The renderer's
+  `TextHinting` and `StemDarkening` and the runtime's `WindowTextHinting`,
+  `WindowStemDarkening`, `WindowTextCoveragePolicy`, and
+  `WindowTextSubpixelOrder` are now aliases of them, and
+  `WgpuRenderer::with_text_render_mode` takes the same `TextRenderMode` the
+  facade exports.
+- Deprecated the widget aliases `Modal`, `Drawer`, `BusyIndicator`,
+  `Divider`, `SpinBox`, `MultilineTextInput`, `ComboBox`, `DataGrid`,
+  `PathBar`, and `ResizablePane`; use `Dialog`, `SideSheet`, `Spinner`,
+  `Separator`, `NumberInput`, `TextArea`, `Select`, `Table`, `Breadcrumb`, and
+  `SplitView`. Documentation search still finds the canonical types by the
+  old names.
+- Deprecated `register_builtin_icon_resources`, which did nothing, and the
+  facade's unused `Style`.
+- Removed the `testing` Cargo feature of `sinomo-ui`, which enabled nothing.
+
 ### Breaking: redesigned widget book
 
 - The widget book is now one scrolling page of 60 component stories in nine

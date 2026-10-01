@@ -14,6 +14,7 @@ use std::{
     rc::Rc,
 };
 
+use sui::Application;
 use sui::prelude::*;
 use sui::{
     Command, GridTrack, LayerOptions, Rect, TextDirection, TextStyle, TextSurface,

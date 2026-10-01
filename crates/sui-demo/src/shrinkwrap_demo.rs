@@ -737,9 +737,9 @@ mod tests {
             ..Motion::default()
         });
         let (mut runtime, window) = runtime(state.clone())?;
-        sui::set_window_scene_statistics_detail_mode(
+        sui::diagnostics::set_window_scene_statistics_detail_mode(
             window,
-            sui::SceneStatisticsDetailMode::Detailed,
+            sui::diagnostics::SceneStatisticsDetailMode::Detailed,
         );
         let mut renderer = WgpuRenderer::new();
         renderer.render(&runtime.render(window)?.frame)?;
@@ -842,7 +842,7 @@ mod tests {
                     .map_or(0.0, |node| node.bounds.height());
                 trace.push_str(&format!("{animated},{},{:.4},{height:.3},{runtime_ms:.6},{renderer_ms:.6},{:.6},{:.6},{},{},{},{},{}\n",
                     index - WARMUP, state.get().width,
-                    phase_ms(sui::FramePhase::MeasureArrange), phase_ms(sui::FramePhase::Paint),
+                    phase_ms(sui::diagnostics::FramePhase::MeasureArrange), phase_ms(sui::diagnostics::FramePhase::Paint),
                     output.diagnostics.runtime_text_timing.total_time_us,
                     output.diagnostics.runtime_text_timing.size_only_request_count,
                     output.diagnostics.runtime_text_timing.cache_miss_count,

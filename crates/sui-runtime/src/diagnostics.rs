@@ -650,94 +650,20 @@ impl SceneStatisticsDetailMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum WindowTextHinting {
-    None,
-    Slight { max_ppem: f32 },
-}
+/// A window's text hinting, the scene's [`sui_scene::TextRenderHinting`].
+pub type WindowTextHinting = sui_scene::TextRenderHinting;
 
-pub const DEFAULT_WINDOW_TEXT_HINTING_MAX_PPEM: f32 = 96.0;
+pub const DEFAULT_WINDOW_TEXT_HINTING_MAX_PPEM: f32 = sui_scene::DEFAULT_TEXT_HINTING_MAX_PPEM;
 
-impl Default for WindowTextHinting {
-    fn default() -> Self {
-        Self::Slight {
-            max_ppem: DEFAULT_WINDOW_TEXT_HINTING_MAX_PPEM,
-        }
-    }
-}
+/// A window's stem darkening, the scene's [`sui_scene::TextRenderStemDarkening`].
+pub type WindowStemDarkening = sui_scene::TextRenderStemDarkening;
 
-impl WindowTextHinting {
-    pub fn normalized(self) -> Self {
-        match self {
-            Self::None => Self::None,
-            Self::Slight { max_ppem } if max_ppem.is_finite() && max_ppem > 0.0 => {
-                Self::Slight { max_ppem }
-            }
-            Self::Slight { .. } => Self::None,
-        }
-    }
-}
+/// A window's text coverage policy, the scene's
+/// [`sui_scene::TextRenderCoveragePolicy`].
+pub type WindowTextCoveragePolicy = sui_scene::TextRenderCoveragePolicy;
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub enum WindowStemDarkening {
-    #[default]
-    None,
-    Enabled {
-        max_ppem: f32,
-        amount: f32,
-    },
-}
-
-impl WindowStemDarkening {
-    pub fn normalized(self) -> Self {
-        match self {
-            Self::None => Self::None,
-            Self::Enabled { max_ppem, amount }
-                if max_ppem.is_finite() && max_ppem > 0.0 && amount.is_finite() && amount > 0.0 =>
-            {
-                Self::Enabled {
-                    max_ppem,
-                    amount: amount.clamp(0.0, 1.0),
-                }
-            }
-            Self::Enabled { .. } => Self::None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub enum WindowTextCoveragePolicy {
-    #[default]
-    Perceptual,
-    Linear,
-    Gamma(f32),
-    CoverageBoost(f32),
-    TwoCoverageMinusCoverageSq,
-}
-
-impl WindowTextCoveragePolicy {
-    pub fn normalized(self) -> Self {
-        match self {
-            Self::Perceptual => Self::Perceptual,
-            Self::Linear => Self::Linear,
-            Self::Gamma(gamma) if gamma.is_finite() && gamma > 0.0 => Self::Gamma(gamma),
-            Self::Gamma(_) => Self::Linear,
-            Self::CoverageBoost(amount) if amount.is_finite() && amount > 0.0 => {
-                Self::CoverageBoost(amount.clamp(0.0, 1.0))
-            }
-            Self::CoverageBoost(_) => Self::Linear,
-            Self::TwoCoverageMinusCoverageSq => Self::TwoCoverageMinusCoverageSq,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum WindowTextSubpixelOrder {
-    #[default]
-    None,
-    Rgb,
-    Bgr,
-}
+/// A window's text subpixel order, the scene's [`sui_scene::TextSubpixelOrder`].
+pub type WindowTextSubpixelOrder = sui_scene::TextSubpixelOrder;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WindowOutputColorPrimaries {

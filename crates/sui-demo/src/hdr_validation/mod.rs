@@ -17,8 +17,10 @@ mod ui_modes;
 #[cfg(test)]
 mod tests;
 
+use sui::Application;
+use sui::GridTrack;
+use sui::diagnostics::WindowOutputDiagnostics;
 use sui::prelude::*;
-use sui::{GridTrack, WindowOutputDiagnostics};
 
 #[cfg(test)]
 use capture::{CAPTURE_BUTTON_LABEL, CAPTURE_STATUS_NAME, COPY_REPORT_BUTTON_LABEL};

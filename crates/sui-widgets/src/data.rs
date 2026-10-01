@@ -3122,8 +3122,11 @@ impl TableRow {
     }
 }
 
+/// Former name of [`Table`].
+#[deprecated(note = "use `Table`")]
 pub type DataGrid = Table;
 
+#[doc(alias = "DataGrid")]
 pub struct Table {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -5120,8 +5123,11 @@ impl BreadcrumbItem {
     }
 }
 
+/// Former name of [`Breadcrumb`].
+#[deprecated(note = "use `Breadcrumb`")]
 pub type PathBar = Breadcrumb;
 
+#[doc(alias = "PathBar")]
 pub struct Breadcrumb {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,

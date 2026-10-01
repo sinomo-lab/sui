@@ -259,8 +259,8 @@ The application-facing controls are:
 
 - `TextInput`: single-line text. Initial, pasted, and programmatic newlines
   are removed.
-- `TextArea` (also exported as `MultilineTextInput`): multiline text, with an
-  optional `on_submit` policy for plain Enter.
+- `TextArea`: multiline text, with an optional `on_submit` policy for plain
+  Enter.
 - `PasswordInput`: a `TextInput` wrapper that masks graphemes visually and
   marks editable semantics as password content. Its Rust value is still
   plaintext.

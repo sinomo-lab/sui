@@ -78,11 +78,12 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use sui::Application;
-#[cfg(not(target_arch = "wasm32"))]
-use sui::{
-    DesktopAutomationAction, DesktopAutomationConfig, DesktopPlatform, SceneStatisticsDetailMode,
-    SemanticsRole, set_window_render_options, set_window_scene_statistics_detail_mode,
+use sui::diagnostics::{
+    DesktopAutomationAction, DesktopAutomationConfig, SceneStatisticsDetailMode,
+    set_window_scene_statistics_detail_mode,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use sui::{DesktopPlatform, SemanticsRole, set_window_render_options};
 #[cfg(all(not(target_arch = "wasm32"), feature = "tui"))]
 use sui::{
     Event, ImeEvent, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons, PointerEvent,
@@ -601,7 +602,7 @@ fn draw_tui(
         ])
         .split(frame.area());
 
-    let issue_count = sui_tui::validate_snapshot(&sui::AccessibilitySnapshot {
+    let issue_count = sui_tui::validate_snapshot(&sui::diagnostics::AccessibilitySnapshot {
         window_id: sui::WindowId::new(0),
         root: nodes
             .iter()

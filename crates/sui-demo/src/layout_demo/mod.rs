@@ -9,6 +9,8 @@ mod tests;
 
 use std::rc::Rc;
 
+#[cfg(test)]
+use sui::Application;
 use sui::{
     AdaptiveClass, GridTrackMax, Rect, ResponsiveSidebarMode, Signal, WidgetPodMutVisitor,
     WidgetPodVisitor, prelude::*,

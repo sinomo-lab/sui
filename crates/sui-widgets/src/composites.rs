@@ -13,7 +13,9 @@ mod toolbars;
 pub use dialogs::BottomSheet;
 pub use dialogs::CommandPalette;
 pub use dialogs::Dialog;
+#[allow(deprecated)]
 pub use dialogs::Drawer;
+#[allow(deprecated)]
 pub use dialogs::Modal;
 pub use dialogs::SheetState;
 pub use dialogs::SideSheet;
@@ -33,6 +35,7 @@ pub use forms::detail_row_height_for_value;
 pub use forms::paint_detail_row_at;
 pub use forms::paint_section_label;
 pub use forms::paint_section_label_detail;
+#[allow(deprecated)]
 pub use indicators::BusyIndicator;
 pub use indicators::CoverageDots;
 pub use indicators::CoverageDotsConfig;

@@ -1,8 +1,9 @@
+use sui::diagnostics::{OutputStrategy, WindowOutputDiagnostics};
 use sui::{
-    Application, Color, DefaultTheme, DisplayCapabilities, DisplayColorPrimaries, OutputStrategy,
-    Result, SemanticsRole, SemanticsValue, Size, SizedBox, WindowBuilder,
-    WindowColorManagementMode, WindowDynamicRangeMode, WindowOutputColorPrimaries,
-    WindowOutputDiagnostics, WindowRenderOptions, WindowToneMappingMode, window_render_options,
+    Application, Color, DefaultTheme, DisplayCapabilities, DisplayColorPrimaries, Result,
+    SemanticsRole, SemanticsValue, Size, SizedBox, WindowBuilder, WindowColorManagementMode,
+    WindowDynamicRangeMode, WindowOutputColorPrimaries, WindowRenderOptions, WindowToneMappingMode,
+    window_render_options,
 };
 use sui_render_wgpu::DynamicRangeMode;
 use sui_testing::prelude::*;
@@ -385,7 +386,9 @@ fn srgb_clipping_matches_what_an_srgb_output_shows() {
 
 #[test]
 fn light_metrics_measure_headroom_use() {
-    let image = sui::HdrRgbaImage::new(2, 1, vec![4.0, 2.0, 0.5, 1.0, 0.5, 0.5, 0.5, 1.0]).unwrap();
+    let image =
+        sui::diagnostics::HdrRgbaImage::new(2, 1, vec![4.0, 2.0, 0.5, 1.0, 0.5, 0.5, 0.5, 1.0])
+            .unwrap();
     let metrics = LightMetrics::of(&image);
     assert_eq!(metrics.max_channel, 4.0);
     assert_eq!(metrics.above_sdr_white, 0.5);

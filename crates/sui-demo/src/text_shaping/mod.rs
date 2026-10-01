@@ -10,6 +10,7 @@ mod tests;
 
 use std::{cell::Cell, rc::Rc};
 
+use sui::Application;
 use sui::prelude::*;
 use sui::{Rect, SemanticsNode, SemanticsRole, TextStyle, WidgetPodMutVisitor, WidgetPodVisitor};
 

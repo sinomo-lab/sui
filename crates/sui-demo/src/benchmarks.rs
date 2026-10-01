@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 use sui::prelude::*;
+use sui::{Application, TimelineBindingSink};
 use sui::{PointerEventKind, Rect, SemanticsNode, SemanticsRole, SemanticsValue, Vector};
 use sui_runtime::{LayerOptions, PaintBoundaryMode};
 use sui_scene::{LayerCompositionMode, LayerProperties};

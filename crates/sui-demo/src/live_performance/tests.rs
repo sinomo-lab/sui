@@ -1,11 +1,13 @@
 use std::{cell::RefCell, rc::Rc};
 
+use sui::diagnostics::{
+    FramePhase, FramePhaseSample, PresentationLatencyDiagnostics, RendererSubmissionDiagnostics,
+    SceneStatistics, SceneStatisticsDetailMode, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
+    WindowPerformanceSnapshot, window_scene_statistics_detail_mode,
+};
 use sui::{
-    App, Application, DefaultTheme, Event, FramePhase, FramePhaseSample,
-    PresentationLatencyDiagnostics, RendererSubmissionDiagnostics, Result, SceneStatistics,
-    SceneStatisticsDetailMode, SemanticsRole, SemanticsValue, Size, TextCacheDeltaDiagnostics,
-    TextCacheDiagnostics, Vector, Widget, WidgetPod, WidgetPodVisitor, Window, WindowBuilder,
-    WindowEvent, WindowId, WindowPerformanceSnapshot, window_scene_statistics_detail_mode,
+    App, Application, DefaultTheme, Event, Result, SemanticsRole, SemanticsValue, Size, Vector,
+    Widget, WidgetPod, WidgetPodVisitor, Window, WindowBuilder, WindowEvent, WindowId,
 };
 use sui_runtime::publish_window_performance_snapshot;
 use sui_testing::prelude::*;

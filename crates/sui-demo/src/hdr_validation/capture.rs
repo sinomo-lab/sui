@@ -9,14 +9,16 @@ use std::{
     rc::Rc,
 };
 
+use sui::diagnostics::{
+    DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
+    DebugCaptureTicket, DebugSdrVisualization, HdrRgbaImage, fit_to_sdr,
+    request_window_debug_capture, take_window_debug_capture, window_output_diagnostics,
+};
 use sui::prelude::*;
 use sui::{
-    AsyncWakeToken, DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest,
-    DebugCaptureStage, DebugCaptureTicket, DebugSdrVisualization, HdrRgbaImage, InvalidationKind,
-    InvalidationRequest, InvalidationTarget, Rect, RegisteredImage, RequestedToneMappingMode,
-    SemanticsNode, SemanticsRole, TextStyle, WakeEvent, WidgetId, WidgetPodMutVisitor,
-    WidgetPodVisitor, WindowId, fit_to_sdr, paint_text_line, request_window_debug_capture,
-    take_window_debug_capture, window_output_diagnostics,
+    AsyncWakeToken, InvalidationKind, InvalidationRequest, InvalidationTarget, Rect,
+    RegisteredImage, RequestedToneMappingMode, SemanticsNode, SemanticsRole, TextStyle, WakeEvent,
+    WidgetId, WidgetPodMutVisitor, WidgetPodVisitor, WindowId, paint_text_line,
 };
 
 use super::report::{

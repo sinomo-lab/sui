@@ -157,39 +157,6 @@ pub(crate) struct ResolvedTextRenderPolicy {
     pub(crate) coverage_policy: TextCoveragePolicy,
 }
 
-pub(crate) fn map_scene_text_render_mode(mode: sui_scene::TextRenderMode) -> TextRenderMode {
-    match mode {
-        sui_scene::TextRenderMode::Grayscale => TextRenderMode::Grayscale,
-        sui_scene::TextRenderMode::LcdSubpixel => TextRenderMode::LcdSubpixel,
-    }
-}
-
-pub(crate) fn map_scene_text_subpixel_order(
-    order: sui_scene::TextSubpixelOrder,
-) -> TextSubpixelOrder {
-    match order {
-        sui_scene::TextSubpixelOrder::None => TextSubpixelOrder::None,
-        sui_scene::TextSubpixelOrder::Rgb => TextSubpixelOrder::Rgb,
-        sui_scene::TextSubpixelOrder::Bgr => TextSubpixelOrder::Bgr,
-    }
-}
-
-pub(crate) fn map_text_render_hinting(hinting: TextRenderHinting) -> TextHinting {
-    match hinting.normalized() {
-        TextRenderHinting::None => TextHinting::None,
-        TextRenderHinting::Slight { max_ppem } => TextHinting::Slight { max_ppem },
-    }
-}
-
-pub(crate) fn map_text_render_stem_darkening(darkening: TextRenderStemDarkening) -> StemDarkening {
-    match darkening.normalized() {
-        TextRenderStemDarkening::None => StemDarkening::None,
-        TextRenderStemDarkening::Enabled { max_ppem, amount } => {
-            StemDarkening::Enabled { max_ppem, amount }
-        }
-    }
-}
-
 pub(crate) fn map_text_render_coverage_policy(
     policy: TextRenderCoveragePolicy,
 ) -> TextCoveragePolicy {
@@ -263,21 +230,15 @@ impl TextEngine {
         };
 
         ResolvedTextRenderPolicy {
-            render_mode: policy
-                .render_mode
-                .map(map_scene_text_render_mode)
-                .unwrap_or(self.text_render_mode),
-            subpixel_order: policy
-                .subpixel_order
-                .map(map_scene_text_subpixel_order)
-                .unwrap_or(self.text_subpixel_order),
+            render_mode: policy.render_mode.unwrap_or(self.text_render_mode),
+            subpixel_order: policy.subpixel_order.unwrap_or(self.text_subpixel_order),
             hinting: policy
                 .hinting
-                .map(map_text_render_hinting)
+                .map(TextRenderHinting::normalized)
                 .unwrap_or(self.text_hinting),
             stem_darkening: policy
                 .stem_darkening
-                .map(map_text_render_stem_darkening)
+                .map(TextRenderStemDarkening::normalized)
                 .unwrap_or(self.stem_darkening),
             coverage_policy: policy
                 .coverage_policy

@@ -2,7 +2,7 @@
 //! benchmarks of animation, zoom, and retained edges on larger graphs. They
 //! are ignored by default; run them serially on an idle machine.
 
-use sui::{WgpuRenderer, prelude::*};
+use sui::{Application, WgpuRenderer, WindowBuilder, prelude::*};
 use sui_nodes::{
     BackgroundVariant, Edge, FitViewOptions, Node, NodeGraph, NodeGraphConfig, NodeGraphState,
     Viewport,
@@ -56,9 +56,9 @@ fn small_node_demo_paint_profile() -> Result<()> {
     })
     .build()?;
     let window_id = runtime.window_ids()[0];
-    sui::set_window_scene_statistics_detail_mode(
+    sui::diagnostics::set_window_scene_statistics_detail_mode(
         window_id,
-        sui::SceneStatisticsDetailMode::Detailed,
+        sui::diagnostics::SceneStatisticsDetailMode::Detailed,
     );
     runtime.handle_event(
         window_id,
@@ -373,9 +373,9 @@ fn retained_node_graph_gpu_zoom_current_status_benchmark() -> Result<()> {
     let window_id = runtime.window_ids()[0];
     let detailed_profile = std::env::var_os("SUI_NODE_BENCH_PROFILE").is_some();
     if detailed_profile {
-        sui::set_window_scene_statistics_detail_mode(
+        sui::diagnostics::set_window_scene_statistics_detail_mode(
             window_id,
-            sui::SceneStatisticsDetailMode::Detailed,
+            sui::diagnostics::SceneStatisticsDetailMode::Detailed,
         );
     }
     let initial = runtime.render(window_id)?;
@@ -428,10 +428,12 @@ fn retained_node_graph_gpu_zoom_current_status_benchmark() -> Result<()> {
         runtime_time += runtime_started.elapsed();
         for phase in &output.diagnostics.phase_timings {
             match phase.phase {
-                sui::FramePhase::MeasureArrange => measure_arrange_ms += phase.duration_ms,
-                sui::FramePhase::HitTest => hit_test_ms += phase.duration_ms,
-                sui::FramePhase::Paint => paint_ms += phase.duration_ms,
-                sui::FramePhase::Semantics => semantics_ms += phase.duration_ms,
+                sui::diagnostics::FramePhase::MeasureArrange => {
+                    measure_arrange_ms += phase.duration_ms
+                }
+                sui::diagnostics::FramePhase::HitTest => hit_test_ms += phase.duration_ms,
+                sui::diagnostics::FramePhase::Paint => paint_ms += phase.duration_ms,
+                sui::diagnostics::FramePhase::Semantics => semantics_ms += phase.duration_ms,
                 _ => {}
             }
         }

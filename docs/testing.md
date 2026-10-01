@@ -104,6 +104,7 @@ The expected style is:
 
 ```rust
 use sui::prelude::*;
+use sui::{Application, WindowBuilder};
 use sui_testing::prelude::*;
 
 #[test]

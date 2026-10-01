@@ -9,6 +9,7 @@
 
 use std::{cell::RefCell, rc::Rc};
 
+use sui::Application;
 use sui::prelude::*;
 
 use crate::app::DevThemeReader;

@@ -14,8 +14,7 @@ use sui_runtime::{
 use web_time::Instant;
 
 use crate::{
-    WindowOutputDiagnostics, map_window_color_management, map_window_stem_darkening,
-    map_window_text_coverage_policy, map_window_text_hinting, map_window_text_subpixel_order,
+    WindowOutputDiagnostics, map_window_color_management, map_window_text_coverage_policy,
     publish_window_output_diagnostics, resolve_sdr_content_brightness_nits,
 };
 
@@ -93,16 +92,16 @@ fn apply_render_options(
         }),
     );
     renderer.set_runtime_text_hinting_override(
-        render_options.map(|options| map_window_text_hinting(options.text_hinting)),
+        render_options.map(|options| options.text_hinting.normalized()),
     );
     renderer.set_runtime_stem_darkening_override(
-        render_options.map(|options| map_window_stem_darkening(options.stem_darkening)),
+        render_options.map(|options| options.stem_darkening.normalized()),
     );
     renderer.set_runtime_text_coverage_policy_override(
         render_options.map(|options| map_window_text_coverage_policy(options.text_coverage_policy)),
     );
     renderer.set_runtime_text_subpixel_order_override(
-        render_options.map(|options| map_window_text_subpixel_order(options.text_subpixel_order)),
+        render_options.map(|options| options.text_subpixel_order),
     );
 
     // Without options, color management uses the defaults.

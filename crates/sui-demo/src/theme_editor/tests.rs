@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use sui::prelude::*;
+use sui::{Application, WindowBuilder};
 use sui::{
     Brush, Event, PointerButton, PointerButtons, PointerEvent, PointerEventKind, RenderOutput,
     Runtime, SceneCommand, ScrollDelta, SemanticsActionRequest, SemanticsEvent, SemanticsNode,

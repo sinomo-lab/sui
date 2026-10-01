@@ -27,9 +27,9 @@ pub(super) const STORIES: [Story; 8] = [
     Story {
         id: "table",
         title: "Table and data grid",
-        api: "Table, DataGrid",
+        api: "Table",
         summary: "Columnar rows with aligned numeric columns and a selected row.",
-        keywords: "grid columns rows cells",
+        keywords: "grid columns rows cells datagrid",
         category: Category::Data,
         build: table,
     },
@@ -206,7 +206,7 @@ fn table(ctx: &StoryCtx) -> Vec<Section> {
         example(
             "Data grid",
             SizedBox::new().width(420.0).height(190.0).with_child(
-                DataGrid::new("Asset grid")
+                Table::new("Asset grid")
                     .columns([
                         TableColumn::new("Asset"),
                         TableColumn::new("Type").width(92.0),

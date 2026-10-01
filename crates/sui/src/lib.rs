@@ -37,33 +37,40 @@ pub use app::UiHandle;
 pub use app::{App, ResourceRegistry, Window};
 
 pub use composites::{
-    ActionTilePaint, BottomSheet, BrowserTabBar, BusyIndicator, CalloutPaint, CodePanelPaint,
-    CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonFill, CommandButtonPaint, CommandGroup,
+    ActionTilePaint, BottomSheet, BrowserTabBar, CalloutPaint, CodePanelPaint, CodeTextLine,
+    CodeTextPaint, CodeTextSpan, CommandButtonFill, CommandButtonPaint, CommandGroup,
     CommandPalette, ContextMenu, ContextMenuHandle, Dialog, DisclosureButtonPaint, DockPanel,
-    Drawer, EmptyState, EmptyStatePaint, FieldGroup, FormRow, FormSection, FramedField,
-    HairlineEdge, Menu, MenuItem, Modal, PanelSection, Popover, PopoverAlignment, PresetStrip,
-    ProgressBar, PropertyRow, PropertyRowLayout, SectionLabel, SectionLabelPaint,
-    SectionPanelGeometry, SectionPanelPaint, ShadowBox, SheetState, SideSheet, SideSheetPlacement,
-    Spinner, StatusBar, StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance, SurfaceBorder,
-    SurfaceElevation, SurfaceRole, TabBar, TabBarItem, Tabs, ToolPalette, ToolPaletteItem, Toolbar,
-    Tooltip, TooltipAlignment, TooltipPlacement, paint_action_tile, paint_border, paint_callout,
-    paint_code_lines, paint_code_panel, paint_command_button, paint_disclosure_button,
-    paint_empty_state, paint_hairline, paint_placement_badge_with, paint_rounded_panel,
-    paint_rounded_rect, paint_section_label, paint_section_label_detail, paint_section_panel,
+    EmptyState, EmptyStatePaint, FieldGroup, FormRow, FormSection, FramedField, HairlineEdge, Menu,
+    MenuItem, PanelSection, Popover, PopoverAlignment, PresetStrip, ProgressBar, PropertyRow,
+    PropertyRowLayout, SectionLabel, SectionLabelPaint, SectionPanelGeometry, SectionPanelPaint,
+    ShadowBox, SheetState, SideSheet, SideSheetPlacement, Spinner, StatusBar, StatusBarHost,
+    StatusBarSegment, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation, SurfaceRole,
+    TabBar, TabBarItem, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment,
+    TooltipPlacement, paint_action_tile, paint_border, paint_callout, paint_code_lines,
+    paint_code_panel, paint_command_button, paint_disclosure_button, paint_empty_state,
+    paint_hairline, paint_placement_badge_with, paint_rounded_panel, paint_rounded_rect,
+    paint_section_label, paint_section_label_detail, paint_section_panel,
 };
+// Former names, kept so existing code keeps building; naming one warns.
+#[allow(deprecated)]
+pub use composites::{BusyIndicator, Drawer, Modal};
 pub use containers::{
     Align, Background, ContentExtent, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow,
-    RebuildOnChange, RebuildOnConstraints, ScrollAxes, ScrollBar, ScrollState, ScrollView,
+    Padding, RebuildOnChange, RebuildOnConstraints, ScrollAxes, ScrollBar, ScrollState, ScrollView,
     SemanticRegion, SizedBox, Stack, SwitchView, TrailingSlotRow, VirtualScrollView,
 };
+#[allow(deprecated)]
+pub use controls::register_builtin_icon_resources;
 pub use controls::{
     BUILTIN_ICON_GLYPHS, Button, ButtonAppearance, Checkbox, CheckboxIndicatorState,
-    ChoiceAppearance, ComboBox, DateTimeInput, Divider, FieldAppearance, Icon, IconButton,
-    IconButtonPaint, IconGlyph, InteractionPreview, Label, Link, MultilineTextInput, NumberInput,
-    PasswordInput, RadioButton, RadioGroup, Select, Separator, Slider, SpinBox, Switch, TextArea,
-    TextInput, draw_glyph, paint_checkbox_indicator, paint_icon_button,
-    register_builtin_icon_resources,
+    ChoiceAppearance, DateTimeInput, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph,
+    InteractionPreview, Label, Link, NumberInput, PasswordInput, RadioButton, RadioGroup, Select,
+    Separator, Slider, Switch, TextArea, TextInput, draw_glyph, paint_checkbox_indicator,
+    paint_icon_button,
 };
+// Former names, kept so existing code keeps building; naming one warns.
+#[allow(deprecated)]
+pub use controls::{ComboBox, Divider, MultilineTextInput, SpinBox};
 pub use sui_core::{
     AsyncWakeToken, Clipboard, ClipboardBackend, Color, ColorSpace, CursorGrabMode, CustomEvent,
     DirtyRegion, DpiInfo, DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload,
@@ -82,20 +89,15 @@ pub use sui_layout::{
     Alignment, Axis, Constraints, FlexAlignContent, FlexBasis, FlexItem, FlexItemLayout,
     FlexJustify, FlexLayout, FlexLineLayout, FlexStyle, FlexWrap, GridItem, GridItemLayout,
     GridLayout, GridPlacement, GridStyle, GridTrack, GridTrackMax, IntrinsicSize, LayoutContext,
-    Padding, arrange_flex, flex_layout, grid_layout,
+    arrange_flex, flex_layout, grid_layout,
 };
 #[cfg(all(target_os = "android", feature = "mobile"))]
 pub use sui_platform::AndroidApp;
 #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 pub use sui_platform::{
-    AccessibilityIssue, AccessibilityIssueSeverity, AccessibilityIssueTarget,
-    AccessibilitySnapshot, DebugCaptureTicket, DesktopAutomationAction, DesktopAutomationConfig,
     DesktopExtension, DesktopExtensionContext, DesktopPlatform, DesktopWindow, FileDialogFilter,
     FileDialogFuture, FileDialogMode, FileDialogRequest, FileDialogSelection, FileDialogService,
-    HeadlessPlatform, NativeFileDialogs, PlatformFile, PlatformWindow, Waker,
-    WindowOutputDiagnostics, request_window_debug_capture, show_file_dialog,
-    take_window_debug_capture, validate_accessibility_snapshot, window_output_diagnostics,
-    window_output_diagnostics_signal,
+    HeadlessPlatform, NativeFileDialogs, PlatformFile, PlatformWindow, Waker, show_file_dialog,
 };
 pub use sui_reactive::{
     Change as ObservableChange, Observable, Observer, Selector, Signal, SourceId, Subscription,
@@ -103,43 +105,28 @@ pub use sui_reactive::{
 };
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{
-    DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureId, DebugCaptureRequest,
-    DebugCaptureStage, DebugSdrVisualization, DisplayCapabilities, DisplayColorPrimaries,
-    HdrRgbaImage, OutputGamut, OutputStrategy, RendererCapabilities, RendererInterop,
+    DisplayCapabilities, DisplayColorPrimaries, OutputGamut, RendererCapabilities, RendererInterop,
     RequestedToneMappingMode, RgbaImage, StemDarkening, TextCoveragePolicy, TextHinting,
-    WgpuExternalTextureContext, WgpuExternalTextureRegistry, WgpuRenderer, fit_to_sdr,
+    WgpuExternalTextureContext, WgpuExternalTextureRegistry, WgpuRenderer,
 };
 pub use sui_runtime::{
-    AnimateCtx, Application as RuntimeApplication, ArrangeCtx, AsyncTaskInspectorSnapshot,
-    COMMAND_HISTORY_LENGTH, CacheMetrics, CacheMetricsDelta, Command, CommandController,
-    CommandCtx, CommandDelivery, CommandDispatchSample, CommandKey, CommandSender, CommandTarget,
-    DEFAULT_SUI_LOGO_SVG, EXTERNAL_WAKE_KIND, EmbeddedSvgImageResource, EventCtx, EventPhase,
-    EventRoutePhase, EventRouteStep, EventRouteTraceSample, FocusRestorePolicy, FocusScope,
-    FocusScopeState, FocusState, FrameClock, FramePacing, FramePhase, FramePhaseSample,
-    FrameSchedule, InspectorHistorySnapshot, InvalidationTraceSample, KeyedChildren,
-    KeyedReconcile, LayerOptions, MeasureCtx, Motion, OVERLAY_DISMISS_REQUEST, OutputColorRange,
-    OverlayDismissPolicy, OverlayDismissReason, OverlayDismissRequest, OverlayFocusBehavior,
-    OverlayInitialFocus, OverlayKind, OverlayManagerSnapshot, OverlayModality, OverlayOptions,
-    OverlaySnapshot, OverlayTraceKind, OverlayTraceSample, PaintBoundaryMode, PaintCtx,
-    PresentationLatencyDiagnostics, REACTIVE_CHANGED, ReactiveInvalidationSample,
-    RenderDiagnostics, RenderOutput, RendererSubmissionDiagnostics,
-    RetainedPacketRebuildDiagnostics, Runtime, SceneStatistics, SceneStatisticsDetailMode,
-    SchedulerInspectorSnapshot, SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy,
-    StackSurfaceOptions, TextCacheDeltaDiagnostics, TextCacheDiagnostics, TimerInspectorSnapshot,
-    Widget, WidgetChildren, WidgetDiagnostic, WidgetDiagnosticsCtx, WidgetDiagnosticsSnapshot,
-    WidgetGeometrySnapshot, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetPod,
-    WidgetPodMutVisitor, WidgetPodVisitor, WidgetRebuildSample, WindowBuilder,
-    WindowColorManagementMode, WindowCursorState, WindowDynamicRangeMode, WindowIcon,
-    WindowInspectorSnapshot, WindowOutputColorPrimaries, WindowPerformanceSnapshot,
-    WindowPerformanceSummary, WindowRenderOptions, WindowStemDarkening, WindowTextCoveragePolicy,
-    WindowTextHinting, WindowTextSubpixelOrder, WindowToneMappingMode, app_motion_preference,
-    clear_window_render_options, default_sui_logo_image, motion_policy, motion_time_scale,
-    reset_motion_settings, set_app_motion_preference, set_motion_time_scale,
-    set_system_motion_preference, set_window_render_options,
-    set_window_scene_statistics_detail_mode, system_motion_preference,
-    window_command_dispatches_signal, window_output_color_range, window_output_color_range_signal,
-    window_performance_snapshot, window_performance_summary, window_render_options,
-    window_scene_statistics_detail_mode,
+    AnimateCtx, Application as RuntimeApplication, ArrangeCtx, Command, CommandController,
+    CommandCtx, CommandDelivery, CommandKey, CommandSender, CommandTarget, DEFAULT_SUI_LOGO_SVG,
+    EXTERNAL_WAKE_KIND, EmbeddedSvgImageResource, EventCtx, EventPhase, EventRoutePhase,
+    EventRouteStep, FocusRestorePolicy, FocusScope, FocusScopeState, FocusState, FrameClock,
+    FramePacing, FrameSchedule, KeyedChildren, KeyedReconcile, LayerOptions, MeasureCtx, Motion,
+    OVERLAY_DISMISS_REQUEST, OutputColorRange, OverlayDismissPolicy, OverlayDismissReason,
+    OverlayDismissRequest, OverlayFocusBehavior, OverlayInitialFocus, OverlayKind, OverlayModality,
+    OverlayOptions, PaintBoundaryMode, PaintCtx, REACTIVE_CHANGED, RenderOutput, Runtime,
+    SemanticsCtx, SingleChild, StackHostOptions, StackOrderPolicy, StackSurfaceOptions, Widget,
+    WidgetChildren, WidgetDiagnosticsCtx, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
+    WindowBuilder, WindowColorManagementMode, WindowCursorState, WindowDynamicRangeMode,
+    WindowIcon, WindowOutputColorPrimaries, WindowRenderOptions, WindowStemDarkening,
+    WindowTextCoveragePolicy, WindowTextHinting, WindowTextSubpixelOrder, WindowToneMappingMode,
+    app_motion_preference, clear_window_render_options, default_sui_logo_image, motion_policy,
+    motion_time_scale, reset_motion_settings, set_app_motion_preference, set_motion_time_scale,
+    set_system_motion_preference, set_window_render_options, system_motion_preference,
+    window_output_color_range, window_output_color_range_signal, window_render_options,
 };
 pub use sui_scene::{
     Border, Brush, GradientStop, ImagePixelSnap, ImageRegistry, ImageSampling, ImageSource,
@@ -183,7 +170,7 @@ pub use sui_widgets::{
     CollectionModelError, CollectionSync, CollectionWindow, ColorPalette, ColorPaletteSwatch,
     ColorPicker, ColorPickerAppearance, ColorSwatch, ConstraintOrientation, ConstraintQuery,
     ConstraintView, ControlMetrics, ControlPalette, ControlSize, ControlTypography, CoverageDots,
-    CoverageDotsConfig, DataGrid, DecorativeColors, DecorativeHue, DecorativePalette, DefaultTheme,
+    CoverageDotsConfig, DecorativeColors, DecorativeHue, DecorativePalette, DefaultTheme,
     DetailRow, DockFloatingGroup, DockLayoutError, DockNode, DockPanelId, DockWorkspace,
     DockWorkspaceSnapshot, DockWorkspaceState, DockZone, DragDropHost, Draggable, DropHover,
     DropTarget, EffectToken, FloatingStack, FloatingViewConfig, FloatingViewSnapshot,
@@ -193,13 +180,12 @@ pub use sui_widgets::{
     LayoutTransition, LeadingLabelCellPaint, ListItem, ListView, MasterDetail, MasterDetailRoute,
     MasterDetailState, MaterialToken, NeutralRamp, NotificationCenter, NotificationHost,
     NotificationId, NotificationUrgency, OverlayAlignment, OverlayCollisionPolicy, OverlayHost,
-    OverlayPlacement, OverlayPlacementRequest, OverlayPlacementResult, OverlaySide, PathBar,
-    PixelCanvas, PixelCanvasAppearance, PixelCanvasBlendMode, PixelCanvasBrushShape,
-    PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool, PlacementBadge,
-    PlacementBadgePaint, ReorderableList, ReorderableListChange, ResizablePane,
-    ResolvedEffectStyle, ResolvedHdrStyle, ResolvedMaterialStyle, ResponsiveSidebar,
-    ResponsiveSidebarMode, ResponsiveSidebarSnapshot, ResponsiveSidebarState, RichAttachment,
-    RichBlockId, RichDocumentBlock, RichDocumentBlockKind, RichDocumentModel,
+    OverlayPlacement, OverlayPlacementRequest, OverlayPlacementResult, OverlaySide, PixelCanvas,
+    PixelCanvasAppearance, PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot,
+    PixelCanvasState, PixelCanvasTool, PlacementBadge, PlacementBadgePaint, ReorderableList,
+    ReorderableListChange, ResolvedEffectStyle, ResolvedHdrStyle, ResolvedMaterialStyle,
+    ResponsiveSidebar, ResponsiveSidebarMode, ResponsiveSidebarSnapshot, ResponsiveSidebarState,
+    RichAttachment, RichBlockId, RichDocumentBlock, RichDocumentBlockKind, RichDocumentModel,
     RichDocumentRenderContext, RichDocumentRendererRegistry, RichDocumentSnapshot,
     RichDocumentSpan, RichDocumentStatus, RichDocumentUpdate, RichDocumentView,
     RichDocumentViewState, RichExtensionBlock, RichInlineImage, RichInlineKind, RichInlineStyle,
@@ -228,6 +214,9 @@ pub use sui_widgets::{
     resolve_luminance_role, resolve_material_role, resolve_semantic_color,
     resolve_widget_hdr_style, wrap_text_lines,
 };
+// Former names, kept so existing code keeps building; naming one warns.
+#[allow(deprecated)]
+pub use sui_widgets::{DataGrid, PathBar, ResizablePane};
 pub use sui_widgets::{KeyedStack, Presence, PresenceTransition};
 pub use sui_widgets::{Paragraph, TextPlacement, TextShaper, VerticalAlign};
 
@@ -419,11 +408,8 @@ pub struct Application {
 
 impl Default for Application {
     fn default() -> Self {
-        let mut inner = RuntimeApplication::default();
-        sui_widgets::register_builtin_icon_resources(&mut inner)
-            .expect("built-in Lucide icon resources should be valid");
         Self {
-            inner,
+            inner: RuntimeApplication::default(),
             #[cfg(feature = "wgpu")]
             feathering_enabled: sui_render_wgpu::FeatheringOptions::default().enabled,
             #[cfg(feature = "wgpu")]
@@ -436,7 +422,7 @@ impl Default for Application {
 }
 
 impl Application {
-    /// Create an empty application with built-in icon resources registered.
+    /// Create an empty application.
     pub fn new() -> Self {
         Self::default()
     }
@@ -689,26 +675,62 @@ impl Application {
 }
 
 /// Minimal shared style values for custom facade-level components.
+#[deprecated(note = "nothing in SUI reads `Style`; keep such values in your own type")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Style {
     /// Foreground brush used to draw content.
     pub foreground: Brush,
     /// Insets around the styled content.
-    pub padding: Padding,
+    pub padding: Insets,
 }
 
+#[allow(deprecated)]
 impl Default for Style {
     fn default() -> Self {
         let theme = Theme::default();
 
         Self {
             foreground: Brush::Solid(theme.foreground),
-            padding: Padding::all(0.0),
+            padding: Insets::all(0.0),
         }
     }
 }
 
 /// Common imports for ordinary SUI application and widget code.
+/// Tooling plumbing for inspectors, tests, and benchmarks: frame timings and
+/// scene statistics, inspector snapshots and traces, renderer debug captures,
+/// desktop automation, and accessibility audits. Applications rarely need it.
+pub mod diagnostics {
+    #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
+    pub use sui_platform::{
+        AccessibilityIssue, AccessibilityIssueSeverity, AccessibilityIssueTarget,
+        AccessibilitySnapshot, DebugCaptureTicket, DesktopAutomationAction,
+        DesktopAutomationConfig, WindowOutputDiagnostics, request_window_debug_capture,
+        take_window_debug_capture, validate_accessibility_snapshot, window_output_diagnostics,
+        window_output_diagnostics_signal,
+    };
+    #[cfg(feature = "wgpu")]
+    pub use sui_render_wgpu::{
+        DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureId, DebugCaptureRequest,
+        DebugCaptureStage, DebugSdrVisualization, HdrRgbaImage, OutputStrategy, fit_to_sdr,
+    };
+    pub use sui_runtime::{
+        AsyncTaskInspectorSnapshot, COMMAND_HISTORY_LENGTH, CacheMetrics, CacheMetricsDelta,
+        CommandDispatchSample, EventRouteTraceSample, FramePhase, FramePhaseSample,
+        InspectorHistorySnapshot, InvalidationTraceSample, OverlayManagerSnapshot, OverlaySnapshot,
+        OverlayTraceKind, OverlayTraceSample, PresentationLatencyDiagnostics,
+        ReactiveInvalidationSample, RenderDiagnostics, RendererSubmissionDiagnostics,
+        RetainedPacketRebuildDiagnostics, SceneStatistics, SceneStatisticsDetailMode,
+        SchedulerInspectorSnapshot, TextCacheDeltaDiagnostics, TextCacheDiagnostics,
+        TimerInspectorSnapshot, WidgetDiagnostic, WidgetDiagnosticsSnapshot,
+        WidgetGeometrySnapshot, WidgetGraphSnapshot, WidgetNodeSnapshot, WidgetRebuildSample,
+        WindowInspectorSnapshot, WindowPerformanceSnapshot, WindowPerformanceSummary,
+        set_window_scene_statistics_detail_mode, window_command_dispatches_signal,
+        window_performance_snapshot, window_performance_summary,
+        window_scene_statistics_detail_mode,
+    };
+}
+
 pub mod prelude {
     #[cfg(any(feature = "desktop", feature = "web"))]
     pub use crate::UiHandle;
@@ -717,58 +739,58 @@ pub mod prelude {
         FileDialogFilter, FileDialogMode, FileDialogRequest, FileDialogSelection,
         FileDialogService, NativeFileDialogs, PlatformFile, show_file_dialog,
     };
+    // Former names, kept so existing code keeps building; naming one warns.
+    #[allow(deprecated)]
+    pub use crate::{
+        BusyIndicator, ComboBox, DataGrid, Divider, Drawer, Modal, MultilineTextInput, PathBar,
+        ResizablePane, SpinBox,
+    };
 
     pub use crate::{
-        ActionCard, ActionTilePaint, AdaptiveBreakpoints, AdaptiveClass, AdaptiveView, Align,
-        Alignment, AnimateCtx, AnimatedValue, AnimationBinding, AnimationDocument,
-        AnimationDocumentFormatError, AnimationEditorCommand, AnimationEditorState,
-        AnimationPlayer, AnimationProperty, AnimationPropertyPath, AnimationSelection,
-        AnimationSpec, AnimationTargetId, AnimationTick, AnimationValue, AnimationValueKind, App,
-        Application, ArrangeCtx, AspectRatio, AspectRatioFit, AsyncWakeToken, Axis, Background,
-        BasicSyntaxHighlighter, Blink, BottomSheet, Breadcrumb, BreadcrumbItem, BrowserTabBar,
-        Brush, BrushPreview, BrushPreviewShape, BrushPreviewSpec, BusyIndicator, Button,
-        ButtonAppearance, CalloutPaint, Canvas, CanvasAppearance, CanvasGridStyle, CanvasRuler,
-        CanvasRulerAppearance, CanvasRulerAxis, CanvasShape, CanvasStroke, CanvasSurface,
-        CanvasViewport, CanvasZoomBehavior, CanvasZoomContext, Checkbox, CheckboxIndicatorState,
-        ChoiceAppearance, Clip, CodePanelPaint, CodeTextLine, CodeTextPaint, CodeTextSpan,
-        CollectionAnchor, CollectionAnchorGravity, CollectionChange, CollectionDelta,
-        CollectionExtentIndex, CollectionModelError, CollectionSync, CollectionWindow, Color,
-        ColorPalette, ColorPaletteSwatch, ColorPicker, ColorPickerAppearance, ColorSwatch,
-        ComboBox, Command, CommandButtonFill, CommandButtonPaint, CommandController, CommandCtx,
+        ActionCard, AdaptiveBreakpoints, AdaptiveClass, AdaptiveView, Align, Alignment, AnimateCtx,
+        AnimatedValue, AnimationBinding, AnimationDocument, AnimationDocumentFormatError,
+        AnimationPlayer, AnimationProperty, AnimationPropertyPath, AnimationSpec,
+        AnimationTargetId, AnimationTick, AnimationValue, AnimationValueKind, App, ArrangeCtx,
+        AspectRatio, AspectRatioFit, AsyncWakeToken, Axis, Background, BasicSyntaxHighlighter,
+        Blink, BottomSheet, Breadcrumb, BreadcrumbItem, BrowserTabBar, Brush, BrushPreview,
+        BrushPreviewShape, BrushPreviewSpec, Button, ButtonAppearance, Canvas, CanvasAppearance,
+        CanvasGridStyle, CanvasRuler, CanvasRulerAppearance, CanvasRulerAxis, CanvasShape,
+        CanvasStroke, CanvasSurface, CanvasViewport, CanvasZoomBehavior, CanvasZoomContext,
+        Checkbox, ChoiceAppearance, Clip, CollectionAnchor, CollectionAnchorGravity,
+        CollectionChange, CollectionDelta, CollectionExtentIndex, CollectionModelError,
+        CollectionSync, CollectionWindow, Color, ColorPalette, ColorPaletteSwatch, ColorPicker,
+        ColorPickerAppearance, ColorSwatch, Command, CommandController, CommandCtx,
         CommandDelivery, CommandGroup, CommandKey, CommandPalette, CommandSender, CommandTarget,
-        CompiledClip, CompiledTimeline, CompiledTrack, ConstraintOrientation, ConstraintQuery,
-        ConstraintView, Constraints, ContentExtent, ContextMenu, ContextMenuHandle, ControlMetrics,
-        ControlPalette, ControlSize, ControlTypography, CoverageDots, CoverageDotsConfig,
-        CursorGrabMode, DataGrid, DateTimeInput, DecorativeHue, DefaultTheme, DetailRow, Dialog,
-        DisclosureButtonPaint, Divider, Dock, DockFloatingGroup, DockLayoutError, DockNode,
-        DockPanel, DockPanelId, DockWorkspace, DockWorkspaceSnapshot, DockWorkspaceState, DockZone,
-        DragDropHost, DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload,
-        DragPreview, DragScopeId, DragSessionId, Draggable, Drawer, DropEffect, DropEffects,
-        DropHover, DropTarget, Easing, EmptyState, EmptyStatePaint, Event, EventCtx,
-        FieldAppearance, FieldGroup, FixedPaneSplit, Flex, FlexAlignContent, FlexBasis, FlexItem,
-        FlexItemLayout, FlexJustify, FlexLayout, FlexLineLayout, FlexStyle, FlexWrap,
-        FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace, FloatingWorkspaceState,
-        FocusRestorePolicy, FocusScope, FocusScopeState, FontFeature, FontFeatures, FontHandle,
-        FontStretch, FontStyle, FontWeight, FormRow, FormSection, FrameClock, FramedField,
-        GlowTone, Grid, GridCell, GridItem, GridItemLayout, GridLayout, GridPlacement, GridStyle,
-        GridTrack, GridTrackMax, HairlineEdge, Icon, IconButton, IconButtonPaint, IconGlyph, Image,
-        ImageFit, ImageHandle, ImeEvent, Insets, InteractionPreview, Interpolate, IntrinsicSize,
-        KeyboardEvent, KeyedChildren, KeyedReconcile, KeyedStack, Keyframe, KeyframeSelection,
-        Label, LayerList, LayerListItem, LayerListReorderChange, LayoutTransition,
-        LeadingLabelCellPaint, Link, ListItem, ListView, LoopMode, MasterDetail, MasterDetailRoute,
-        MasterDetailState, MeasureCtx, MeasuredBottomDock, Menu, MenuItem, Modal, Motion,
-        MotionPolicy, MotionPreference, MotionScalar, MotionValue, MultilineTextInput, NeutralRamp,
+        ConstraintOrientation, ConstraintQuery, ConstraintView, Constraints, ContentExtent,
+        ContextMenu, ContextMenuHandle, ControlMetrics, ControlPalette, ControlSize,
+        ControlTypography, CoverageDots, CoverageDotsConfig, CursorGrabMode, DateTimeInput,
+        DecorativeHue, DefaultTheme, DetailRow, Dialog, Dock, DockFloatingGroup, DockLayoutError,
+        DockNode, DockPanel, DockPanelId, DockWorkspace, DockWorkspaceSnapshot, DockWorkspaceState,
+        DockZone, DragDropHost, DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload,
+        DragPreview, DragScopeId, DragSessionId, Draggable, DropEffect, DropEffects, DropHover,
+        DropTarget, Easing, EmptyState, Error, Event, EventCtx, EventPhase, FieldAppearance,
+        FieldGroup, FixedPaneSplit, Flex, FlexAlignContent, FlexBasis, FlexItem, FlexJustify,
+        FlexStyle, FlexWrap, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,
+        FloatingWorkspaceState, FocusRestorePolicy, FocusScope, FocusScopeState, FontFeature,
+        FontFeatures, FontHandle, FontStretch, FontStyle, FontWeight, FormRow, FormSection,
+        FrameClock, FramedField, GlowTone, Grid, GridCell, GridItem, GridPlacement, GridStyle,
+        GridTrack, GridTrackMax, Icon, IconButton, IconGlyph, Image, ImageFit, ImageHandle,
+        ImeEvent, Insets, InteractionPreview, Interpolate, IntrinsicSize, KeyState, KeyboardEvent,
+        KeyedChildren, KeyedReconcile, KeyedStack, Keyframe, Label, LayerList, LayerListItem,
+        LayerListReorderChange, LayoutTransition, Link, ListItem, ListView, LoopMode, MasterDetail,
+        MasterDetailRoute, MasterDetailState, MeasureCtx, MeasuredBottomDock, Menu, MenuItem,
+        Modifiers, Motion, MotionPolicy, MotionPreference, MotionScalar, MotionValue, NeutralRamp,
         NotificationCenter, NotificationHost, NotificationId, NotificationUrgency, NumberInput,
-        Observable, Overflow, OverlayAlignment, OverlayCollisionPolicy, OverlayDismissPolicy,
-        OverlayDismissReason, OverlayFocusBehavior, OverlayHost, OverlayKind, OverlayOptions,
-        OverlayPlacement, OverlayPlacementRequest, OverlayPlacementResult, OverlaySide, PaintCtx,
-        PanelSection, PasswordInput, Path, PathBar, PathBuilder, PixelCanvas,
-        PixelCanvasAppearance, PixelCanvasBlendMode, PixelCanvasBrushShape,
-        PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool, PlacementBadgePaint,
-        PlaybackState, Point, PointerEvent, Popover, Presence, PresenceTransition, PresetStrip,
-        Progress, ProgressBar, PropertyRow, PropertyRowLayout, Pulse, RadioButton, RadioGroup,
-        RawMouseMotionEvent, RebuildOnChange, RebuildOnConstraints, Rect, RegisteredFont,
-        RegisteredImage, ReorderableList, ReorderableListChange, ResizablePane, ResourceRegistry,
+        Observable, Observer, Overflow, OverlayAlignment, OverlayCollisionPolicy,
+        OverlayDismissPolicy, OverlayDismissReason, OverlayFocusBehavior, OverlayHost, OverlayKind,
+        OverlayOptions, OverlayPlacement, OverlayPlacementRequest, OverlayPlacementResult,
+        OverlaySide, Padding, PaintCtx, PanelSection, PasswordInput, Path, PathBuilder,
+        PixelCanvas, PixelCanvasAppearance, PixelCanvasBlendMode, PixelCanvasBrushShape,
+        PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool, PlacementBadge,
+        PlaybackState, Point, PointerButton, PointerEvent, Popover, Presence, PresenceTransition,
+        PresetStrip, Progress, ProgressBar, PropertyRow, PropertyRowLayout, Pulse, RadioButton,
+        RadioGroup, RawMouseMotionEvent, RebuildOnChange, RebuildOnConstraints, Rect,
+        RegisteredFont, RegisteredImage, ReorderableList, ReorderableListChange, ResourceRegistry,
         ResponsiveSidebar, ResponsiveSidebarMode, ResponsiveSidebarSnapshot,
         ResponsiveSidebarState, Result, RichAttachment, RichBlockId, RichDocumentBlock,
         RichDocumentBlockKind, RichDocumentModel, RichDocumentRenderContext,
@@ -776,45 +798,33 @@ pub mod prelude {
         RichDocumentUpdate, RichDocumentView, RichDocumentViewState, RichExtensionBlock,
         RichInlineImage, RichInlineKind, RichInlineStyle, RichLink, RichListItem,
         RichSyntaxHighlighter, RichSyntaxSpan, RichSyntaxTokenKind, RichText, RichTextSourceMap,
-        RichTextSourceSpan, SafeArea, SafeAreaEdges, SafeAreaInsets, SampleBatch, SampleBuffer,
-        SampledAnimationValue, ScrollAlignment, ScrollAxes, ScrollBar, ScrollState, ScrollView,
-        SectionLabel, SectionLabelPaint, SectionPanelGeometry, SectionPanelPaint, SegmentedControl,
-        SegmentedControlItem, Select, SelectionChange, SelectionClipboardBehavior, SelectionEntry,
-        SelectionIntent, SelectionOrder, SelectionOwnerId, SelectionPayload, SelectionPoint,
-        SelectionScope, Selector, SemanticsCtx, Separator, ShadowBox, ShadowParams,
-        ShadowPlacement, ShapedText, SharedCompiledTimeline, SheetState, SideSheet,
-        SideSheetPlacement, Signal, SimpleColorPicker, SimpleColorPickerMode, SingleChild, Size,
-        SizedBox, Slider, SourceId, SpinBox, Spinner, SplitExtent, SplitPaneSide, SplitState,
-        SplitStateSnapshot, SplitView, SpringF32, SpringSpec, Stack, Stagger, StaggerOrigin,
-        StatusBar, StatusBarHost, StatusBarSegment, StrokeStyle, Style, Surface, SurfaceAppearance,
-        SurfaceBorder, SurfaceElevation, SurfacePalette, SurfaceRole, Switch, SwitchView,
-        TEXT_COMMAND, TabBar, TabBarItem, Table, TableColumn, TableColumnAlignment, TableRow, Tabs,
-        TextArea, TextBlockPaint, TextCellPaint, TextCommand, TextDocument, TextInput, TextLayout,
-        TextMeasurement, TextParagraph, TextParagraphStyle, TextRenderCoveragePolicy,
-        TextRenderHinting, TextRenderMode, TextRenderPolicy, TextRenderStemDarkening,
-        TextSelectionInfo, TextSpan, TextSpanId, TextStyle, TextSubpixelOrder, TextWrap, Theme,
-        ThemeAspectRatios, ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors,
-        ThemeContainers, ThemeDensity, ThemeExtension, ThemeExtensions, ThemeFontFamilies,
-        ThemeFontStack, ThemeFontWeights, ThemeGlows, ThemeLeading, ThemeMotion, ThemePerspective,
-        ThemeRadii, ThemeShadow, ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextToken,
-        ThemeTracking, Timeline, TimelineBindingSink, TimelineMarker, TimelinePlayer, TimelineSnap,
-        TimelineTick, TimerToken, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment,
-        TooltipPlacement, Track, TrailingSlotRow, Transform, TransientNotification, Transition,
-        TreeItem, TreeView, VirtualCollectionModel, VirtualCollectionSource, VirtualList,
-        VirtualListChrome, VirtualListSelectionMode, VirtualListState, VirtualScrollView,
-        VirtualTable, VirtualTableColumn, VirtualTableRowActivationKind, VirtualTableRowContext,
-        VirtualTableSortDirection, VirtualTableState, VirtualViewportSnapshot, WakeEvent, Widget,
-        WidgetChildren, WidgetDiagnosticsCtx, WidgetPod, WidgetShader, Window, WindowBuilder,
-        WindowCursorState, WindowRenderOptions, arrange_flex, containers::Padding,
-        detail_row_height_for_value, flex_layout, grid_layout, invalidation_for_animation_property,
-        paint_action_tile, paint_border, paint_callout, paint_canvas_grid,
-        paint_checkbox_indicator, paint_code_lines, paint_code_panel, paint_command_button,
-        paint_coverage_dots, paint_coverage_dots_with_config, paint_detail_row_at,
-        paint_disclosure_button, paint_empty_state, paint_hairline, paint_icon_button,
-        paint_leading_label_cell, paint_placement_badge_with, paint_rounded_panel,
-        paint_rounded_rect, paint_section_label, paint_section_label_detail, paint_section_panel,
-        paint_text, paint_text_block, paint_text_cell, paint_text_line, place_overlay,
-        register_builtin_icon_resources, set_window_render_options, wrap_text_lines,
+        RichTextSourceSpan, SafeArea, SafeAreaEdges, SafeAreaInsets, ScrollAlignment, ScrollAxes,
+        ScrollBar, ScrollState, ScrollView, SectionLabel, SegmentedControl, SegmentedControlItem,
+        Select, SelectionChange, SelectionClipboardBehavior, SelectionEntry, SelectionIntent,
+        SelectionOrder, SelectionOwnerId, SelectionPayload, SelectionPoint, SelectionScope,
+        Selector, SemanticRegion, SemanticTone, SemanticsCtx, Separator, ShadowBox, ShadowParams,
+        ShadowPlacement, ShapedText, SheetState, SideSheet, SideSheetPlacement, Signal,
+        SimpleColorPicker, SimpleColorPickerMode, SingleChild, Size, SizedBox, Slider, SourceId,
+        Spinner, SplitExtent, SplitPaneSide, SplitState, SplitStateSnapshot, SplitView, SpringF32,
+        SpringSpec, Stack, Stagger, StaggerOrigin, StatusBar, StatusBarHost, StatusBarSegment,
+        StrokeStyle, Subscription, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation,
+        SurfacePalette, SurfaceRole, Switch, SwitchView, TabBar, TabBarItem, Table, TableColumn,
+        TableColumnAlignment, TableRow, Tabs, TextArea, TextCommand, TextDocument, TextInput,
+        TextLayout, TextMeasurement, TextParagraph, TextParagraphStyle, TextSelectionInfo,
+        TextSpan, TextSpanId, TextStyle, TextWrap, Theme, ThemeAspectRatios, ThemeBlurScale,
+        ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeDensity,
+        ThemeExtension, ThemeExtensions, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
+        ThemeGlows, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow,
+        ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking, Timeline,
+        TimelineMarker, TimelinePlayer, TimelineSnap, TimelineTick, TimerToken, ToolPalette,
+        ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment, TooltipPlacement, Track,
+        TrailingSlotRow, Transform, TransientNotification, Transition, TreeItem, TreeView,
+        VirtualCollectionModel, VirtualCollectionSource, VirtualList, VirtualListChrome,
+        VirtualListSelectionMode, VirtualListState, VirtualScrollView, VirtualTable,
+        VirtualTableColumn, VirtualTableRowActivationKind, VirtualTableRowContext,
+        VirtualTableSortDirection, VirtualTableState, VirtualViewportSnapshot, WakeEvent,
+        WeakObserver, Widget, WidgetChildren, WidgetPod, WidgetShader, Window, WindowCursorState,
+        WindowRenderOptions, paint_text, paint_text_line,
     };
     pub use crate::{Paragraph, TextAlign, TextPlacement, TextShaper, VerticalAlign};
 }

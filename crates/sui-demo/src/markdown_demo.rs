@@ -542,6 +542,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sui::{Application, WindowBuilder};
     use sui::{RenderOutput, SemanticsRole};
     use sui_scene::SceneCommand;
 

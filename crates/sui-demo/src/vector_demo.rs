@@ -2383,10 +2383,11 @@ fn vector_ellipse_path_for_radii(radius_x: f32, radius_y: f32) -> Path {
 mod tests {
     use super::*;
 
+    use sui::diagnostics::FramePhase;
     use sui::{
-        Application, Brush, Event, FramePhase, PointerButton, PointerButtons, PointerEvent,
-        PointerEventKind, RenderOutput, Result, SceneCommand, ScrollDelta, SemanticsRole,
-        SemanticsValue, Vector, WgpuRenderer, WindowBuilder,
+        Application, Brush, Event, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
+        RenderOutput, Result, SceneCommand, ScrollDelta, SemanticsRole, SemanticsValue, Vector,
+        WgpuRenderer, WindowBuilder,
     };
     use sui_testing::{TestApp, TestWindow, WindowSnapshot};
 

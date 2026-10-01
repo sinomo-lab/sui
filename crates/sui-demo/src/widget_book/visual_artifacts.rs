@@ -7,10 +7,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use sui::diagnostics::window_output_diagnostics;
 use sui::{
     Error, Event, Rect, Result, SemanticsRole, Size, Vector, WindowColorManagementMode,
     WindowDynamicRangeMode, WindowEvent, WindowOutputColorPrimaries, WindowRenderOptions,
-    WindowToneMappingMode, window_output_diagnostics,
+    WindowToneMappingMode,
 };
 use sui_render_wgpu::{
     DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,

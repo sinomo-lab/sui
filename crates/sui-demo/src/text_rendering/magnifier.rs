@@ -7,13 +7,16 @@ use std::{
     rc::Rc,
 };
 
+use sui::diagnostics::{
+    DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest, DebugCaptureStage,
+    DebugCaptureTicket, DebugSdrVisualization, request_window_debug_capture,
+    take_window_debug_capture,
+};
 use sui::prelude::*;
 use sui::{
-    AsyncWakeToken, DebugCaptureArtifact, DebugCaptureEncoding, DebugCaptureRequest,
-    DebugCaptureStage, DebugCaptureTicket, DebugSdrVisualization, ImageSampling, ImageSource,
-    InvalidationKind, InvalidationRequest, InvalidationTarget, Rect, RegisteredImage, RgbaImage,
-    SemanticsNode, SemanticsRole, WakeEvent, WidgetId, WidgetPodMutVisitor, WidgetPodVisitor,
-    paint_text_line, request_window_debug_capture, take_window_debug_capture,
+    AsyncWakeToken, ImageSampling, ImageSource, InvalidationKind, InvalidationRequest,
+    InvalidationTarget, Rect, RegisteredImage, RgbaImage, SemanticsNode, SemanticsRole, WakeEvent,
+    WidgetId, WidgetPodMutVisitor, WidgetPodVisitor, paint_text_line,
 };
 
 use super::samples::ZoomRegion;
