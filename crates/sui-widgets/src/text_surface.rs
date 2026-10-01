@@ -1,9 +1,10 @@
+use crate::draw::{inset_rect, mix_color};
 use std::ops::Range;
 
 use sui_core::{
-    Color, EditableTextSemantics, Event, ImeEvent, KeyState, Path, Point, PointerButton,
-    PointerEventKind, Rect, ScrollDelta, SemanticsNode, SemanticsRole, SemanticsTextRange,
-    SemanticsValue, Size, Vector, WindowEvent,
+    EditableTextSemantics, Event, ImeEvent, KeyState, Path, Point, PointerButton, PointerEventKind,
+    Rect, ScrollDelta, SemanticsNode, SemanticsRole, SemanticsTextRange, SemanticsValue, Size,
+    Vector, WindowEvent,
 };
 use sui_layout::{Constraints, Padding as Insets};
 use sui_reactive::Signal;
@@ -2167,12 +2168,14 @@ impl Widget for TextSurface {
         } else {
             palette.field
         };
-        let background = mix_color(base_background, palette.surface_focus, focus_progress);
+        let background =
+            mix_color(base_background, palette.surface_focus, focus_progress).clamped();
         let border = mix_color(
             mix_color(palette.button_border, palette.border_hover, hover_progress),
             palette.border_focus,
             focus_progress,
-        );
+        )
+        .clamped();
 
         draw_control_shape(
             ctx,
@@ -2381,19 +2384,6 @@ fn set_focus_animation_target(
     )
 }
 
-fn mix_color(from: Color, to: Color, amount: f32) -> Color {
-    crate::animation::Interpolate::interpolate(from, to, amount).clamped()
-}
-
-fn inset_rect(rect: Rect, padding: Insets) -> Rect {
-    Rect::new(
-        rect.x() + padding.left,
-        rect.y() + padding.top,
-        (rect.width() - padding.left - padding.right).max(0.0),
-        (rect.height() - padding.top - padding.bottom).max(0.0),
-    )
-}
-
 fn scroll_delta_to_offset(delta: ScrollDelta) -> Vector {
     match delta {
         ScrollDelta::Lines(delta) => Vector::new(delta.x * 40.0, delta.y * 40.0),
@@ -2440,6 +2430,7 @@ mod tests {
     use super::*;
     use crate::editable_text::keyboard_text;
     use std::{cell::RefCell, rc::Rc};
+    use sui_core::Color;
 
     use sui_core::{
         Event, KeyboardEvent, Modifiers, PointerButtons, PointerEvent, PointerKind,

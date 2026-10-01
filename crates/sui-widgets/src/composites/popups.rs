@@ -11,17 +11,15 @@ use crate::animation::Reveal;
 use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
-use crate::composites::indicators::{
-    draw_control_frame, draw_popover_arrival_overlay, inset_rect, measure_text, mix_color,
-    rounded_rect_path, text_token_style, tooltip_tail,
-};
+use crate::composites::indicators::{draw_popover_arrival_overlay, text_token_style, tooltip_tail};
 use crate::composites::toolbars::{
     MenuItem, context_menu_item_semantics_node, menu_item_semantics_node, menu_row_height,
     menu_submenu_indicator_width, menu_width_for_items, themed_menu_height_for_rows,
     virtual_menu_item_path_id,
 };
 use crate::controls::cap_resolved_hdr_style;
-use crate::frame::draw_focus_ring;
+use crate::draw::{inset_rect, measure_text, mix_color};
+use crate::frame::{draw_control_frame, draw_focus_ring};
 use crate::overlay::OverlayAlignment;
 use crate::overlay::OverlayPlacement;
 use crate::overlay::OverlayPlacementRequest;
@@ -39,6 +37,7 @@ use sui_core::InvalidationKind;
 use sui_core::InvalidationRequest;
 use sui_core::InvalidationTarget;
 use sui_core::KeyState;
+use sui_core::Path;
 use sui_core::Point;
 use sui_core::PointerButton;
 use sui_core::PointerEventKind;
@@ -433,7 +432,7 @@ impl Widget for Menu {
 
             if item.separator_before {
                 let line = Rect::new(row.x(), row.y() - 0.5, row.width(), 1.0);
-                ctx.fill(rounded_rect_path(line, 0.5), palette.border);
+                ctx.fill(Path::rounded_rect(line, 0.5), palette.border);
             }
 
             let highlighted = self.highlighted == Some(index);
@@ -467,7 +466,7 @@ impl Widget for Menu {
                     highlight_background
                 };
                 ctx.fill(
-                    rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
+                    Path::rounded_rect(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
                     background,
                 );
             }
@@ -1993,7 +1992,7 @@ impl Widget for ContextMenuSurface {
 
                 if item.separator_before {
                     let line = Rect::new(row.x(), row.y() - 0.5, row.width(), 1.0);
-                    ctx.fill(rounded_rect_path(line, 0.5), palette.border);
+                    ctx.fill(Path::rounded_rect(line, 0.5), palette.border);
                 }
 
                 let highlighted = state.highlighted.as_deref() == Some(path.as_slice());
@@ -2034,7 +2033,7 @@ impl Widget for ContextMenuSurface {
                         highlight_background
                     };
                     ctx.fill(
-                        rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
+                        Path::rounded_rect(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
                         background,
                     );
                 }

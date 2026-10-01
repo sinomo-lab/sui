@@ -1,3 +1,4 @@
+use crate::draw::inset_rect;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
@@ -2639,15 +2640,6 @@ where
             bars.visit_children_mut(visitor);
         }
     }
-}
-
-fn inset_rect(rect: Rect, padding: Insets) -> Rect {
-    Rect::new(
-        rect.x() + padding.left,
-        rect.y() + padding.top,
-        (rect.width() - padding.left - padding.right).max(0.0),
-        (rect.height() - padding.top - padding.bottom).max(0.0),
-    )
 }
 
 fn scroll_delta_to_offset(delta: ScrollDelta) -> Vector {

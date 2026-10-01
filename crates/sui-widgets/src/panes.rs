@@ -1,3 +1,4 @@
+use crate::draw::mix_color;
 use std::{
     cell::Cell,
     sync::{Arc, Mutex, MutexGuard},
@@ -5,7 +6,7 @@ use std::{
 use sui_text::TextAlign;
 
 use sui_core::{
-    Color, Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point,
+    Event, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point,
     PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
     SemanticsValue, Size, WakeEvent, WidgetId,
 };
@@ -140,10 +141,6 @@ fn set_focus_animation_target(
         theme.motion.focus_easing(),
         ctx,
     )
-}
-
-fn mix_color(from: Color, to: Color, amount: f32) -> Color {
-    crate::animation::Interpolate::interpolate(from, to, amount)
 }
 
 pub type ResizablePane = SplitView;
@@ -2540,6 +2537,8 @@ mod tests {
         rc::Rc,
     };
 
+    use crate::draw::rect_center;
+
     use super::{
         FloatingStack, FloatingViewConfig, FloatingWorkspace, FloatingWorkspaceState, SplitExtent,
         SplitPaneSide, SplitState, SplitStateSnapshot, SplitView, floating_view_title_bar_rect,
@@ -3392,13 +3391,6 @@ mod tests {
             self.back.visit_children_mut(visitor);
             self.front.visit_children_mut(visitor);
         }
-    }
-
-    fn rect_center(rect: Rect) -> Point {
-        Point::new(
-            rect.x() + rect.width() * 0.5,
-            rect.y() + rect.height() * 0.5,
-        )
     }
 
     fn click(runtime: &mut Runtime, window_id: sui_core::WindowId, at: Point) -> Result<()> {

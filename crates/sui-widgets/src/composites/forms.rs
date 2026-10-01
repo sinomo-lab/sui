@@ -4,18 +4,18 @@ use crate::DefaultTheme;
 use crate::IconGlyph;
 use crate::SemanticTone;
 use crate::animation::{AnimationSpec, Progress, StateMotion};
-use crate::composites::indicators::{
-    draw_control_frame, inset_rect, measure_text, mix_color, rounded_rect_path, text_token_style,
-};
+use crate::composites::indicators::text_token_style;
 use crate::composites::surfaces::SurfaceElevation;
 use crate::controls::draw_icon_glyph;
-use crate::frame::{draw_control_shape, draw_focus_ring, physical_pixels};
+use crate::draw::{inset_rect, measure_text, mix_color};
+use crate::frame::{draw_control_frame, draw_control_shape, draw_focus_ring, physical_pixels};
 use crate::paint_theme_shadow;
 use crate::text_align::paint_text;
 use crate::text_align::paint_text_line;
 use sui_core::Color;
 use sui_core::Event;
 use sui_core::KeyState;
+use sui_core::Path;
 use sui_core::PathBuilder;
 use sui_core::Point;
 use sui_core::PointerButton;
@@ -510,7 +510,7 @@ impl Widget for ActionCard {
             accent_height,
         );
         ctx.fill(
-            rounded_rect_path(accent_rail, metrics.action_card_accent_width * 0.5),
+            Path::rounded_rect(accent_rail, metrics.action_card_accent_width * 0.5),
             accent,
         );
 
@@ -2755,7 +2755,7 @@ impl Widget for PanelSection {
                 theme.palette.surface.with_alpha(0.001)
             };
             ctx.fill(
-                rounded_rect_path(header_hit, metrics.indicator_corner_radius),
+                Path::rounded_rect(header_hit, metrics.indicator_corner_radius),
                 header_fill,
             );
             paint_panel_section_disclosure(

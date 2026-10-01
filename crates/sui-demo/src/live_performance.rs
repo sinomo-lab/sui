@@ -537,7 +537,7 @@ impl Widget for LivePerformancePanel {
 
     fn paint(&self, ctx: &mut PaintCtx) {
         let display = self.display.borrow().clone();
-        let frame = rounded_rect_path(ctx.bounds(), Self::CORNER_RADIUS);
+        let frame = Path::rounded_rect(ctx.bounds(), Self::CORNER_RADIUS);
         ctx.fill(frame.clone(), Color::rgba(0.015, 0.025, 0.035, 0.50));
         ctx.stroke(
             frame,
@@ -663,10 +663,6 @@ impl Widget for LivePerformancePanel {
         node.value = Some(SemanticsValue::Text(value));
         ctx.push(node);
     }
-}
-
-pub(crate) fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
-    Path::rounded_rect(rect, radius.min(rect.width().min(rect.height()) * 0.5))
 }
 
 pub(crate) fn format_fps(frame_interval_ms: Option<f64>) -> String {

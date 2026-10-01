@@ -6,11 +6,9 @@ use crate::SemanticTone;
 use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
-use crate::composites::indicators::{
-    draw_control_frame, inset_rect, measure_text, mix_color, rect_center,
-};
 use crate::controls::draw_icon_glyph;
-use crate::frame::{draw_control_shape, physical_pixels};
+use crate::draw::{inset_rect, measure_text, mix_color, rect_center};
+use crate::frame::{draw_control_frame, draw_control_shape, physical_pixels};
 use sui_core::Color;
 use sui_core::Event;
 use sui_core::KeyState;

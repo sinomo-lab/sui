@@ -7,17 +7,18 @@ use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
 use crate::composites::indicators::{
-    inset_rect, measure_text, mix_color, numeric_text_style_if_numeric, rounded_rect_path,
-    semibold_control_text_style, text_token_style,
+    numeric_text_style_if_numeric, semibold_control_text_style, text_token_style,
 };
 use crate::composites::painting::{EmptyStatePaint, paint_empty_state};
 use crate::controls::draw_icon_glyph;
+use crate::draw::{inset_rect, measure_text, mix_color};
 use crate::frame::{draw_control_shape, draw_focus_ring, physical_pixels};
 use crate::text_align::paint_aligned_text_contained;
 use crate::text_align::paint_text;
 use sui_core::Color;
 use sui_core::Event;
 use sui_core::KeyState;
+use sui_core::Path;
 use sui_core::Point;
 use sui_core::PointerButton;
 use sui_core::PointerEventKind;
@@ -1148,7 +1149,7 @@ impl Widget for StatusBar {
                 );
                 if !pill.is_empty() {
                     ctx.fill(
-                        rounded_rect_path(pill, metrics.indicator_corner_radius),
+                        Path::rounded_rect(pill, metrics.indicator_corner_radius),
                         tone.with_alpha(0.12),
                     );
                 }
@@ -1378,7 +1379,7 @@ pub fn paint_status_badge(
     let padding = theme.metrics.button_padding.left.max(6.0);
     let radius = theme.radius.sm.min(rect.height() * 0.5);
 
-    ctx.fill(rounded_rect_path(rect, radius), tone_soft);
+    ctx.fill(Path::rounded_rect(rect, radius), tone_soft);
 
     let mut x = rect.x() + padding.min(rect.width() * 0.5);
     if let Some(icon) = icon {

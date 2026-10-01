@@ -109,9 +109,11 @@ use crate::composites::forms::{
     property_row_label_id, section_label_text_style,
 };
 #[cfg(test)]
-use crate::composites::indicators::{inset_rect, mix_color, rect_center, text_token_style};
+use crate::composites::indicators::text_token_style;
 #[cfg(test)]
 use crate::composites::navigation::{browser_tab_close_semantics_id, browser_tab_semantics_id};
+#[cfg(test)]
+use crate::draw::{inset_rect, mix_color, rect_center};
 
 #[cfg(test)]
 use crate::composites::status::status_bar_segment_id;

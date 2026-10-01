@@ -60,7 +60,7 @@ pub(crate) fn stroke_border(ctx: &mut PaintCtx, rect: Rect, radius: f32, width: 
     }
     let half = width * 0.5;
     ctx.stroke(
-        rounded_rect(rect.inflate(-half, -half), radius - half),
+        Path::rounded_rect(rect.inflate(-half, -half), radius - half),
         color,
         StrokeStyle::new(width),
     );
@@ -78,7 +78,7 @@ pub(crate) fn draw_control_shape(
     border: Color,
 ) {
     let bounds = snap_to_pixels(ctx, bounds);
-    ctx.fill(rounded_rect(bounds, radius), background);
+    ctx.fill(Path::rounded_rect(bounds, radius), background);
     stroke_border(ctx, bounds, radius, border_width, border);
 }
 
@@ -95,17 +95,34 @@ pub(crate) fn draw_focus_ring(
     let bounds = snap_to_pixels(ctx, bounds);
     let outset = physical_pixels(ctx, metrics.focus_ring_outset);
     ctx.stroke(
-        rounded_rect(bounds.inflate(outset, outset), radius + outset),
+        Path::rounded_rect(bounds.inflate(outset, outset), radius + outset),
         color,
         StrokeStyle::new(physical_pixels(ctx, metrics.focus_ring_width)),
     );
 }
 
-fn rounded_rect(rect: Rect, radius: f32) -> Path {
-    Path::rounded_rect(
-        rect,
-        radius.min(rect.width().min(rect.height()) * 0.5).max(0.0),
-    )
+/// Fills a rounded box, draws its border inside it, and, given a color,
+/// the theme's focus ring around it, all on whole physical pixels.
+pub(crate) fn draw_control_frame(
+    ctx: &mut PaintCtx,
+    bounds: Rect,
+    radius: f32,
+    metrics: ControlMetrics,
+    background: Color,
+    border: Color,
+    focus_ring: Option<Color>,
+) {
+    draw_control_shape(
+        ctx,
+        bounds,
+        radius,
+        physical_pixels(ctx, metrics.border_width),
+        background,
+        border,
+    );
+    if let Some(focus_ring) = focus_ring {
+        draw_focus_ring(ctx, bounds, radius, metrics, focus_ring);
+    }
 }
 
 #[cfg(test)]

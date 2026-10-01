@@ -1,3 +1,4 @@
+use crate::draw::inset_rect_evenly;
 use std::{
     collections::HashMap,
     sync::{
@@ -248,7 +249,7 @@ pub fn place_overlay(request: &OverlayPlacementRequest) -> OverlayPlacementResul
             overflow: 0.0,
         };
     }
-    let safe_viewport = inset_rect(request.viewport, request.margin);
+    let safe_viewport = inset_rect_evenly(request.viewport, request.margin);
     let mut size = request.overlay_size;
     let mut resized = false;
     if request.collision.resize {
@@ -328,17 +329,6 @@ fn placement_rect(anchor: Rect, size: Size, placement: OverlayPlacement, gap: f3
         }
     };
     Rect::new(x, y, size.width, size.height)
-}
-
-fn inset_rect(rect: Rect, margin: f32) -> Rect {
-    let horizontal = margin.min(rect.width() * 0.5);
-    let vertical = margin.min(rect.height() * 0.5);
-    Rect::new(
-        rect.x() + horizontal,
-        rect.y() + vertical,
-        (rect.width() - horizontal * 2.0).max(0.0),
-        (rect.height() - vertical * 2.0).max(0.0),
-    )
 }
 
 fn overflow_amount(rect: Rect, viewport: Rect) -> f32 {

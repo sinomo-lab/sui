@@ -10,7 +10,8 @@ use crate::ThemeTextToken;
 use crate::composites::popups::TooltipPlacement;
 use crate::composites::status::{StatusBadge, paint_status_badge};
 use crate::controls::apply_hdr_policy_cap;
-use crate::frame::{draw_control_shape, draw_focus_ring, physical_pixels, stroke_border};
+use crate::draw::{inset_rect, measure_text, mix_color, rect_center};
+use crate::frame::{draw_control_shape, physical_pixels, stroke_border};
 use crate::paint_theme_glow;
 use crate::text_align::paint_text;
 use crate::text_align::paint_text_line;
@@ -31,7 +32,6 @@ use sui_runtime::PaintCtx;
 use sui_runtime::SemanticsCtx;
 use sui_runtime::Widget;
 use sui_text::FontWeight;
-use sui_text::TextMeasurement;
 use sui_text::TextStyle;
 use sui_text::{FontFeature, TextAlign};
 
@@ -120,7 +120,7 @@ pub fn paint_coverage_dots_with_config(
         for index in 0..shown {
             let dot_rect = Rect::new(x, y, dot, dot);
             if index < config.current.min(shown) {
-                ctx.fill(rounded_rect_path(dot_rect, dot * 0.5), tone_color);
+                ctx.fill(Path::rounded_rect(dot_rect, dot * 0.5), tone_color);
             } else {
                 stroke_border(
                     ctx,
@@ -662,7 +662,7 @@ pub fn paint_progress_bar(
     let (tone, _) = theme.semantic_tone_colors(tone);
     // An unbordered recessed track under the tone-colored fill.
     ctx.fill(
-        rounded_rect_path(rect, metrics.corner_radius),
+        Path::rounded_rect(rect, metrics.corner_radius),
         palette.control_hover,
     );
 
@@ -673,7 +673,7 @@ pub fn paint_progress_bar(
         rect.height(),
     );
     if fill.width() > 0.0 {
-        ctx.fill(rounded_rect_path(fill, metrics.corner_radius), tone);
+        ctx.fill(Path::rounded_rect(fill, metrics.corner_radius), tone);
     }
 }
 
@@ -883,19 +883,6 @@ impl Widget for Spinner {
 
 pub type BusyIndicator = Spinner;
 
-pub(super) fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeasurement {
-    ctx.layout()
-        .measure_text(text.to_string(), style.clone())
-        .unwrap_or(TextMeasurement {
-            width: 0.0,
-            height: style.line_height,
-            bounds: Rect::new(0.0, 0.0, 0.0, style.line_height),
-            ascent: style.font_size,
-            descent: 0.0,
-            cap_height: Some(style.font_size),
-        })
-}
-
 pub(super) fn text_token_style(
     theme: &DefaultTheme,
     token: ThemeTextToken,
@@ -930,26 +917,6 @@ pub(super) fn numeric_text_style_if_numeric(text: &str, style: TextStyle) -> Tex
 
 pub(super) fn text_contains_ascii_digit(text: &str) -> bool {
     text.chars().any(|c| c.is_ascii_digit())
-}
-
-pub(super) fn rect_center(rect: Rect) -> Point {
-    Point::new(
-        rect.x() + (rect.width() * 0.5),
-        rect.y() + (rect.height() * 0.5),
-    )
-}
-
-pub(super) fn inset_rect(rect: Rect, padding: Insets) -> Rect {
-    Rect::new(
-        rect.x() + padding.left,
-        rect.y() + padding.top,
-        (rect.width() - padding.left - padding.right).max(0.0),
-        (rect.height() - padding.top - padding.bottom).max(0.0),
-    )
-}
-
-pub(super) fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
-    Path::rounded_rect(rect, radius.min(rect.width().min(rect.height()) * 0.5))
 }
 
 pub(super) fn tab_indicator_rect<F>(
@@ -1060,33 +1027,6 @@ pub(super) fn tab_state_visuals(
         interaction.pressed_blend * press_amount,
     );
     Some((fill, Color::TRANSPARENT))
-}
-
-pub(super) fn draw_control_frame(
-    ctx: &mut PaintCtx,
-    bounds: Rect,
-    radius: f32,
-    metrics: ControlMetrics,
-    background: Color,
-    border: Color,
-    focus_ring: Option<Color>,
-) {
-    draw_control_shape(
-        ctx,
-        bounds,
-        radius,
-        physical_pixels(ctx, metrics.border_width),
-        background,
-        border,
-    );
-
-    if let Some(focus_ring) = focus_ring {
-        draw_focus_ring(ctx, bounds, radius, metrics, focus_ring);
-    }
-}
-
-pub(super) fn mix_color(left: Color, right: Color, amount: f32) -> Color {
-    crate::animation::Interpolate::interpolate(left, right, amount)
 }
 
 pub(super) fn draw_popover_arrival_overlay(

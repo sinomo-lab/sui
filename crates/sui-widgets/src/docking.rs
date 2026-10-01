@@ -6,6 +6,7 @@
 //! changes. Native operating-system window tear-out is intentionally outside
 //! this widget's scope.
 
+use crate::draw::inset_rect_evenly;
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -1260,7 +1261,7 @@ impl DockWorkspace {
                 .copied()
                 .find(|panel| *panel != dragged_panel)
                 .unwrap_or(group.active);
-            let zone_bounds = inset_rect(group.bounds, DROP_ZONE_INSET);
+            let zone_bounds = inset_rect_evenly(group.bounds, DROP_ZONE_INSET);
             return Some(DockDropCandidate {
                 target: Some(target),
                 zone: DockZone::Center,
@@ -1304,7 +1305,7 @@ impl DockWorkspace {
                     target: None,
                     zone: DockZone::Center,
                     host_bounds: bounds,
-                    zone_bounds: inset_rect(bounds, DROP_ZONE_INSET),
+                    zone_bounds: inset_rect_evenly(bounds, DROP_ZONE_INSET),
                     center_only: true,
                 });
             }
@@ -1865,23 +1866,11 @@ impl DockWorkspace {
             .map(|entry| entry.title.as_str())
             .unwrap_or("Panel");
         let style = theme.text_style(theme.palette.text);
-        let text_bounds = inset_rect(bounds, 8.0);
+        let text_bounds = inset_rect_evenly(bounds, 8.0);
         ctx.push_clip_rect(text_bounds);
         paint_text_line(ctx, text_bounds, text, &style, TextAlign::Start);
         ctx.pop_clip();
     }
-}
-
-fn inset_rect(bounds: Rect, amount: f32) -> Rect {
-    let amount = amount.max(0.0);
-    let horizontal = amount.min(bounds.width() * 0.5);
-    let vertical = amount.min(bounds.height() * 0.5);
-    Rect::new(
-        bounds.x() + horizontal,
-        bounds.y() + vertical,
-        (bounds.width() - horizontal * 2.0).max(0.0),
-        (bounds.height() - vertical * 2.0).max(0.0),
-    )
 }
 
 fn drop_zone_at(bounds: Rect, position: Point) -> DockZone {
@@ -1910,7 +1899,7 @@ fn drop_zone_at(bounds: Rect, position: Point) -> DockZone {
 }
 
 fn drop_zone_rect(bounds: Rect, zone: DockZone) -> Rect {
-    let bounds = inset_rect(bounds, DROP_ZONE_INSET);
+    let bounds = inset_rect_evenly(bounds, DROP_ZONE_INSET);
     let edge_width = bounds.width() * DROP_EDGE_FRACTION;
     let edge_height = bounds.height() * DROP_EDGE_FRACTION;
 

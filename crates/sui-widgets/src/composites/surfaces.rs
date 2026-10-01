@@ -2,7 +2,7 @@ use crate::DefaultTheme;
 use crate::Progress;
 use crate::SemanticTone;
 use crate::composites::forms::set_hover_animation_target;
-use crate::composites::indicators::{inset_rect, mix_color, rounded_rect_path};
+use crate::draw::{inset_rect, mix_color};
 use crate::frame::{
     draw_control_shape, draw_focus_ring, physical_pixels, snap_to_pixels, snap_width_to_pixels,
     stroke_border,
@@ -12,6 +12,7 @@ use crate::{
 };
 use sui_core::Color;
 use sui_core::Event;
+use sui_core::Path;
 use sui_core::PointerEventKind;
 use sui_core::Rect;
 use sui_core::SemanticsNode;
@@ -365,7 +366,7 @@ impl Widget for Surface {
 
         let (background, border) = self.resolved_colors(&theme);
         if radius > 0.0 {
-            ctx.fill(rounded_rect_path(bounds, radius), background);
+            ctx.fill(Path::rounded_rect(bounds, radius), background);
         } else {
             ctx.fill_rect(bounds, background);
         }

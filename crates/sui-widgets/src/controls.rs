@@ -1,5 +1,7 @@
 mod interaction;
 use crate::animation::Reveal;
+use crate::draw::{inset_rect, measure_text, mix_color, rect_center};
+use crate::frame::draw_control_frame;
 use crate::{
     AnimationSpec, ControlMetrics, ControlPalette, DefaultTheme, GlowTone, HdrThemeMode,
     Interpolate, Progress, ResolvedEffectStyle, ResolvedHdrStyle, SemanticTone, WidgetColorRole,
@@ -373,7 +375,7 @@ impl Widget for Separator {
             ),
         };
         ctx.fill(
-            rounded_rect_path(line, thickness * 0.5),
+            Path::rounded_rect(line, thickness * 0.5),
             theme.palette.border,
         );
     }
@@ -562,10 +564,6 @@ fn set_focus_animation_target(
         theme.motion.focus_easing(),
         ctx,
     );
-}
-
-fn mix_color(from: Color, to: Color, t: f32) -> Color {
-    Color::interpolate(from, to, t)
 }
 
 /// The visual treatment used by pressable controls.
@@ -4407,11 +4405,11 @@ impl Widget for Slider {
             ),
         );
         ctx.fill(
-            rounded_rect_path(track, track.height() * 0.5),
+            Path::rounded_rect(track, track.height() * 0.5),
             palette.control_active,
         );
         ctx.fill(
-            rounded_rect_path(active, track.height() * 0.5),
+            Path::rounded_rect(active, track.height() * 0.5),
             palette.accent,
         );
         ctx.fill(
@@ -4936,7 +4934,7 @@ impl Widget for NumberInput {
                     press_amount,
                 );
                 ctx.fill(
-                    rounded_rect_path(rect.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
+                    Path::rounded_rect(rect.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
                     fill,
                 );
             }
@@ -4986,7 +4984,7 @@ impl Widget for NumberInput {
                 content.height(),
             );
             ctx.set_ime_composition_rect(caret);
-            ctx.fill(rounded_rect_path(caret, caret_width * 0.5), palette.caret);
+            ctx.fill(Path::rounded_rect(caret, caret_width * 0.5), palette.caret);
         }
     }
 
@@ -5710,7 +5708,7 @@ impl Widget for TextArea {
             );
             ctx.set_ime_composition_rect(caret);
             if self.caret.visible {
-                ctx.fill(rounded_rect_path(caret, caret_width * 0.5), palette.caret);
+                ctx.fill(Path::rounded_rect(caret, caret_width * 0.5), palette.caret);
             }
         }
     }
@@ -5966,7 +5964,7 @@ impl Widget for SelectMenuSurface {
                     )
                 };
                 ctx.fill(
-                    rounded_rect_path(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
+                    Path::rounded_rect(row.inflate(-2.0, -2.0), metrics.corner_radius - 2.0),
                     background,
                 );
             }
@@ -7580,7 +7578,7 @@ impl Widget for TextInput {
             ctx.set_ime_composition_rect(caret_rect);
             if self.caret.visible {
                 ctx.fill(
-                    rounded_rect_path(caret_rect, caret_width * 0.5),
+                    Path::rounded_rect(caret_rect, caret_width * 0.5),
                     palette.caret,
                 );
             }
@@ -7914,19 +7912,6 @@ impl Widget for DateTimeInput {
     }
 }
 
-fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeasurement {
-    ctx.layout()
-        .measure_text(text.to_string(), style.clone())
-        .unwrap_or(TextMeasurement {
-            width: 0.0,
-            height: style.line_height,
-            bounds: Rect::new(0.0, 0.0, 0.0, style.line_height),
-            ascent: style.font_size,
-            descent: 0.0,
-            cap_height: Some(style.font_size),
-        })
-}
-
 fn measure_text_size(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> Size {
     ctx.layout()
         .measure_text_size(text.to_owned(), style.clone())
@@ -7945,13 +7930,6 @@ fn center_square(bounds: Rect, side: f32) -> Rect {
         bounds.y() + ((bounds.height() - side) * 0.5),
         side,
         side,
-    )
-}
-
-fn rect_center(rect: Rect) -> Point {
-    Point::new(
-        rect.x() + (rect.width() * 0.5),
-        rect.y() + (rect.height() * 0.5),
     )
 }
 
@@ -8108,27 +8086,6 @@ pub(crate) fn cap_resolved_hdr_style(style: ResolvedHdrStyle) -> ResolvedHdrStyl
     }
 }
 
-fn draw_control_frame(
-    ctx: &mut PaintCtx,
-    bounds: Rect,
-    radius: f32,
-    metrics: ControlMetrics,
-    background: Color,
-    border: Color,
-    focus_ring: Option<Color>,
-) {
-    draw_control_shape(
-        ctx,
-        bounds,
-        radius,
-        physical_pixels(ctx, metrics.border_width),
-        background,
-        border,
-    );
-
-    draw_control_focus_ring(ctx, bounds, radius, metrics, focus_ring);
-}
-
 fn draw_choice_control_frame(
     ctx: &mut PaintCtx,
     bounds: Rect,
@@ -8153,7 +8110,7 @@ fn draw_choice_control_frame(
 
     if visuals.background.alpha > f32::EPSILON {
         ctx.fill(
-            rounded_rect_path(snap_to_pixels(ctx, bounds), radius),
+            Path::rounded_rect(snap_to_pixels(ctx, bounds), radius),
             visuals.background,
         );
     }
@@ -8172,10 +8129,6 @@ fn draw_control_focus_ring(
     }
 }
 
-fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
-    Path::rounded_rect(rect, radius.min(rect.width().min(rect.height()) * 0.5))
-}
-
 fn checkmark_path(rect: Rect) -> Path {
     let mut builder = PathBuilder::new();
     builder
@@ -8192,15 +8145,6 @@ fn checkmark_path(rect: Rect) -> Path {
             rect.y() + (rect.height() * 0.28),
         ));
     builder.build()
-}
-
-fn inset_rect(rect: Rect, padding: Insets) -> Rect {
-    Rect::new(
-        rect.x() + padding.left,
-        rect.y() + padding.top,
-        (rect.width() - padding.left - padding.right).max(0.0),
-        (rect.height() - padding.top - padding.bottom).max(0.0),
-    )
 }
 
 fn choice_control_height(

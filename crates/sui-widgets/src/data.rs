@@ -1,3 +1,4 @@
+use crate::draw::inset_rect;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -630,17 +631,17 @@ impl Widget for ListView {
                     },
                 )
             } else {
-                let label = measure_text(ctx, &item.label, &text_style).width;
+                let label = measure_text_or_estimate(ctx, &item.label, &text_style).width;
                 let detail = item
                     .detail
                     .as_deref()
-                    .map(|detail| measure_text(ctx, detail, &detail_style).width)
+                    .map(|detail| measure_text_or_estimate(ctx, detail, &detail_style).width)
                     .unwrap_or(0.0);
                 let leading = measure_list_item_leading_width(ctx, item, &text_style, &theme);
                 let trailing = item
                     .trailing
                     .as_deref()
-                    .map(|trailing| measure_text(ctx, trailing, &detail_style).width)
+                    .map(|trailing| measure_text_or_estimate(ctx, trailing, &detail_style).width)
                     .unwrap_or(0.0);
                 let trailing_gap = if trailing > 0.0 {
                     metrics.data_row_trailing_gap
@@ -1897,11 +1898,14 @@ impl Widget for LayerList {
             let detail_width = layer
                 .detail
                 .as_deref()
-                .map(|detail| measure_text(ctx, detail, &detail_style).width)
+                .map(|detail| measure_text_or_estimate(ctx, detail, &detail_style).width)
                 .unwrap_or(0.0)
                 .min(80.0);
-            width = width
-                .max(124.0 + measure_text(ctx, &layer.label, &text_style).width + detail_width);
+            width = width.max(
+                124.0
+                    + measure_text_or_estimate(ctx, &layer.label, &text_style).width
+                    + detail_width,
+            );
         }
         constraints.clamp(Size::new(
             if constraints.max.width.is_finite() {
@@ -2746,7 +2750,7 @@ impl Widget for TreeView {
                     },
                 )
             } else {
-                let label = measure_text(ctx, &row.label, &label_style).width;
+                let label = measure_text_or_estimate(ctx, &row.label, &label_style).width;
                 let height = if detail.is_some() {
                     detail_row_height(&theme, base_row_height)
                 } else {
@@ -2754,7 +2758,7 @@ impl Widget for TreeView {
                 };
                 let detail = detail
                     .as_deref()
-                    .map(|detail| measure_text(ctx, detail, &detail_style).width)
+                    .map(|detail| measure_text_or_estimate(ctx, detail, &detail_style).width)
                     .unwrap_or(0.0);
                 (
                     label_start + label.max(detail) + metrics.data_row_padding.right,
@@ -3320,7 +3324,8 @@ impl Table {
             .iter()
             .enumerate()
             .map(|(index, column)| {
-                let measured_title = measure_text(ctx, &column.title, &header_style).width;
+                let measured_title =
+                    measure_text_or_estimate(ctx, &column.title, &header_style).width;
                 let cell_style = if column.numeric {
                     &numeric_style
                 } else {
@@ -3330,7 +3335,7 @@ impl Table {
                     .rows
                     .iter()
                     .filter_map(|row| row.cells.get(index))
-                    .map(|cell| measure_text(ctx, cell, cell_style).width)
+                    .map(|cell| measure_text_or_estimate(ctx, cell, cell_style).width)
                     .fold(0.0, f32::max);
                 column.width.unwrap_or(
                     (measured_title.max(measured_cells) + (theme.metrics.table_cell_padding * 2.0))
@@ -3519,7 +3524,7 @@ impl Widget for Table {
 
         draw_surface(ctx, ctx.bounds(), &theme, self.focus_animation.get(ctx));
         ctx.fill(
-            rounded_rect_path(header, metrics.corner_radius),
+            Path::rounded_rect(header, metrics.corner_radius),
             palette.control,
         );
 
@@ -4296,7 +4301,7 @@ impl VirtualTable {
                     .as_ref()
                     .and_then(|state| state.column_width(self.resolved_column_key(index)));
                 let width = retained_width.or(column.width).unwrap_or_else(|| {
-                    (measure_text(ctx, &column.title, &header_style).width
+                    (measure_text_or_estimate(ctx, &column.title, &header_style).width
                         + (theme.metrics.table_cell_padding * 2.0))
                         .max(column.min_width)
                 });
@@ -4899,7 +4904,7 @@ impl Widget for VirtualTable {
 
         draw_surface(ctx, bounds, &theme, self.focus_animation.get(ctx));
         ctx.fill(
-            rounded_rect_path(header, metrics.corner_radius),
+            Path::rounded_rect(header, metrics.corner_radius),
             palette.control,
         );
 
@@ -5483,7 +5488,7 @@ impl Widget for Breadcrumb {
             .items
             .iter()
             .map(|item| {
-                measure_text(ctx, &item.label, &text_style).width
+                measure_text_or_estimate(ctx, &item.label, &text_style).width
                     + theme.metrics.breadcrumb_item_padding.left
                     + theme.metrics.breadcrumb_item_padding.right
             })
@@ -5532,7 +5537,7 @@ impl Widget for Breadcrumb {
                 || press_amount > AnimatedScalar::EPSILON
             {
                 ctx.fill(
-                    rounded_rect_path(rect, theme.metrics.corner_radius),
+                    Path::rounded_rect(rect, theme.metrics.corner_radius),
                     data_row_state_fill(&theme, current || focused, hover_amount, press_amount),
                 );
             }
@@ -5757,7 +5762,7 @@ fn draw_vertical_scroll_thumb(
         .data_scroll_thumb_inset
         .min((gutter_width - thumb_width).max(0.0));
     ctx.fill(
-        rounded_rect_path(
+        Path::rounded_rect(
             Rect::new(
                 viewport.max_x() + gutter_width - thumb_inset - thumb_width,
                 thumb_y,
@@ -6237,11 +6242,20 @@ fn measure_list_item_leading_width(
     }
     item.leading_text
         .as_deref()
-        .map(|text| measure_text(ctx, text, style).width + theme.metrics.data_row_icon_gap)
+        .map(|text| {
+            measure_text_or_estimate(ctx, text, style).width + theme.metrics.data_row_icon_gap
+        })
         .unwrap_or(0.0)
 }
 
-fn measure_text(ctx: &mut MeasureCtx, text: &str, style: &TextStyle) -> TextMeasurement {
+/// How `text` lays out in `style`, like [`crate::draw::measure_text`], but
+/// with an estimated width when the text system cannot measure it, so rows
+/// and columns keep a usable size.
+fn measure_text_or_estimate(
+    ctx: &mut MeasureCtx,
+    text: &str,
+    style: &TextStyle,
+) -> TextMeasurement {
     ctx.layout()
         .measure_text(text.to_string(), style.clone())
         .unwrap_or(TextMeasurement {
@@ -6273,12 +6287,6 @@ fn caption_style(theme: &DefaultTheme) -> TextStyle {
         color: theme.palette.placeholder,
         ..theme.body_text_style()
     }
-}
-
-fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
-    let mut builder = PathBuilder::new();
-    builder.push_rounded_rect(rect, radius);
-    builder.build()
 }
 
 fn row_highlight_rect(row: Rect, viewport: Rect) -> Option<Rect> {
@@ -6489,7 +6497,7 @@ pub(crate) fn paint_data_row_state(
         );
         if !indicator.is_empty() {
             ctx.fill(
-                rounded_rect_path(indicator, indicator_width * 0.5),
+                Path::rounded_rect(indicator, indicator_width * 0.5),
                 theme.palette.accent,
             );
         }
@@ -6571,7 +6579,7 @@ fn paint_layer_visibility_button(
     let palette = theme.palette;
     if hover_amount > AnimatedScalar::EPSILON || press_amount > AnimatedScalar::EPSILON {
         ctx.fill(
-            rounded_rect_path(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
+            Path::rounded_rect(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
             data_row_state_fill(theme, false, hover_amount, press_amount),
         );
     }
@@ -6628,7 +6636,7 @@ fn paint_layer_lock_button(
     let palette = theme.palette;
     if hover_amount > AnimatedScalar::EPSILON || press_amount > AnimatedScalar::EPSILON {
         ctx.fill(
-            rounded_rect_path(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
+            Path::rounded_rect(rect, theme.metrics.corner_radius.min(rect.height() * 0.35)),
             data_row_state_fill(theme, false, hover_amount, press_amount),
         );
     }
@@ -6661,10 +6669,10 @@ fn paint_layer_thumbnail(
     let metrics = theme.metrics;
     let radius = metrics.layer_thumbnail_radius;
     let rect = snap_to_pixels(ctx, rect);
-    ctx.fill(rounded_rect_path(rect, radius), palette.control_hover);
+    ctx.fill(Path::rounded_rect(rect, radius), palette.control_hover);
     let fill = inset_rect(rect, Insets::all(metrics.layer_thumbnail_inset));
     ctx.fill(
-        rounded_rect_path(
+        Path::rounded_rect(
             fill,
             (radius - metrics.layer_thumbnail_inset * 0.5).max(0.0),
         ),
@@ -6714,15 +6722,6 @@ fn line_path(from: Point, to: Point) -> Path {
     builder.build()
 }
 
-fn inset_rect(rect: Rect, padding: Insets) -> Rect {
-    Rect::new(
-        rect.x() + padding.left,
-        rect.y() + padding.top,
-        (rect.width() - padding.left - padding.right).max(0.0),
-        (rect.height() - padding.top - padding.bottom).max(0.0),
-    )
-}
-
 fn scroll_delta_to_offset(delta: sui_core::ScrollDelta) -> Vector {
     match delta {
         sui_core::ScrollDelta::Lines(delta) => Vector::new(delta.x * 40.0, delta.y * 40.0),
@@ -6733,6 +6732,8 @@ fn scroll_delta_to_offset(delta: sui_core::ScrollDelta) -> Vector {
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
+
+    use crate::draw::rect_center;
 
     use super::{
         Breadcrumb, BreadcrumbItem, DefaultTheme, LayerList, LayerListItem, LayerListReorderChange,
@@ -7077,13 +7078,6 @@ mod tests {
         let top = -measurement.cap_height.unwrap_or(measurement.ascent);
         let bottom = measurement.descent * 0.5;
         (top + bottom) * 0.5
-    }
-
-    fn rect_center(rect: Rect) -> Point {
-        Point::new(
-            rect.x() + rect.width() * 0.5,
-            rect.y() + rect.height() * 0.5,
-        )
     }
 
     fn text_run_visual_center(run: &sui_text::TextRun) -> f32 {

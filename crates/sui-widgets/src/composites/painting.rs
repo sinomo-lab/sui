@@ -2,11 +2,10 @@ use crate::DefaultTheme;
 use crate::IconGlyph;
 use crate::SemanticTone;
 use crate::ThemeTextToken;
-use crate::composites::indicators::{
-    measure_text, mix_color, numeric_text_style_if_numeric, rounded_rect_path, text_token_style,
-};
+use crate::composites::indicators::{numeric_text_style_if_numeric, text_token_style};
 use crate::composites::status::{StatusBadge, paint_status_badge};
 use crate::controls::draw_icon_glyph;
+use crate::draw::{measure_text, mix_color};
 use crate::frame::{draw_control_shape, physical_pixels, snap_to_pixels, stroke_border};
 use crate::text_align::paint_text;
 use crate::text_align::paint_text_line;
@@ -725,7 +724,7 @@ pub fn paint_callout(
     let rail_width = style.rail_width.max(0.0).min(rect.width());
     if rail_width > 0.0 {
         let rail_rect = Rect::new(rect.x(), rect.y(), rail_width, rect.height());
-        ctx.fill(rounded_rect_path(rail_rect, rail_width * 0.5), rail);
+        ctx.fill(Path::rounded_rect(rail_rect, rail_width * 0.5), rail);
     }
 
     let padding = style.padding;
@@ -923,7 +922,7 @@ pub fn paint_action_tile(
             dot_side,
         );
         ctx.fill(
-            rounded_rect_path(dot_rect, dot_side * 0.5),
+            Path::rounded_rect(dot_rect, dot_side * 0.5),
             theme.semantic_tone_color(dot_tone),
         );
         text_x += leading_width;
@@ -1261,13 +1260,13 @@ pub fn paint_code_panel(
     let border_width = physical_pixels(ctx, theme.metrics.border_width.max(1.0));
 
     let frame = snap_to_pixels(ctx, rect);
-    ctx.fill(rounded_rect_path(frame, radius), fill);
+    ctx.fill(Path::rounded_rect(frame, radius), fill);
 
     let header_height = style.header_height.clamp(0.0, rect.height());
     if header_height > 0.0 {
         let header_rect = Rect::new(frame.x(), frame.y(), frame.width(), header_height);
         let header_radius = radius.min(header_height * 0.5);
-        ctx.fill(rounded_rect_path(header_rect, header_radius), header_fill);
+        ctx.fill(Path::rounded_rect(header_rect, header_radius), header_fill);
         if header_height > header_radius {
             ctx.fill_rect(
                 Rect::new(

@@ -1,10 +1,11 @@
+use crate::draw::{inset_rect, mix_color};
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
 use sui_core::{
-    Color, DragEvent, DragEventKind, Event, InvalidationKind, InvalidationRequest,
-    InvalidationTarget, KeyState, Path, Point, PointerButton, PointerEvent, PointerEventKind,
-    PointerKind, Rect, ScrollDelta, SemanticsAction, SemanticsActionRequest, SemanticsNode,
-    SemanticsRole, SemanticsValue, Size, Vector, WakeEvent, WidgetId, WindowEvent,
+    DragEvent, DragEventKind, Event, InvalidationKind, InvalidationRequest, InvalidationTarget,
+    KeyState, Path, Point, PointerButton, PointerEvent, PointerEventKind, PointerKind, Rect,
+    ScrollDelta, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole,
+    SemanticsValue, Size, Vector, WakeEvent, WidgetId, WindowEvent,
 };
 use sui_layout::{
     Alignment, Axis, Constraints, FlexAlignContent, FlexItem, FlexJustify, FlexMeasurePhase,
@@ -2594,10 +2595,6 @@ fn set_focus_animation_target(
     )
 }
 
-fn mix_color(from: Color, to: Color, amount: f32) -> Color {
-    crate::animation::Interpolate::interpolate(from, to, amount).clamped()
-}
-
 pub struct ScrollBar {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -3139,6 +3136,7 @@ impl Widget for ScrollBar {
                 palette.text_muted,
                 self.drag_animation.get(ctx),
             )
+            .clamped()
             .with_alpha(thumb_alpha),
         );
         stroke_border(
@@ -3150,7 +3148,8 @@ impl Widget for ScrollBar {
                 palette.border.with_alpha(border_alpha),
                 palette.focus_ring,
                 self.focus_animation.get(ctx),
-            ),
+            )
+            .clamped(),
         );
     }
 
@@ -5022,15 +5021,6 @@ fn expand_size(size: Size, insets: Insets) -> Size {
     Size::new(
         size.width + insets.left + insets.right,
         size.height + insets.top + insets.bottom,
-    )
-}
-
-fn inset_rect(rect: Rect, insets: Insets) -> Rect {
-    Rect::new(
-        rect.x() + insets.left,
-        rect.y() + insets.top,
-        (rect.width() - (insets.left + insets.right)).max(0.0),
-        (rect.height() - (insets.top + insets.bottom)).max(0.0),
     )
 }
 

@@ -11,6 +11,7 @@ pub mod controls;
 pub mod data;
 pub mod docking;
 pub mod drag_drop;
+mod draw;
 mod editable_text;
 mod editor;
 mod frame;

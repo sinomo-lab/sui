@@ -6,14 +6,15 @@ use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
 use crate::composites::indicators::{
-    draw_control_frame, inset_rect, measure_text, rounded_rect_path, semibold_control_text_style,
-    sliding_inset_rect, tab_indicator_rect, tab_panel_transition_translation, tab_state_visuals,
+    semibold_control_text_style, sliding_inset_rect, tab_indicator_rect,
+    tab_panel_transition_translation, tab_state_visuals,
 };
 use crate::composites::status::{
     SegmentedControlChange, SegmentedControlContextChange, segmented_control_item_id,
 };
 use crate::controls::draw_icon_glyph;
-use crate::frame::{draw_control_shape, draw_focus_ring, physical_pixels};
+use crate::draw::{inset_rect, measure_text};
+use crate::frame::{draw_control_frame, draw_control_shape, draw_focus_ring, physical_pixels};
 use crate::paint_theme_shadow;
 use crate::text_align::paint_text;
 use std::sync::Arc;
@@ -21,6 +22,7 @@ use sui_core::Event;
 use sui_core::ImageHandle;
 use sui_core::InvalidationKind;
 use sui_core::KeyState;
+use sui_core::Path;
 use sui_core::Point;
 use sui_core::PointerButton;
 use sui_core::PointerEventKind;
@@ -709,7 +711,7 @@ impl Widget for TabBar {
             interaction.active_indicator_thickness,
         ) {
             ctx.fill(
-                rounded_rect_path(accent, accent.height() * 0.5),
+                Path::rounded_rect(accent, accent.height() * 0.5),
                 palette.accent,
             );
         }
@@ -1420,7 +1422,7 @@ impl Widget for BrowserTabBar {
             let close_pressed = self.pressed == Some(BrowserTabHit::Close(index));
             if close_hovered || close_pressed {
                 ctx.fill(
-                    rounded_rect_path(close, theme.metrics.corner_radius.min(5.0)),
+                    Path::rounded_rect(close, theme.metrics.corner_radius.min(5.0)),
                     if close_pressed {
                         palette.control_active
                     } else {
@@ -1456,7 +1458,7 @@ impl Widget for BrowserTabBar {
                 interaction.active_indicator_thickness,
             ) {
                 ctx.fill(
-                    rounded_rect_path(accent, accent.height() * 0.5),
+                    Path::rounded_rect(accent, accent.height() * 0.5),
                     palette.accent,
                 );
             }
@@ -1957,7 +1959,7 @@ impl Widget for SegmentedControl {
         } else {
             (palette.control, palette.button)
         };
-        ctx.fill(rounded_rect_path(ctx.bounds(), radius), track);
+        ctx.fill(Path::rounded_rect(ctx.bounds(), radius), track);
 
         let selected_thumb = if !self.segments.is_empty() {
             let from = self.selection_from.min(self.segments.len() - 1);
@@ -2602,7 +2604,7 @@ impl Widget for Tabs {
             interaction.active_indicator_thickness,
         ) {
             ctx.fill(
-                rounded_rect_path(accent, accent.height() * 0.5),
+                Path::rounded_rect(accent, accent.height() * 0.5),
                 palette.accent,
             );
         }

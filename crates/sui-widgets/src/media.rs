@@ -1,3 +1,4 @@
+use crate::draw::{inset_rect, mix_color};
 use sui_core::{
     Color, ColorSpace, Event, ImageHandle, KeyState, Oklch, Path, PathBuilder, Point,
     PointerButton, PointerEventKind, Rect, SemanticsAction, SemanticsNode, SemanticsRole,
@@ -197,11 +198,11 @@ impl Widget for Image {
         let corner_radius = self.resolved_corner_radius(&theme);
         let image_rect = fit_rect(bounds, self.resolved_source_size, self.fit);
         if let Some(background) = self.resolved_background() {
-            ctx.fill(rounded_rect_path(bounds, corner_radius), background);
+            ctx.fill(Path::rounded_rect(bounds, corner_radius), background);
         }
 
         if corner_radius > 0.0 {
-            ctx.push_clip(rounded_rect_path(bounds, corner_radius));
+            ctx.push_clip(Path::rounded_rect(bounds, corner_radius));
         } else {
             ctx.push_clip_rect(bounds);
         }
@@ -453,7 +454,7 @@ impl Widget for SignalMeter {
             let rect = Rect::new(x, y, bar_w, bar_h);
             let reached = reached_bars.is_none_or(|reached| index < reached);
             let fill = if active && reached { tone } else { idle_fill };
-            ctx.fill(rounded_rect_path(rect, (bar_w * 0.5).min(3.0)), fill);
+            ctx.fill(Path::rounded_rect(rect, (bar_w * 0.5).min(3.0)), fill);
         }
     }
 
@@ -738,7 +739,7 @@ impl Widget for ColorSwatch {
 
         if self.press_animation.get(ctx) > 0.0 {
             ctx.fill(
-                rounded_rect_path(ctx.bounds(), outer_radius),
+                Path::rounded_rect(ctx.bounds(), outer_radius),
                 mix_color(
                     palette.control_hover,
                     palette.control_active,
@@ -747,7 +748,7 @@ impl Widget for ColorSwatch {
             );
         } else if self.hover_animation.get(ctx) > 0.0 {
             ctx.fill(
-                rounded_rect_path(ctx.bounds(), outer_radius),
+                Path::rounded_rect(ctx.bounds(), outer_radius),
                 palette
                     .control_hover
                     .with_alpha(self.hover_animation.get(ctx) * palette.control_hover.alpha),
@@ -761,7 +762,7 @@ impl Widget for ColorSwatch {
             metrics.color_swatch_checker_size,
             &theme,
         );
-        ctx.fill(rounded_rect_path(inner_body, inner_radius), color);
+        ctx.fill(Path::rounded_rect(inner_body, inner_radius), color);
         stroke_border(
             ctx,
             body,
@@ -1273,9 +1274,9 @@ impl Widget for ColorPalette {
             };
 
             if selected {
-                ctx.fill(rounded_rect_path(body, radius), background);
+                ctx.fill(Path::rounded_rect(body, radius), background);
             } else if hover_amount > 0.0 || press_amount > 0.0 {
-                ctx.fill(rounded_rect_path(rect, radius), background);
+                ctx.fill(Path::rounded_rect(rect, radius), background);
             }
             draw_rounded_checkerboard(
                 ctx,
@@ -1285,7 +1286,7 @@ impl Widget for ColorPalette {
                 &theme,
             );
             ctx.fill(
-                rounded_rect_path(fill_rect, (radius - fill_inset).max(0.0)),
+                Path::rounded_rect(fill_rect, (radius - fill_inset).max(0.0)),
                 swatch.color,
             );
             stroke_border(ctx, body, radius, ring_width, ring);
@@ -1583,7 +1584,7 @@ fn paint_brush_preview_mark(ctx: &mut PaintCtx, rect: Rect, spec: BrushPreviewSp
     );
     match spec.shape {
         BrushPreviewShape::Round => ctx.fill(Path::circle(center, diameter * 0.5), color),
-        BrushPreviewShape::Square => ctx.fill(rounded_rect_path(mark, 2.0), color),
+        BrushPreviewShape::Square => ctx.fill(Path::rounded_rect(mark, 2.0), color),
     }
 }
 
@@ -1610,7 +1611,7 @@ fn paint_brush_preview_stroke(
         match spec.shape {
             BrushPreviewShape::Round => ctx.fill(Path::circle(center, diameter * 0.5), color),
             BrushPreviewShape::Square => ctx.fill(
-                rounded_rect_path(
+                Path::rounded_rect(
                     Rect::new(
                         center.x - diameter * 0.5,
                         center.y - diameter * 0.5,
@@ -4004,8 +4005,8 @@ fn paint_picker_header(
     let previous_rect = snap_to_pixels(ctx, previous_rect);
     draw_checkerboard(ctx, current_rect, metrics.color_swatch_checker_size, theme);
     draw_checkerboard(ctx, previous_rect, metrics.color_swatch_checker_size, theme);
-    ctx.fill(rounded_rect_path(current_rect, radius), current);
-    ctx.fill(rounded_rect_path(previous_rect, radius), previous);
+    ctx.fill(Path::rounded_rect(current_rect, radius), current);
+    ctx.fill(Path::rounded_rect(previous_rect, radius), previous);
     stroke_border(
         ctx,
         current_rect,
@@ -4418,7 +4419,7 @@ fn paint_encoding_menu(
         if space == selected {
             let selected_rect = inset_rect(row, metrics.menu_item_padding);
             ctx.fill(
-                rounded_rect_path(
+                Path::rounded_rect(
                     selected_rect,
                     (radius - metrics.menu_item_padding.top).max(0.0),
                 ),
@@ -4553,10 +4554,6 @@ fn hdr_slider_to_value(t: f32) -> f32 {
 
 fn is_hdr_color(color: Color) -> bool {
     color.red > 1.0 || color.green > 1.0 || color.blue > 1.0
-}
-
-fn mix_color(from: Color, to: Color, amount: f32) -> Color {
-    crate::animation::Interpolate::interpolate(from, to, amount)
 }
 
 /// Widget state progress the runtime animates (see [`Progress`]).
@@ -4709,7 +4706,7 @@ fn draw_rounded_checkerboard(
     cell_size: f32,
     theme: &DefaultTheme,
 ) {
-    ctx.push_clip(rounded_rect_path(rect, radius));
+    ctx.push_clip(Path::rounded_rect(rect, radius));
     draw_checkerboard(ctx, rect, cell_size, theme);
     ctx.pop_clip();
 }
@@ -4861,21 +4858,6 @@ fn rgb_to_hsl(color: Color, max_value: f32) -> (f32, f32, f32) {
     (hue, saturation, lightness * max_value)
 }
 
-fn rounded_rect_path(rect: Rect, radius: f32) -> Path {
-    let mut builder = PathBuilder::new();
-    builder.push_rounded_rect(rect, radius);
-    builder.build()
-}
-
-fn inset_rect(rect: Rect, padding: Insets) -> Rect {
-    Rect::new(
-        rect.x() + padding.left,
-        rect.y() + padding.top,
-        (rect.width() - padding.left - padding.right).max(0.0),
-        (rect.height() - padding.top - padding.bottom).max(0.0),
-    )
-}
-
 fn numeric_text_style(mut style: TextStyle) -> TextStyle {
     style.features.enable(FontFeature::TABULAR_FIGURES);
     style
@@ -4893,6 +4875,8 @@ fn text_token_style(theme: &DefaultTheme, token: ThemeTextToken, color: Color) -
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
+
+    use crate::draw::rect_center;
 
     use super::{
         ActiveChannel, BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette,
@@ -5120,13 +5104,6 @@ mod tests {
                 _ => None,
             })
             .expect("text draw command present")
-    }
-
-    fn rect_center(rect: Rect) -> Point {
-        Point::new(
-            rect.x() + rect.width() * 0.5,
-            rect.y() + rect.height() * 0.5,
-        )
     }
 
     fn optical_visual_center(measurement: sui_text::TextMeasurement) -> f32 {
