@@ -10,6 +10,7 @@ use crate::gpu::SharedRenderer;
 use crate::gpu::analytic_path_buffer_size;
 use crate::gpu::grow_analytic_path_capacity;
 use crate::text::TEXT_ATLAS_MAX_PAGES;
+use crate::text::TextAtlasKind;
 use crate::text_engine::TextEngine;
 use crate::uploads::{FragmentBuffers, GpuUploads};
 use std::collections::HashMap;
@@ -151,8 +152,9 @@ pub(crate) fn linear_to_srgb_u8(value: f32) -> u8 {
     (encoded * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
-/// Bind group layout for the multi-page glyph atlas: a filtering sampler plus a
-/// `texture_2d_array` (one layer per atlas page). Distinct from the image layout, which is `D2`.
+/// Bind group layout for the multi-page glyph atlases: a filtering sampler plus two
+/// `texture_2d_array`s, the single-channel mask atlas and the RGBA color/LCD atlas (one layer
+/// per atlas page). Distinct from the image layout, which is `D2`.
 pub(crate) fn create_text_atlas_array_bind_group_layout(
     device: &wgpu::Device,
 ) -> wgpu::BindGroupLayout {
@@ -165,18 +167,23 @@ pub(crate) fn create_text_atlas_array_bind_group_layout(
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2Array,
-                    multisampled: false,
-                },
-                count: None,
-            },
+            text_atlas_texture_layout_entry(1),
+            text_atlas_texture_layout_entry(2),
         ],
     })
+}
+
+fn text_atlas_texture_layout_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2Array,
+            multisampled: false,
+        },
+        count: None,
+    }
 }
 impl WgpuRenderer {
     pub(crate) fn registered_image_data_identity_eq(
@@ -449,8 +456,10 @@ impl WgpuRenderer {
         let total_started = collect_stats.then(Instant::now);
         let upload_copy_started = collect_stats.then(Instant::now);
         let uploads = text_engine.take_atlas_uploads();
-        let page_size = text_engine.atlas.page_size();
-        let page_count = text_engine.atlas.page_count() as u32;
+        let extents = TextAtlasKind::ALL.map(|kind| {
+            let pages = text_engine.atlas.get(kind);
+            TextAtlasArrayExtent::for_pages(pages.page_size(), pages.page_count())
+        });
         let mut stats = TextAtlasBindGroupStats {
             upload_copy_time_us: upload_copy_started
                 .map(|started| started.elapsed().as_micros() as u64)
@@ -458,7 +467,7 @@ impl WgpuRenderer {
             upload_bytes: if collect_stats {
                 uploads
                     .iter()
-                    .map(|(_, upload)| upload.pixels.len() as u64)
+                    .map(|(_, _, upload)| upload.byte_len() as u64)
                     .sum()
             } else {
                 0
@@ -466,9 +475,9 @@ impl WgpuRenderer {
             ..TextAtlasBindGroupStats::default()
         };
 
-        // One persistent texture array; each atlas page is a layer. Dirty rects are written
-        // directly to their layer -- no ring rotation, no full-texture forward-copy.
-        let setup = self.ensure_text_atlas_array(page_size, page_count)?;
+        // One persistent texture array per atlas; each atlas page is a layer. Glyph strips are
+        // written directly to their layer -- no ring rotation, no full-texture forward-copy.
+        let setup = self.ensure_text_atlas_arrays(extents)?;
         stats.allocate_time_us = setup.allocate_time_us;
         stats.clear_time_us = setup.clear_time_us;
         stats.copy_time_us = setup.copy_time_us;
@@ -482,48 +491,55 @@ impl WgpuRenderer {
             let cached = self
                 .text_atlas_array
                 .as_ref()
-                .expect("text atlas array created above");
+                .expect("text atlas arrays created above");
             let upload_write_started = collect_stats.then(Instant::now);
-            if uploads.iter().any(|(_, upload)| upload.clear_texture) {
-                let clear_started = collect_stats.then(Instant::now);
-                clear_text_atlas_pages(
-                    &shared.device,
-                    &shared.queue,
-                    &cached.texture,
-                    uploads
-                        .iter()
-                        .filter(|(_, upload)| upload.clear_texture)
-                        .map(|(page, _)| *page as u32),
-                );
-                stats.clear_time_us += clear_started.map_or(0, |s| s.elapsed().as_micros() as u64);
-            }
-            for (page_index, upload) in &uploads {
-                if upload.pixels.is_empty() {
-                    continue;
+            // Clears are submitted before the writes below, which the queue runs first on
+            // the next submission, so a recycled page is cleared before its new glyphs land.
+            for kind in TextAtlasKind::ALL {
+                let mut cleared = uploads
+                    .iter()
+                    .filter(|(upload_kind, _, upload)| *upload_kind == kind && upload.clear_texture)
+                    .map(|(_, page, _)| *page as u32)
+                    .peekable();
+                if cleared.peek().is_some() {
+                    let clear_started = collect_stats.then(Instant::now);
+                    clear_text_atlas_pages(
+                        &shared.device,
+                        &shared.queue,
+                        &cached.array(kind).texture,
+                        cleared,
+                    );
+                    stats.clear_time_us +=
+                        clear_started.map_or(0, |s| s.elapsed().as_micros() as u64);
                 }
-                shared.queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &cached.texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: upload.offset.0,
-                            y: upload.offset.1,
-                            z: *page_index as u32,
+            }
+            for (kind, page_index, upload) in &uploads {
+                let texture = &cached.array(*kind).texture;
+                for write in &upload.writes {
+                    shared.queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d {
+                                x: write.offset.0,
+                                y: write.offset.1,
+                                z: *page_index as u32,
+                            },
+                            aspect: wgpu::TextureAspect::All,
                         },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &upload.pixels,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(upload.extent.0 * 4),
-                        rows_per_image: Some(upload.extent.1),
-                    },
-                    wgpu::Extent3d {
-                        width: upload.extent.0,
-                        height: upload.extent.1,
-                        depth_or_array_layers: 1,
-                    },
-                );
+                        &write.pixels,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(write.extent.0 * kind.bytes_per_pixel() as u32),
+                            rows_per_image: Some(write.extent.1),
+                        },
+                        wgpu::Extent3d {
+                            width: write.extent.0,
+                            height: write.extent.1,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
             }
             stats.upload_write_time_us = upload_write_started
                 .map(|started| started.elapsed().as_micros() as u64)
@@ -541,20 +557,19 @@ impl WgpuRenderer {
         Ok((bind_group, stats))
     }
 
-    pub(crate) fn ensure_text_atlas_array(
+    /// Make sure the mask and color texture arrays have at least the given layers, recreating
+    /// whichever has outgrown its texture and rebuilding the bind group that samples both.
+    pub(crate) fn ensure_text_atlas_arrays(
         &mut self,
-        page_size: (u32, u32),
-        required_layers: u32,
+        extents: [TextAtlasArrayExtent; 2],
     ) -> Result<TextAtlasBindGroupStats> {
-        // Allocate only as many layers as there are live pages, growing on demand up to the page
-        // budget. This keeps the common single-page case at one 16 MB layer instead of committing
-        // the whole budget up front.
-        let required_layers = required_layers.clamp(1, TEXT_ATLAS_MAX_PAGES as u32);
-        if self
-            .text_atlas_array
-            .as_ref()
-            .is_some_and(|cached| cached.size == page_size && cached.layers >= required_layers)
-        {
+        let fits = |cached: &CachedTextAtlasTexture| {
+            TextAtlasKind::ALL
+                .into_iter()
+                .zip(extents)
+                .all(|(kind, extent)| cached.array(kind).holds(extent))
+        };
+        if self.text_atlas_array.as_ref().is_some_and(fits) {
             return Ok(TextAtlasBindGroupStats::default());
         }
 
@@ -562,35 +577,30 @@ impl WgpuRenderer {
             .shared
             .as_ref()
             .expect("renderer shared state initialized before text atlas texture setup");
-
         let mut stats = TextAtlasBindGroupStats::default();
+        let (old_mask, old_color) = match self.text_atlas_array.take() {
+            Some(cached) => (Some(cached.mask), Some(cached.color)),
+            None => (None, None),
+        };
+        let diagnostics = self.runtime_diagnostics_enabled;
+        let mask = reuse_or_create_text_atlas_array(
+            shared,
+            TextAtlasKind::Mask,
+            extents[0],
+            old_mask,
+            diagnostics,
+            &mut stats,
+        );
+        let color = reuse_or_create_text_atlas_array(
+            shared,
+            TextAtlasKind::Color,
+            extents[1],
+            old_color,
+            diagnostics,
+            &mut stats,
+        );
+
         let started = self.runtime_diagnostics_enabled.then(Instant::now);
-        let texture = shared.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("SUI text atlas array texture"),
-            size: wgpu::Extent3d {
-                width: page_size.0,
-                height: page_size.1,
-                depth_or_array_layers: required_layers,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        stats.allocate_time_us = started.map_or(0, |s| s.elapsed().as_micros() as u64);
-        // Fresh texture subresources are initialized by WGPU before partial
-        // writes/reads. Do not submit a separate render-pass clear here. Recycled
-        // pages still require explicit clearing in ensure_text_atlas_bind_group.
-        let started = self.runtime_diagnostics_enabled.then(Instant::now);
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
         let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("SUI text atlas array bind group"),
             layout: &shared.text_atlas_array_bind_group_layout,
@@ -601,55 +611,21 @@ impl WgpuRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
+                    resource: wgpu::BindingResource::TextureView(&mask.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&color.view),
                 },
             ],
         });
-
         stats.create_bind_group_time_us = started.map_or(0, |s| s.elapsed().as_micros() as u64);
-        let started = self.runtime_diagnostics_enabled.then(Instant::now);
-        // Growing an existing array of the same page size: copy the already-populated layers
-        // forward so their glyphs survive (their CPU dirty state was cleared after first upload).
-        if let Some(old) = self.text_atlas_array.as_ref()
-            && old.size == page_size
-        {
-            let mut encoder =
-                shared
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("SUI text atlas array grow copy"),
-                    });
-            encoder.copy_texture_to_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &old.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::Extent3d {
-                    width: page_size.0,
-                    height: page_size.1,
-                    depth_or_array_layers: old.layers,
-                },
-            );
-            shared.queue.submit([encoder.finish()]);
-        }
 
-        stats.copy_time_us = started.map_or(0, |s| s.elapsed().as_micros() as u64);
         self.text_atlas_array = Some(CachedTextAtlasTexture {
-            texture,
-            _view: view,
+            mask,
+            color,
             bind_group,
-            size: page_size,
-            layers: required_layers,
         });
-
         Ok(stats)
     }
 
@@ -1101,13 +1077,148 @@ pub(crate) struct CachedExternalTextureBindGroup {
     pub(crate) nearest_bind_group: wgpu::BindGroup,
 }
 
+/// The GPU side of the glyph atlases: one texture array per atlas, sampled by one bind group.
 pub(crate) struct CachedTextAtlasTexture {
-    pub(crate) texture: wgpu::Texture,
-    pub(crate) _view: wgpu::TextureView,
+    pub(crate) mask: TextAtlasArray,
+    pub(crate) color: TextAtlasArray,
     pub(crate) bind_group: wgpu::BindGroup,
+}
+
+impl CachedTextAtlasTexture {
+    pub(crate) fn array(&self, kind: TextAtlasKind) -> &TextAtlasArray {
+        match kind {
+            TextAtlasKind::Mask => &self.mask,
+            TextAtlasKind::Color => &self.color,
+        }
+    }
+}
+
+pub(crate) struct TextAtlasArray {
+    pub(crate) texture: wgpu::Texture,
+    pub(crate) view: wgpu::TextureView,
+    pub(crate) extent: TextAtlasArrayExtent,
+}
+
+impl TextAtlasArray {
+    fn holds(&self, extent: TextAtlasArrayExtent) -> bool {
+        self.extent.size == extent.size && self.extent.layers >= extent.layers
+    }
+}
+
+/// Page size and layer count a texture array needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TextAtlasArrayExtent {
     pub(crate) size: (u32, u32),
-    /// Number of array layers currently allocated (grows on demand up to the page budget).
+    /// Number of array layers (grows on demand up to the page budget).
     pub(crate) layers: u32,
+}
+
+impl TextAtlasArrayExtent {
+    /// An atlas with no pages still needs something to bind; a single texel stands in until
+    /// its first glyph, so an app that never draws emoji or LCD text never pays for a page.
+    pub(crate) fn for_pages(page_size: (u32, u32), page_count: usize) -> Self {
+        if page_count == 0 {
+            return Self {
+                size: (1, 1),
+                layers: 1,
+            };
+        }
+        Self {
+            size: page_size,
+            layers: (page_count as u32).clamp(1, TEXT_ATLAS_MAX_PAGES as u32),
+        }
+    }
+}
+
+fn text_atlas_format(kind: TextAtlasKind) -> wgpu::TextureFormat {
+    match kind {
+        TextAtlasKind::Mask => wgpu::TextureFormat::R8Unorm,
+        TextAtlasKind::Color => wgpu::TextureFormat::Rgba8Unorm,
+    }
+}
+
+fn reuse_or_create_text_atlas_array(
+    shared: &SharedRenderer,
+    kind: TextAtlasKind,
+    extent: TextAtlasArrayExtent,
+    previous: Option<TextAtlasArray>,
+    diagnostics: bool,
+    stats: &mut TextAtlasBindGroupStats,
+) -> TextAtlasArray {
+    let previous = match previous {
+        Some(array) if array.holds(extent) => return array,
+        previous => previous,
+    };
+
+    let started = diagnostics.then(Instant::now);
+    let texture = shared.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(match kind {
+            TextAtlasKind::Mask => "SUI text mask atlas array texture",
+            TextAtlasKind::Color => "SUI text color atlas array texture",
+        }),
+        size: wgpu::Extent3d {
+            width: extent.size.0,
+            height: extent.size.1,
+            depth_or_array_layers: extent.layers,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: text_atlas_format(kind),
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    stats.allocate_time_us += started.map_or(0, |s| s.elapsed().as_micros() as u64);
+    // Fresh texture subresources are initialized by WGPU before partial
+    // writes/reads. Do not submit a separate render-pass clear here. Recycled
+    // pages still require explicit clearing in ensure_text_atlas_bind_group.
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+
+    // Growing an existing array of the same page size: copy the already-populated layers
+    // forward so their glyphs survive. Pixels live only on the GPU.
+    if let Some(old) = previous.as_ref()
+        && old.extent.size == extent.size
+    {
+        let started = diagnostics.then(Instant::now);
+        let mut encoder = shared
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("SUI text atlas array grow copy"),
+            });
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &old.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: extent.size.0,
+                height: extent.size.1,
+                depth_or_array_layers: old.extent.layers.min(extent.layers),
+            },
+        );
+        shared.queue.submit([encoder.finish()]);
+        stats.copy_time_us += started.map_or(0, |s| s.elapsed().as_micros() as u64);
+    }
+
+    TextAtlasArray {
+        texture,
+        view,
+        extent,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

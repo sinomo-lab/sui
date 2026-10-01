@@ -1,6 +1,8 @@
 use super::support::{assert_rgba_images_match, prepare_with_compositor};
 use crate::retained::RetainedCompositorState;
+use crate::text::TextAtlas;
 use crate::text::TextAtlasColorMode;
+use crate::text::TextAtlasKind;
 use crate::text_engine::TextEngine;
 use crate::{TextCoveragePolicy, WgpuRenderer};
 use std::sync::Arc;
@@ -561,7 +563,13 @@ fn text_sampling_is_independent_of_packed_atlas_location() {
             for cursor in [(1, 1), (900, 487), (1300, 1200)] {
                 let mut engine = TextEngine::new().unwrap();
                 // Different atlas positions have different UNORM16 rounding errors.
-                engine.atlas.pages[0].cursor = cursor;
+                for kind in TextAtlasKind::ALL {
+                    let atlas = engine.atlas.get_mut(kind);
+                    let mut page =
+                        TextAtlas::new(atlas.page_width, atlas.page_height, atlas.bytes_per_pixel);
+                    page.cursor = cursor;
+                    atlas.pages.push(page);
+                }
                 renderer.text_engine = Some(engine);
                 renderer.compositors.clear();
                 renderer.render(&draw).unwrap();

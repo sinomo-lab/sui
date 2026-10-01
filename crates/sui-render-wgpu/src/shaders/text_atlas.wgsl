@@ -7,13 +7,19 @@ struct VsOut {
     @location(3) @interpolate(flat) layer: u32,
     @location(4) @interpolate(flat) uv_min: vec2<f32>,
     @location(5) @interpolate(flat) uv_max: vec2<f32>,
+    @location(6) @interpolate(flat) atlas_kind: u32,
 };
 
 @group(0) @binding(0)
 var text_atlas_sampler: sampler;
 
+// Single-channel coverage for grayscale glyphs.
 @group(0) @binding(1)
-var text_atlas_texture: texture_2d_array<f32>;
+var text_atlas_mask: texture_2d_array<f32>;
+
+// RGBA for color glyphs and LCD subpixel masks.
+@group(0) @binding(2)
+var text_atlas_color: texture_2d_array<f32>;
 
 @vertex
 fn vs_main(
@@ -41,6 +47,7 @@ fn vs_main(
     out.layer = layer;
     out.uv_min = uv_min;
     out.uv_max = uv_max;
+    out.atlas_kind = coverage_flags.w;
     return out;
 }
 
@@ -83,16 +90,34 @@ fn apply_text_coverage(coverage: f32, policy: f32, parameter: f32) -> f32 {
     return c;
 }
 
-fn fs_shade(in: VsOut) -> vec4<f32> {
-    // Atlas bounds are integer texels. Recover them from packed UNORM16 values
-    // before interpolation, so packing error cannot blur pixel-aligned text.
-    let atlas_size = vec2<f32>(textureDimensions(text_atlas_texture));
+// Atlas bounds are integer texels. Recover them from packed UNORM16 values
+// before interpolation, so packing error cannot blur pixel-aligned text.
+// Keep bilinear filtering for transforms, but exclude neighbouring glyphs.
+fn glyph_atlas_uv(in: VsOut, atlas_size: vec2<f32>) -> vec2<f32> {
     let texel_min = round(in.uv_min * atlas_size);
     let texel_max = round(in.uv_max * atlas_size);
-    // Keep bilinear filtering for transforms, but exclude neighbouring glyphs.
     let texel = clamp(mix(texel_min, texel_max, in.glyph_coords),
         texel_min + vec2<f32>(0.5), texel_max - vec2<f32>(0.5));
-    let sampled = textureSample(text_atlas_texture, text_atlas_sampler, texel / atlas_size, i32(in.layer));
+    return texel / atlas_size;
+}
+
+// Mask glyphs return their coverage in every channel; color and LCD glyphs
+// are RGBA. An explicit level (the atlases have no mips) keeps sampling legal
+// inside this non-uniform branch.
+fn sample_glyph(in: VsOut) -> vec4<f32> {
+    if in.atlas_kind == 1u {
+        let size = vec2<f32>(textureDimensions(text_atlas_color));
+        return textureSampleLevel(text_atlas_color, text_atlas_sampler,
+            glyph_atlas_uv(in, size), i32(in.layer), 0.0);
+    }
+    let size = vec2<f32>(textureDimensions(text_atlas_mask));
+    let coverage = textureSampleLevel(text_atlas_mask, text_atlas_sampler,
+        glyph_atlas_uv(in, size), i32(in.layer), 0.0).r;
+    return vec4<f32>(coverage);
+}
+
+fn fs_shade(in: VsOut) -> vec4<f32> {
+    let sampled = sample_glyph(in);
     if in.color.a < 0.0 {
         let opacity = -in.color.a;
         let alpha = sampled.a * opacity;

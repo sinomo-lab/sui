@@ -752,12 +752,23 @@ pub(crate) struct TextAtlasInstance {
     pub(crate) color: [f32; 4],
     pub(crate) coverage_flags: [u8; 4],
     pub(crate) coverage_parameter: f32,
-    /// Atlas page == texture-array layer this glyph lives on. Sampled in the fragment shader
-    /// once the multi-page texture array goes live (Phase 3).
+    /// Atlas page == texture-array layer this glyph lives on, in the atlas selected by
+    /// `coverage_flags[3]` (0 = single-channel mask, 1 = RGBA color/LCD).
     pub(crate) layer: u32,
 }
 
 impl TextAtlasInstance {
+    /// This glyph's page across both atlases (see `TextAtlasKind::page_slot`).
+    pub(crate) fn atlas_page_slot(&self) -> usize {
+        use crate::text::TextAtlasKind;
+        let kind = if self.coverage_flags[3] == TextAtlasKind::Color.shader_index() {
+            TextAtlasKind::Color
+        } else {
+            TextAtlasKind::Mask
+        };
+        kind.page_slot(self.layer as usize)
+    }
+
     const ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
         1 => Float32x2,
         2 => Float32x2,

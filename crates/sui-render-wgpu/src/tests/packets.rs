@@ -301,7 +301,7 @@ fn optimization_regression_recycled_atlas_invalidates_retained_text() {
     // Reproduce the invalidation boundary of page eviction (including eviction
     // caused by another window sharing the renderer's text atlas).
     let engine = renderer.text_engine.as_mut().unwrap();
-    engine.atlas.pages[0].clear_for_reuse();
+    engine.atlas.mask.pages[0].clear_for_reuse();
     engine.glyph_cache.clear();
     renderer.render(&frame).unwrap();
     let restored = renderer.capture_rgba(window).unwrap();
@@ -326,7 +326,10 @@ fn cached_packets_keep_their_atlas_pages_live_without_rasterizing_glyphs() {
     engine.begin_frame();
     prepare_with_compositor(&frame, &mut engine, &mut compositor).unwrap();
     assert_eq!(compositor.last_frame_stats.packet_build_count, 0);
-    assert_eq!(engine.atlas.pages[0].last_used_frame, engine.frame_counter);
+    assert_eq!(
+        engine.atlas.mask.pages[0].last_used_frame,
+        engine.frame_counter
+    );
     assert_eq!(engine.frame_stats.atlas_miss_count, 0);
 }
 

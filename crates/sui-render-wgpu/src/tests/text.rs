@@ -15,8 +15,10 @@ use crate::tests::support::{
 use crate::text::CachedGlyphAtlas;
 use crate::text::GlyphCacheKey;
 use crate::text::GlyphFaceCacheKey;
+use crate::text::GlyphHintingTarget;
 use crate::text::GlyphSubpixelOffsetKey;
 use crate::text::TextAtlasColorMode;
+use crate::text::TextAtlasKind;
 use crate::text::TextAtlasPages;
 use crate::text_engine::TextEngine;
 use crate::text_engine::allows_lcd_text;
@@ -108,7 +110,7 @@ pub(crate) fn cached_glyph_atlas_linearizes_srgb_inputs() {
         uv_max: [0.5, 0.75],
         color_mode: TextAtlasColorMode::Grayscale,
         is_color: false,
-        page_index: 0,
+        page_index: Some(0),
     };
     let glyph = ShapedGlyph {
         glyph_id: 42,
@@ -159,7 +161,7 @@ pub(crate) fn cached_glyph_atlas_places_quad_from_subpixel_phase_integer() {
         uv_max: [0.5, 0.75],
         color_mode: TextAtlasColorMode::Grayscale,
         is_color: false,
-        page_index: 0,
+        page_index: Some(0),
     };
     let glyph = ShapedGlyph {
         glyph_id: 42,
@@ -219,7 +221,7 @@ pub(crate) fn cached_color_glyph_atlas_uses_opacity_sentinel() {
         uv_max: [0.5, 0.75],
         color_mode: TextAtlasColorMode::Grayscale,
         is_color: true,
-        page_index: 0,
+        page_index: Some(0),
     };
     let glyph = ShapedGlyph {
         glyph_id: 42,
@@ -694,6 +696,7 @@ pub(crate) fn glyph_cache_key_includes_subpixel_offset() {
         TextRenderMode::Grayscale,
         TextSubpixelOrder::None,
         TextHinting::None,
+        GlyphHintingTarget::None,
         StemDarkening::None,
         400,
     );
@@ -705,6 +708,7 @@ pub(crate) fn glyph_cache_key_includes_subpixel_offset() {
         TextRenderMode::Grayscale,
         TextSubpixelOrder::None,
         TextHinting::None,
+        GlyphHintingTarget::None,
         StemDarkening::None,
         400,
     );
@@ -727,6 +731,7 @@ pub(crate) fn glyph_cache_key_includes_weight() {
             TextRenderMode::Grayscale,
             TextSubpixelOrder::None,
             TextHinting::None,
+            GlyphHintingTarget::None,
             StemDarkening::None,
             weight,
         )
@@ -752,6 +757,7 @@ pub(crate) fn glyph_cache_key_includes_subpixel_order() {
             TextRenderMode::LcdSubpixel,
             order,
             TextHinting::None,
+            GlyphHintingTarget::None,
             StemDarkening::None,
             400,
         )
@@ -1536,6 +1542,45 @@ pub(crate) fn text_engine_reuses_cached_glyph_atlas_entries_across_repeated_buil
 }
 
 #[test]
+pub(crate) fn inkless_glyphs_are_cached_without_pinning_an_atlas_page() {
+    let mut scene = Scene::new();
+    scene.push(SceneCommand::DrawText(TextRun {
+        rect: Rect::new(4.0, 6.0, 120.0, 28.0),
+        text: "a b".to_string(),
+        style: TextStyle::new(Color::WHITE),
+    }));
+    let frame = SceneFrame {
+        window_id: WindowId::new(13),
+        viewport: Size::new(160.0, 60.0),
+        surface_size: Size::new(160.0, 60.0),
+        scale_factor: 1.0,
+        dirty_regions: Vec::new(),
+        layer_updates: Vec::new(),
+        scene,
+        font_registry: Arc::new(FontRegistry::new()),
+        image_registry: Arc::new(ImageRegistry::new()),
+        text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+    };
+
+    let mut text_engine = TextEngine::new().unwrap();
+    build_vertices(&frame, &mut text_engine).unwrap();
+
+    // A space has no ink, so its entry must not point at a page: a cache hit
+    // on it would otherwise keep that page from ever being evicted.
+    let cached: Vec<_> = text_engine.glyph_cache.values().collect();
+    assert_eq!(cached.len(), 3);
+    for glyph in cached {
+        assert_eq!(glyph.page_index.is_some(), !glyph.size.is_empty());
+    }
+    assert!(
+        text_engine
+            .glyph_cache
+            .values()
+            .any(|glyph| glyph.page_index.is_none())
+    );
+}
+
+#[test]
 pub(crate) fn text_engine_parses_swash_face_once_per_text_run_when_glyphs_miss() {
     let mut scene = Scene::new();
     scene.push(SceneCommand::DrawText(TextRun {
@@ -1737,7 +1782,7 @@ pub(crate) fn renderer_grows_atlas_pages_when_text_atlas_fills_mid_frame() {
     let mut text_engine = TextEngine::new().unwrap();
     // Tiny pages with room for several layers: the printable-ASCII run overflows the first
     // page, so the atlas must grow onto additional texture-array layers rather than reset.
-    text_engine.atlas = TextAtlasPages::new(96, 96, 4);
+    text_engine.atlas.mask = TextAtlasPages::new(96, 96, 1, 4);
     renderer.text_engine = Some(text_engine);
 
     renderer.render(&frame).unwrap();
@@ -1748,10 +1793,10 @@ pub(crate) fn renderer_grows_atlas_pages_when_text_atlas_fills_mid_frame() {
         .expect("renderer keeps the same text engine -- no nuclear reset");
     // The engine was NOT replaced: it still has the small page size we configured (a reset
     // would have rebuilt it at the default page size).
-    assert_eq!(active_text_engine.atlas.page_size(), (96, 96));
+    assert_eq!(active_text_engine.atlas.mask.page_size(), (96, 96));
     // Overflowing one page grew the atlas onto more pages instead of resetting.
     assert!(
-        active_text_engine.atlas.page_count() >= 2,
+        active_text_engine.atlas.mask.page_count() >= 2,
         "atlas should have grown onto multiple pages"
     );
     assert!(active_text_engine.glyph_cache_stats().0 > 32);
@@ -1804,7 +1849,7 @@ pub(crate) fn multi_page_atlas_is_stable_across_frames() {
 
     let mut renderer = WgpuRenderer::new();
     let mut text_engine = TextEngine::new().unwrap();
-    text_engine.atlas = TextAtlasPages::new(96, 96, 4);
+    text_engine.atlas.mask = TextAtlasPages::new(96, 96, 1, 4);
     renderer.text_engine = Some(text_engine);
 
     renderer.render(&make_frame()).unwrap();
@@ -1812,7 +1857,7 @@ pub(crate) fn multi_page_atlas_is_stable_across_frames() {
         let text_engine = renderer.text_engine.as_ref().unwrap();
         (
             text_engine.glyph_cache_stats().0,
-            text_engine.atlas.page_count(),
+            text_engine.atlas.mask.page_count(),
         )
     };
     assert!(pages_after_first >= 2, "glyphs should span multiple pages");
@@ -1820,12 +1865,12 @@ pub(crate) fn multi_page_atlas_is_stable_across_frames() {
     renderer.render(&make_frame()).unwrap();
     let text_engine = renderer.text_engine.as_ref().unwrap();
     assert_eq!(
-        text_engine.atlas.page_count(),
+        text_engine.atlas.mask.page_count(),
         pages_after_first,
         "page count must be stable across frames (no growth/thrash)"
     );
     assert_eq!(
-        text_engine.atlas.page_size(),
+        text_engine.atlas.mask.page_size(),
         (96, 96),
         "engine must not have been reset"
     );
@@ -1859,7 +1904,7 @@ pub(crate) fn multi_page_atlas_evicts_without_corruption_under_pressure() {
 
     let mut renderer = WgpuRenderer::new();
     let mut text_engine = TextEngine::new().unwrap();
-    text_engine.atlas = TextAtlasPages::new(64, 64, 2);
+    text_engine.atlas.mask = TextAtlasPages::new(64, 64, 1, 2);
     renderer.text_engine = Some(text_engine);
 
     for label in texts {
@@ -1889,13 +1934,13 @@ pub(crate) fn multi_page_atlas_evicts_without_corruption_under_pressure() {
         renderer.render(&frame).unwrap();
 
         let text_engine = renderer.text_engine.as_ref().unwrap();
-        let pages = text_engine.atlas.page_count();
+        let pages = text_engine.atlas.mask.page_count();
         assert!(pages <= 2, "atlas must respect the page budget");
         assert!(
             text_engine
                 .glyph_cache
                 .values()
-                .all(|cached| cached.page_index < pages),
+                .all(|cached| cached.page_index.is_none_or(|page| page < pages)),
             "every cached glyph must reference a live page after eviction"
         );
     }
@@ -2436,5 +2481,171 @@ pub(crate) fn text_coverage_quality_matrix_capture() {
             perceptual_dark_weight.expect("perceptual dark stats")
                 >= linear_dark_weight.expect("linear dark stats") * 0.98
         );
+    }
+}
+
+fn text_frame(window: u64, scene: Scene, size: Size) -> SceneFrame {
+    SceneFrame {
+        window_id: WindowId::new(window),
+        viewport: size,
+        surface_size: size,
+        scale_factor: 1.0,
+        dirty_regions: Vec::new(),
+        layer_updates: Vec::new(),
+        scene,
+        font_registry: Arc::new(FontRegistry::new()),
+        image_registry: Arc::new(ImageRegistry::new()),
+        text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+    }
+}
+
+fn long_text_scene(clip: Option<Rect>, clear: bool) -> Scene {
+    let mut scene = Scene::new();
+    if clear {
+        scene.push(SceneCommand::Clear(Color::BLACK));
+    }
+    if let Some(rect) = clip {
+        scene.push(SceneCommand::PushClip { rect });
+    }
+    scene.push(SceneCommand::DrawText(TextRun {
+        rect: Rect::new(4.0, 6.0, 390.0, 28.0),
+        text: "abcdefghijklmnopqrstuvwxyz".to_string(),
+        style: TextStyle::new(Color::WHITE),
+    }));
+    if clip.is_some() {
+        scene.push(SceneCommand::PopClip);
+    }
+    scene
+}
+
+#[test]
+pub(crate) fn glyphs_outside_the_clip_are_neither_rasterized_nor_drawn() {
+    let size = Size::new(400.0, 40.0);
+    let mut full_engine = TextEngine::new().unwrap();
+    let full = build_vertices(
+        &text_frame(14, long_text_scene(None, false), size),
+        &mut full_engine,
+    )
+    .unwrap();
+    let mut clipped_engine = TextEngine::new().unwrap();
+    let clipped = build_vertices(
+        &text_frame(
+            14,
+            long_text_scene(Some(Rect::new(0.0, 0.0, 40.0, 40.0)), false),
+            size,
+        ),
+        &mut clipped_engine,
+    )
+    .unwrap();
+
+    assert!(
+        !clipped.is_empty(),
+        "glyphs inside the clip are still drawn"
+    );
+    assert!(
+        clipped.len() * 3 < full.len(),
+        "{} clipped vs {} full vertices",
+        clipped.len(),
+        full.len()
+    );
+    let (_, _, clipped_misses) = clipped_engine.glyph_cache_stats();
+    let (_, _, full_misses) = full_engine.glyph_cache_stats();
+    assert!(clipped_misses * 3 < full_misses);
+}
+
+#[test]
+pub(crate) fn retained_text_redraws_glyphs_revealed_by_a_wider_clip() {
+    let window = 15;
+    let size = Size::new(400.0, 40.0);
+    let mut renderer = WgpuRenderer::new();
+    let narrow = long_text_scene(Some(Rect::new(0.0, 0.0, 40.0, 40.0)), true);
+    renderer.render(&text_frame(window, narrow, size)).unwrap();
+    let wide = long_text_scene(Some(Rect::new(0.0, 0.0, 400.0, 40.0)), true);
+    renderer.render(&text_frame(window, wide, size)).unwrap();
+
+    let image = renderer.capture_rgba(WindowId::new(window)).unwrap();
+    let width = image.width() as usize;
+    let lit_right_of_old_clip = image
+        .pixels()
+        .chunks_exact(4)
+        .enumerate()
+        .any(|(index, pixel)| index % width > 60 && pixel[0] > 128);
+    assert!(
+        lit_right_of_old_clip,
+        "glyphs culled under the old clip must appear"
+    );
+}
+
+#[test]
+pub(crate) fn grayscale_text_uses_only_the_single_channel_atlas() {
+    let mut scene = Scene::new();
+    scene.push(SceneCommand::DrawText(TextRun {
+        rect: Rect::new(4.0, 6.0, 120.0, 28.0),
+        text: "abc".to_string(),
+        style: TextStyle::new(Color::WHITE),
+    }));
+    let mut text_engine = TextEngine::new().unwrap();
+    build_vertices(
+        &text_frame(16, scene, Size::new(160.0, 60.0)),
+        &mut text_engine,
+    )
+    .unwrap();
+
+    assert!(
+        text_engine
+            .glyph_cache
+            .values()
+            .all(|glyph| glyph.atlas_kind() == TextAtlasKind::Mask)
+    );
+    assert_eq!(text_engine.atlas.mask.page_count(), 1);
+    assert_eq!(
+        text_engine.atlas.color.page_count(),
+        0,
+        "no color page is allocated until a color or LCD glyph needs one"
+    );
+    let uploads = text_engine.take_atlas_uploads();
+    assert!(!uploads.is_empty());
+    for (kind, _, upload) in &uploads {
+        assert_eq!(*kind, TextAtlasKind::Mask);
+        for write in &upload.writes {
+            assert_eq!(
+                write.pixels.len(),
+                (write.extent.0 * write.extent.1) as usize,
+                "mask uploads carry one byte per pixel"
+            );
+        }
+    }
+}
+
+#[test]
+pub(crate) fn cull_bounds_cover_ink_overhang_and_glyphs_without_outlines() {
+    let line = Rect::new(0.0, 10.0, 100.0, 20.0);
+    // A tall mark above the line box, e.g. stacked diacritics.
+    let ink = Rect::new(5.0, 2.0, 10.0, 30.0);
+    let bounds = crate::text_engine::text_cull_bounds([ink], [line]).unwrap();
+    assert_eq!(bounds, Rect::new(0.0, 2.0, 100.0, 30.0));
+    // A line of bitmap emoji has no outline bounds; its line box still counts.
+    assert_eq!(crate::text_engine::text_cull_bounds([], [line]), Some(line));
+}
+
+#[test]
+pub(crate) fn text_atlas_shaders_pass_wgsl_uniformity_validation() {
+    for (name, source) in [
+        ("text atlas", TEXT_ATLAS_SHADER_SOURCE),
+        (
+            "dual-source text atlas",
+            TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE,
+        ),
+    ] {
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|error| panic!("{name} WGSL should parse: {error}"));
+        // Sampling the mask or color atlas happens inside a per-glyph branch,
+        // which is only legal with an explicit level.
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{name} WGSL should validate: {error:?}"));
     }
 }

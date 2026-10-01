@@ -14,13 +14,11 @@ use crate::text::GlyphFaceCacheKey;
 use crate::text::GlyphHintingTarget;
 use crate::text::GlyphSubpixelOffsetKey;
 use crate::text::RendererTextCacheSnapshot;
-use crate::text::TEXT_ATLAS_HEIGHT;
-use crate::text::TEXT_ATLAS_MAX_PAGES;
-use crate::text::TEXT_ATLAS_WIDTH;
 use crate::text::TextAtlasColorMode;
 use crate::text::TextAtlasInsertError;
-use crate::text::TextAtlasPages;
+use crate::text::TextAtlasKind;
 use crate::text::TextAtlasUpload;
+use crate::text::TextAtlases;
 use crate::text::TextFrameStats;
 use crate::text::glyph_scale_bucket;
 use crate::text::glyph_scale_from_bucket;
@@ -64,7 +62,7 @@ use web_time::Instant;
 pub(crate) struct TextEngine {
     pub(crate) system: TextSystem,
     pub(crate) glyph_cache: HashMap<GlyphCacheKey, CachedGlyphAtlas>,
-    pub(crate) atlas: TextAtlasPages,
+    pub(crate) atlas: TextAtlases,
     pub(crate) swash_scale_context: SwashScaleContext,
     pub(crate) font_aware_hinter: crate::text_hinting::FontAwareHinter,
     pub(crate) lcd_rasterizer: crate::text_raster::LcdRasterizer,
@@ -127,7 +125,7 @@ impl Default for TextEngine {
         Self {
             system: TextSystem::new(),
             glyph_cache: HashMap::new(),
-            atlas: TextAtlasPages::new(TEXT_ATLAS_WIDTH, TEXT_ATLAS_HEIGHT, TEXT_ATLAS_MAX_PAGES),
+            atlas: TextAtlases::default(),
             swash_scale_context: SwashScaleContext::new(),
             font_aware_hinter: Default::default(),
             lcd_rasterizer: Default::default(),
@@ -351,8 +349,11 @@ impl TextEngine {
             return Ok(());
         }
 
-        let translated_bounds = layout.measurement().bounds.translate(origin.to_vector());
-        if state.visible_rect(translated_bounds).is_none() {
+        let bounds = text_cull_bounds(
+            std::iter::once(layout.measurement().bounds),
+            layout.lines().iter().map(|line| line.rect),
+        );
+        if !text_bounds_visible(state, bounds, origin, raster_scale_factor) {
             return Ok(());
         }
 
@@ -383,12 +384,18 @@ impl TextEngine {
             return Ok(());
         }
 
-        let translated_bounds = line_window.bounds().translate(origin.to_vector());
-        if translated_bounds.width() <= 0.0 || translated_bounds.height() <= 0.0 {
+        let line_bounds = line_window.bounds();
+        if line_bounds.width() <= 0.0 || line_bounds.height() <= 0.0 {
             return Ok(());
         }
 
-        if state.visible_rect(translated_bounds).is_none() {
+        // Ink can extend past the line boxes (tall marks, tight line height),
+        // so cull on both rather than on the line boxes alone.
+        let bounds = text_cull_bounds(
+            line_window.glyphs().iter().filter_map(|glyph| glyph.bounds),
+            std::iter::once(line_bounds),
+        );
+        if !text_bounds_visible(state, bounds, origin, raster_scale_factor) {
             return Ok(());
         }
 
@@ -422,7 +429,33 @@ impl TextEngine {
         let text_policy = self.resolved_text_render_policy(state.active_text_render_policy());
         let raster_transform = state.current_transform.then(state.text_raster_transform);
         let glyph_raster_scale = raster_scale_factor * text_transform_scale(raster_transform);
+        let Some(inherited_inverse) = state.text_raster_transform.inverse() else {
+            return Ok(());
+        };
+        let lcd_requested = text_policy.render_mode == TextRenderMode::LcdSubpixel;
+        let clip = state.current_clip_bounds();
+        let cull_padding = text_cull_padding(glyph_raster_scale);
         for glyph in glyphs {
+            // Skip glyphs wholly outside the clip before rasterizing them, so text
+            // scrolled out of view neither costs atlas space nor emits instances.
+            // A glyph without outline bounds (a bitmap emoji) is judged by its line.
+            if let Some(clip) = clip {
+                let bounds = glyph
+                    .glyph
+                    .bounds
+                    .unwrap_or(glyph.line.rect)
+                    .translate(origin.to_vector())
+                    .inflate(cull_padding, cull_padding);
+                if state
+                    .current_transform
+                    .transform_rect_bbox(bounds)
+                    .intersection(clip)
+                    .is_none()
+                {
+                    continue;
+                }
+            }
+
             let face_index = glyph.glyph.face_index;
             if active_face_index != Some(face_index) {
                 active_face_index = Some(face_index);
@@ -460,23 +493,29 @@ impl TextEngine {
                     target
                 }
             };
-            let background = glyph.glyph.bounds.and_then(|bounds| {
-                // Include the LCD footprint outside the outline's ink bounds.
-                let bounds = bounds.translate(origin.to_vector()).inflate(
-                    2.0 / actual_raster_scale.max(f32::EPSILON),
-                    2.0 / actual_raster_scale.max(f32::EPSILON),
-                );
-                state
-                    .text_background
-                    .color_under(state.current_transform.transform_rect_bbox(bounds))
-            });
-            let render_mode = if matches!(text_policy.render_mode, TextRenderMode::LcdSubpixel)
+            // Only LCD needs the wider footprint; grayscale looks up its own
+            // background below, so skip this lookup in the default mode.
+            let lcd_background = if lcd_requested {
+                glyph.glyph.bounds.and_then(|bounds| {
+                    // Include the LCD footprint outside the outline's ink bounds.
+                    let bounds = bounds.translate(origin.to_vector()).inflate(
+                        2.0 / actual_raster_scale.max(f32::EPSILON),
+                        2.0 / actual_raster_scale.max(f32::EPSILON),
+                    );
+                    state
+                        .text_background
+                        .color_under(state.current_transform.transform_rect_bbox(bounds))
+                })
+            } else {
+                None
+            };
+            let render_mode = if lcd_requested
                 && (!self.lcd_blending_supported
                     || !state.text_lcd_allowed
                     || glyph_color.alpha.is_nan()
                     || glyph_color.alpha < 1.0
                     || !crate::text_policy::is_sdr_color(glyph_color)
-                    || !background
+                    || !lcd_background
                         .is_some_and(|bg| bg.alpha >= 1.0 && crate::text_policy::is_sdr_color(bg))
                     || matches!(text_policy.subpixel_order, TextSubpixelOrder::None)
                     || !allows_lcd_text(raster_transform)
@@ -497,7 +536,7 @@ impl TextEngine {
                 translated_glyph.bounds = Some(bounds.translate(origin.to_vector()));
             }
             let background = if render_mode == TextRenderMode::LcdSubpixel {
-                background
+                lcd_background
             } else {
                 translated_glyph.bounds.and_then(|bounds| {
                     state
@@ -530,13 +569,14 @@ impl TextEngine {
                 text_policy.stem_darkening,
                 glyph_style.weight.value(),
             )? && let Some(instance) = build_text_atlas_instance(
-                atlas,
+                &atlas,
                 &translated_glyph,
                 glyph_color,
                 text_policy.coverage_policy,
                 background,
                 state.current_transform,
                 state.text_raster_transform,
+                inherited_inverse,
                 state.pixel_snap_offset,
                 viewport,
                 raster_scale_factor,
@@ -575,11 +615,11 @@ impl TextEngine {
         hinting_target: GlyphHintingTarget,
         stem_darkening: StemDarkening,
         weight: u16,
-    ) -> Result<Option<&CachedGlyphAtlas>> {
+    ) -> Result<Option<CachedGlyphAtlas>> {
         let raster_scale_factor = raster_scale_factor.max(f32::EPSILON);
         let atlas_physical_scale = glyph_scale * raster_scale_factor;
         let scale_bucket = glyph_scale_bucket(atlas_physical_scale);
-        let mut key = GlyphCacheKey::new(
+        let key = GlyphCacheKey::new(
             face_key,
             glyph_id,
             scale_bucket,
@@ -587,18 +627,21 @@ impl TextEngine {
             text_render_mode,
             text_subpixel_order,
             text_hinting,
+            hinting_target,
             stem_darkening,
             weight,
         );
-        key.hinting_target = hinting_target;
         // Hit: stamp the glyph's page as used this frame (for LRU) and return the cached entry.
-        if self.glyph_cache.contains_key(&key) {
+        if let Some(&cached) = self.glyph_cache.get(&key) {
             if self.diagnostics_enabled {
                 self.glyph_cache_hits += 1;
             }
-            let page_index = self.glyph_cache[&key].page_index;
-            self.atlas.touch_page(page_index, self.frame_counter);
-            return Ok(self.glyph_cache.get(&key));
+            if let Some(page_index) = cached.page_index {
+                self.atlas
+                    .get_mut(cached.atlas_kind())
+                    .touch_page(page_index, self.frame_counter);
+            }
+            return Ok(Some(cached));
         }
 
         // Miss: rasterize and insert into the atlas (which may evict an LRU page).
@@ -646,16 +689,28 @@ impl TextEngine {
         // If a page was recycled, drop every glyph that pointed into it: its atlas region -- and
         // therefore the UVs cached here -- are no longer valid.
         if let Some(evicted) = evicted_page {
-            self.glyph_cache
-                .retain(|_, cached| cached.page_index != evicted);
+            let kind = primitive.atlas_kind();
+            self.glyph_cache.retain(|_, cached| {
+                cached.atlas_kind() != kind || cached.page_index != Some(evicted)
+            });
         }
-        self.glyph_cache.insert(key.clone(), primitive);
-        Ok(self.glyph_cache.get(&key))
+        self.glyph_cache.insert(key, primitive);
+        Ok(Some(primitive))
     }
 
-    /// Drain pending per-page atlas uploads, each tagged with its texture-array layer index.
-    pub(crate) fn take_atlas_uploads(&mut self) -> Vec<(usize, TextAtlasUpload)> {
-        self.atlas.take_uploads()
+    /// Drain pending per-page atlas uploads, each tagged with its atlas and texture-array
+    /// layer index.
+    pub(crate) fn take_atlas_uploads(&mut self) -> Vec<(TextAtlasKind, usize, TextAtlasUpload)> {
+        TextAtlasKind::ALL
+            .into_iter()
+            .flat_map(|kind| {
+                self.atlas
+                    .get_mut(kind)
+                    .take_uploads()
+                    .into_iter()
+                    .map(move |(page, upload)| (kind, page, upload))
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -686,7 +741,7 @@ impl TextEngine {
 }
 
 pub(crate) fn build_cached_glyph_atlas(
-    pages: &mut TextAtlasPages,
+    atlases: &mut TextAtlases,
     scale_context: &mut SwashScaleContext,
     font_aware_hinter: &mut crate::text_hinting::FontAwareHinter,
     lcd_rasterizer: &mut crate::text_raster::LcdRasterizer,
@@ -823,23 +878,32 @@ pub(crate) fn build_cached_glyph_atlas(
         }
     };
 
+    let mut glyph = CachedGlyphAtlas {
+        scale: glyph_scale_logical,
+        offset: logical_offset,
+        size: Size::ZERO,
+        uv_min: [0.0, 0.0],
+        uv_max: [0.0, 0.0],
+        color_mode: TextAtlasColorMode::from(text_render_mode),
+        is_color: rasterized.is_color,
+        page_index: None,
+    };
     if width == 0 || height == 0 {
-        return Ok(Some((
-            CachedGlyphAtlas {
-                scale: glyph_scale_logical,
-                offset: logical_offset,
-                size: Size::ZERO,
-                uv_min: [0.0, 0.0],
-                uv_max: [0.0, 0.0],
-                color_mode: TextAtlasColorMode::from(text_render_mode),
-                is_color: rasterized.is_color,
-                page_index: 0,
-            },
-            None,
-        )));
+        return Ok(Some((glyph, None)));
     }
 
-    let insertion = match pages.insert_rgba(width, height, &rasterized.pixels, frame) {
+    let kind = glyph.atlas_kind();
+    let pixels = match kind {
+        // Coverage is the alpha channel of the RGBA raster; the mask atlas stores only that.
+        TextAtlasKind::Mask => rasterized
+            .pixels
+            .chunks_exact(4)
+            .map(|pixel| pixel[3])
+            .collect(),
+        TextAtlasKind::Color => rasterized.pixels,
+    };
+    let pages = atlases.get_mut(kind);
+    let insertion = match pages.insert(width, height, pixels, frame) {
         Ok(insertion) => insertion,
         // Too large for any page, or every page is already hot this frame: drop the glyph for
         // this frame. With on-demand page growth + LRU eviction there is no atlas-full cliff.
@@ -855,22 +919,14 @@ pub(crate) fn build_cached_glyph_atlas(
     let logical_uv_min_y = placement.y as f32;
     let logical_uv_max_x = logical_uv_min_x + image.placement.width as f32;
     let logical_uv_max_y = logical_uv_min_y + image.placement.height as f32;
-    Ok(Some((
-        CachedGlyphAtlas {
-            scale: glyph_scale_logical,
-            offset: logical_offset,
-            size: Size::new(
-                image.placement.width as f32 / raster_scale_factor,
-                image.placement.height as f32 / raster_scale_factor,
-            ),
-            uv_min: [logical_uv_min_x * inv_width, logical_uv_min_y * inv_height],
-            uv_max: [logical_uv_max_x * inv_width, logical_uv_max_y * inv_height],
-            color_mode: TextAtlasColorMode::from(text_render_mode),
-            is_color: rasterized.is_color,
-            page_index,
-        },
-        insertion.evicted_page,
-    )))
+    glyph.size = Size::new(
+        image.placement.width as f32 / raster_scale_factor,
+        image.placement.height as f32 / raster_scale_factor,
+    );
+    glyph.uv_min = [logical_uv_min_x * inv_width, logical_uv_min_y * inv_height];
+    glyph.uv_max = [logical_uv_max_x * inv_width, logical_uv_max_y * inv_height];
+    glyph.page_index = Some(page_index);
+    Ok(Some((glyph, insertion.evicted_page)))
 }
 
 pub(crate) fn glyph_raster_offset(
@@ -1275,6 +1331,7 @@ pub(crate) fn append_cached_glyph_atlas(
         None,
         transform,
         Transform::IDENTITY,
+        Transform::IDENTITY,
         Vector::ZERO,
         viewport,
         raster_scale_factor,
@@ -1291,6 +1348,7 @@ pub(crate) fn build_text_atlas_instance(
     background: Option<Color>,
     transform: Transform,
     inherited_transform: Transform,
+    inherited_inverse: Transform,
     pixel_snap_offset: Vector,
     viewport: Size,
     raster_scale_factor: f32,
@@ -1298,6 +1356,7 @@ pub(crate) fn build_text_atlas_instance(
     if atlas.size.is_empty() || viewport.is_empty() {
         return None;
     }
+    let page_index = atlas.page_index?;
 
     let rgba = if atlas.is_color {
         [1.0, 1.0, 1.0, -color.clamped().alpha]
@@ -1310,7 +1369,7 @@ pub(crate) fn build_text_atlas_instance(
     let width = atlas.size.width * residual_scale;
     let height = atlas.size.height * residual_scale;
     let raster_transform = transform.then(inherited_transform);
-    let (top_left, top_right, bottom_left, bottom_right) = snapped_glyph_quad(
+    let (top_left, top_right, bottom_left, _) = snapped_glyph_quad(
         raster_transform,
         pixel_snap_offset,
         Point::new(glyph.origin_x, glyph.origin_y),
@@ -1318,15 +1377,13 @@ pub(crate) fn build_text_atlas_instance(
         raster_scale_factor,
     );
 
-    let inverse = inherited_transform.inverse()?;
     let to_local_ndc = |point: Point| {
-        let local = inverse.transform_point(point);
+        let local = inherited_inverse.transform_point(point);
         to_ndc(local.x, local.y, viewport)
     };
     let top_left = to_local_ndc(top_left);
     let top_right = to_local_ndc(top_right);
     let bottom_left = to_local_ndc(bottom_left);
-    let _bottom_right = to_local_ndc(bottom_right);
 
     let atlas_contains_lcd_subpixels = matches!(atlas.color_mode, TextAtlasColorMode::LcdSubpixel);
     let (coverage_policy_kind, coverage_policy_parameter) = if atlas_contains_lcd_subpixels
@@ -1355,10 +1412,10 @@ pub(crate) fn build_text_atlas_instance(
             (atlas_contains_lcd_subpixels && allows_lcd_text(raster_transform)) as u8,
             atlas_contains_lcd_subpixels as u8,
             coverage_policy_kind.round().clamp(0.0, u8::MAX as f32) as u8,
-            0,
+            atlas.atlas_kind().shader_index(),
         ],
         coverage_parameter: coverage_policy_parameter,
-        layer: atlas.page_index as u32,
+        layer: page_index as u32,
     })
 }
 
@@ -1395,6 +1452,43 @@ pub(crate) fn coverage_policy_shader_metadata(policy: TextCoveragePolicy) -> (f3
 
 pub(crate) fn allows_lcd_text(transform: Transform) -> bool {
     transform_is_lcd_safe(transform)
+}
+
+/// Margin around glyph ink for culling, in layout units: antialiasing, pixel
+/// snapping and LCD fringes reach up to two physical pixels past the outline.
+fn text_cull_padding(glyph_raster_scale: f32) -> f32 {
+    2.0 / glyph_raster_scale.max(f32::EPSILON)
+}
+
+/// Union of glyph ink and line boxes. Ink can overhang its line, and glyphs
+/// without outline bounds (bitmap emoji) are only covered by their line box.
+pub(crate) fn text_cull_bounds(
+    ink: impl IntoIterator<Item = Rect>,
+    line_boxes: impl IntoIterator<Item = Rect>,
+) -> Option<Rect> {
+    ink.into_iter()
+        .chain(line_boxes)
+        .reduce(|bounds, rect| bounds.union(rect))
+}
+
+fn text_bounds_visible(
+    state: &SceneRasterState,
+    bounds: Option<Rect>,
+    origin: Point,
+    raster_scale_factor: f32,
+) -> bool {
+    let Some(bounds) = bounds else {
+        return false;
+    };
+    let raster_transform = state.current_transform.then(state.text_raster_transform);
+    let padding = text_cull_padding(raster_scale_factor * text_transform_scale(raster_transform));
+    state
+        .visible_rect(
+            bounds
+                .translate(origin.to_vector())
+                .inflate(padding, padding),
+        )
+        .is_some()
 }
 
 /// Largest singular value of the linear transform: enough raster resolution

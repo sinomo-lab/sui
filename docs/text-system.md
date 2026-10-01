@@ -311,6 +311,20 @@ use five. The sample grid is applied after hinting, independently of glyph
 advances and baseline layout. Temporary sample storage is limited to 4 MiB;
 oversized masks and glyphs missed entirely by the grid use analytic coverage.
 
+Glyphs live in two atlases, each a texture array of 2048×2048 pages that grows
+to four pages and then recycles the least recently used one. Grayscale coverage,
+the common case, is stored at one byte per pixel; color glyphs and LCD masks use
+a separate RGBA atlas, which allocates no page until one of them is drawn. Pixels
+are kept only on the GPU: the CPU holds just the glyphs placed since the last
+upload, written as one strip per atlas shelf.
+
+Glyphs whose ink lies wholly outside the current clip are skipped before
+rasterization, so text scrolled out of view costs neither atlas space nor
+instances. Culling pads ink by two physical pixels for antialiasing and LCD
+fringes, and judges a glyph without outline bounds (such as a bitmap emoji) by
+its line box. Whole layouts and line windows are culled on the union of their
+ink and line boxes.
+
 Atlas coordinates are stored compactly as UNORM16 values; the shaders recover
 integer texel bounds before interpolation. Bilinear filtering supports transforms
 while a half-texel inset prevents sampling neighbouring glyphs. These raster rules

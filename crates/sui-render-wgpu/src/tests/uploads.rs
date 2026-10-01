@@ -436,7 +436,7 @@ fn combined_scene_and_output_submission_matches_separate_passes() {
         });
         if revision == 2 {
             for renderer in [&mut combined, &mut separate] {
-                renderer.text_engine.as_mut().unwrap().atlas.pages[0].clear_for_reuse();
+                renderer.text_engine.as_mut().unwrap().atlas.mask.pages[0].clear_for_reuse();
                 renderer.text_engine.as_mut().unwrap().glyph_cache.clear();
             }
         }

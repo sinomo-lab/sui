@@ -431,8 +431,9 @@ pub(crate) struct RetainedDirectPacket {
     // Replacing a raster packet also replaces its composition cache. The Arc
     // identity of the immutable result acts as a generation for GPU preparation.
     composed: std::cell::RefCell<Option<ComposedPacket>>,
+    /// Atlas page slots (see `TextAtlasKind::page_slot`) its glyphs sample.
     pub(crate) text_pages: u8,
-    pub(crate) atlas_versions: [u64; crate::text::TEXT_ATLAS_MAX_PAGES],
+    pub(crate) atlas_versions: [u64; crate::text::TEXT_ATLAS_PAGE_SLOTS],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -454,13 +455,9 @@ impl RasterContext {
 
 impl RetainedDirectPacket {
     fn atlas_is_current(&self, engine: &TextEngine) -> bool {
-        (0..crate::text::TEXT_ATLAS_MAX_PAGES).all(|page| {
-            self.text_pages & (1 << page) == 0
-                || engine
-                    .atlas
-                    .pages
-                    .get(page)
-                    .is_some_and(|p| p.generation == self.atlas_versions[page])
+        (0..crate::text::TEXT_ATLAS_PAGE_SLOTS).all(|slot| {
+            self.text_pages & (1 << slot) == 0
+                || engine.atlas.slot_generation(slot) == Some(self.atlas_versions[slot])
         })
     }
 }
@@ -1456,9 +1453,9 @@ impl RetainedCompositorState {
         {
             return;
         }
-        for page in 0..crate::text::TEXT_ATLAS_MAX_PAGES {
-            if packet.text_pages & (1 << page) != 0 {
-                engine.atlas.touch_page(page, engine.frame_counter);
+        for slot in 0..crate::text::TEXT_ATLAS_PAGE_SLOTS {
+            if packet.text_pages & (1 << slot) != 0 {
+                engine.atlas.touch_slot(slot, engine.frame_counter);
             }
         }
     }
@@ -1597,13 +1594,9 @@ impl RetainedCompositorState {
                     text_pages: draw_ops
                         .text_instances
                         .iter()
-                        .fold(0, |mask, glyph| mask | (1 << glyph.layer)),
-                    atlas_versions: std::array::from_fn(|page| {
-                        text_engine
-                            .atlas
-                            .pages
-                            .get(page)
-                            .map_or(0, |p| p.generation)
+                        .fold(0, |mask, glyph| mask | (1 << glyph.atlas_page_slot())),
+                    atlas_versions: std::array::from_fn(|slot| {
+                        text_engine.atlas.slot_generation(slot).unwrap_or(0)
                     }),
                     draw_ops: Arc::new(draw_ops),
                     composed: Default::default(),
