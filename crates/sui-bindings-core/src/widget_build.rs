@@ -1445,7 +1445,7 @@ impl BindingWidget {
                     group = group.padding(*padding);
                 }
                 if let Some(spacing) = spacing {
-                    group = group.spacing(*spacing);
+                    group = group.gap(*spacing);
                 }
                 if let Some(corner_radius) = corner_radius {
                     group = group.corner_radius(*corner_radius);
@@ -1823,7 +1823,7 @@ impl BindingWidget {
                     view = view.padding(*padding);
                 }
                 if let Some(spacing) = spacing {
-                    view = view.spacing(*spacing);
+                    view = view.gap(*spacing);
                 }
                 for child in children {
                     view = view.with_child(child.into_runtime_widget(errors.clone()));
@@ -1852,7 +1852,7 @@ impl BindingWidget {
                 on_reorder,
             } => {
                 let mut list = ReorderableList::new(name.clone())
-                    .spacing(*spacing)
+                    .gap(*spacing)
                     .drag_threshold(*drag_threshold);
                 if let Some(preview_label) = preview_label {
                     list = list.preview_label(preview_label.clone());
@@ -1903,7 +1903,7 @@ impl BindingWidget {
                     surface = surface.elevation(*elevation);
                 }
                 if let Some(radius) = radius {
-                    surface = surface.radius(*radius);
+                    surface = surface.corner_radius(*radius);
                 }
                 if let Some(padding) = padding {
                     surface = surface.padding(Insets::all(padding.max(0.0)));
@@ -1948,7 +1948,7 @@ impl BindingWidget {
                     toolbar = toolbar.padding(Insets::all(padding.max(0.0)));
                 }
                 if let Some(spacing) = spacing {
-                    toolbar = toolbar.spacing(*spacing);
+                    toolbar = toolbar.gap(*spacing);
                 }
                 if let Some(background) = background {
                     toolbar = toolbar.background(*background);
@@ -2231,7 +2231,7 @@ impl BindingWidget {
                         Label::new("").text_from(value)
                     })
                     .estimated_row_height(*estimated_row_height)
-                    .spacing(*spacing)
+                    .gap(*spacing)
                     .overscan_viewports(*overscan_viewports)
                     .cache_capacity(*cache_capacity)
                     .selection_mode(if *selectable {
@@ -2547,7 +2547,7 @@ impl BindingWidget {
                     sized_box = sized_box.height(*height);
                 }
                 if let Some(child) = child {
-                    sized_box = sized_box.with_child(child.into_runtime_widget(errors.clone()));
+                    sized_box = sized_box.child(child.into_runtime_widget(errors.clone()));
                 }
                 BindingRuntimeWidget::new(sized_box)
             }
@@ -2557,7 +2557,7 @@ impl BindingWidget {
                 spacing,
                 alignment,
             } => {
-                let mut stack = Stack::new(*axis).spacing(*spacing).alignment(*alignment);
+                let mut stack = Stack::new(*axis).gap(*spacing).alignment(*alignment);
                 for child in children {
                     stack = stack.with_child(child.into_runtime_widget(errors.clone()));
                 }
@@ -2618,7 +2618,7 @@ impl BindingWidget {
             } => {
                 let mut group = FieldGroup::new();
                 if let Some(spacing) = spacing {
-                    group = group.spacing(*spacing);
+                    group = group.gap(*spacing);
                 }
                 if let Some(padding) = padding {
                     group = group.padding(Insets::all(padding.max(0.0)));
@@ -2672,7 +2672,7 @@ impl BindingWidget {
                     section = section.fill_width();
                 }
                 if let Some(radius) = radius {
-                    section = section.radius(*radius);
+                    section = section.corner_radius(*radius);
                 }
                 if let Some(elevation) = elevation {
                     section = section.elevation(*elevation);
@@ -2809,7 +2809,7 @@ impl BindingWidget {
                     palette = palette.padding(Insets::all(padding.max(0.0)));
                 }
                 if let Some(spacing) = spacing {
-                    palette = palette.spacing(*spacing);
+                    palette = palette.gap(*spacing);
                 }
                 if let Some(item_size) = item_size {
                     palette = palette.item_size(*item_size);

@@ -88,7 +88,7 @@ fn shadows_and_glows(ctx: &StoryCtx) -> Vec<Section> {
         SizedBox::new()
             .width(104.0)
             .height(64.0)
-            .with_child(Align::center(Label::new(label).text_style(
+            .child(Align::center(Label::new(label).text_style(
                 demo_text_style(theme, DemoTextRole::Supporting, theme.palette.text_muted),
             )))
     };
@@ -133,7 +133,7 @@ fn shadows_and_glows(ctx: &StoryCtx) -> Vec<Section> {
                         label,
                         boxed(
                             Surface::panel(card(label))
-                                .radius(10.0)
+                                .corner_radius(10.0)
                                 .shadow(token)
                                 .theme(theme),
                         ),
@@ -151,7 +151,7 @@ fn shadows_and_glows(ctx: &StoryCtx) -> Vec<Section> {
                         label,
                         boxed(
                             Surface::field(card(label))
-                                .radius(10.0)
+                                .corner_radius(10.0)
                                 .shadow(token)
                                 .theme(theme),
                         ),
@@ -167,7 +167,7 @@ fn shadows_and_glows(ctx: &StoryCtx) -> Vec<Section> {
                     "Accent",
                     boxed(
                         Surface::panel(card("Live"))
-                            .radius(10.0)
+                            .corner_radius(10.0)
                             .glow(GlowTone::Accent)
                             .theme(theme),
                     ),
@@ -176,7 +176,7 @@ fn shadows_and_glows(ctx: &StoryCtx) -> Vec<Section> {
                     "Secondary",
                     boxed(
                         Surface::panel(card("Voice"))
-                            .radius(32.0)
+                            .corner_radius(32.0)
                             .glow(GlowTone::Secondary)
                             .theme(theme),
                     ),
@@ -195,7 +195,7 @@ fn shadows_and_glows(ctx: &StoryCtx) -> Vec<Section> {
                         ShadowBox::new(ColorSwatch(
                             theme.decorative.get(DecorativeHue::Violet).solid,
                         ))
-                        .radius(12.0)
+                        .corner_radius(12.0)
                         .shadow(|theme| theme.shadows.box_shadow.md)
                         .glow(GlowTone::Secondary)
                         .theme(theme),
@@ -271,7 +271,7 @@ fn surface(ctx: &StoryCtx) -> Vec<Section> {
         SizedBox::new()
             .width(116.0)
             .height(64.0)
-            .with_child(Align::center(Label::new(label).text_style(
+            .child(Align::center(Label::new(label).text_style(
                 demo_text_style(theme, DemoTextRole::Supporting, color),
             )))
     };
@@ -320,7 +320,7 @@ fn surface(ctx: &StoryCtx) -> Vec<Section> {
                         boxed(
                             Surface::new(role, tile(label, muted))
                                 .border(SurfaceBorder::All)
-                                .radius(8.0)
+                                .corner_radius(8.0)
                                 .theme(theme),
                         ),
                     )
@@ -338,7 +338,7 @@ fn surface(ctx: &StoryCtx) -> Vec<Section> {
                         boxed(
                             Surface::panel(tile(label, muted))
                                 .elevation(elevation)
-                                .radius(8.0)
+                                .corner_radius(8.0)
                                 .theme(theme),
                         ),
                     )
@@ -364,7 +364,7 @@ fn surface(ctx: &StoryCtx) -> Vec<Section> {
                             ))
                             .appearance(appearance)
                             .tone(tone)
-                            .radius(8.0)
+                            .corner_radius(8.0)
                             .theme(theme),
                         ),
                     )
@@ -397,7 +397,7 @@ fn separator(ctx: &StoryCtx) -> Vec<Section> {
                     boxed(
                         SizedBox::new()
                             .height(48.0)
-                            .with_child(Separator::vertical().theme(theme)),
+                            .child(Separator::vertical().theme(theme)),
                     ),
                 ),
             ],
@@ -433,7 +433,7 @@ fn form_section(ctx: &StoryCtx) -> Vec<Section> {
                 "Publish settings",
                 FieldGroup::new()
                     .fill_width()
-                    .spacing(10.0)
+                    .gap(10.0)
                     .with_child(
                         FormRow::new(
                             "Target",
@@ -478,7 +478,7 @@ fn panel_section(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let details = |first: &str, second: &str| {
         Stack::vertical()
-            .spacing(6.0)
+            .gap(6.0)
             .alignment(Alignment::Stretch)
             .with_child(ctx.muted(first))
             .with_child(ctx.muted(second))
@@ -494,7 +494,7 @@ fn panel_section(ctx: &StoryCtx) -> Vec<Section> {
                     DockPanel::new(
                         "Inspector",
                         Stack::vertical()
-                            .spacing(8.0)
+                            .gap(8.0)
                             .alignment(Alignment::Stretch)
                             .with_child(
                                 PanelSection::new(
@@ -537,7 +537,7 @@ fn split_view(ctx: &StoryCtx) -> Vec<Section> {
         Surface::new(
             role,
             Stack::vertical()
-                .spacing(6.0)
+                .gap(6.0)
                 .alignment(Alignment::Stretch)
                 .with_child(ctx.text(title))
                 .with_child(ctx.muted(detail)),
@@ -549,7 +549,7 @@ fn split_view(ctx: &StoryCtx) -> Vec<Section> {
     vec![
         example(
             "Horizontal",
-            SizedBox::new().width(560.0).height(160.0).with_child(
+            SizedBox::new().width(560.0).height(160.0).child(
                 SplitView::horizontal(
                     pane(
                         "Viewport",
@@ -570,7 +570,7 @@ fn split_view(ctx: &StoryCtx) -> Vec<Section> {
         ),
         example(
             "Vertical",
-            SizedBox::new().width(360.0).height(200.0).with_child(
+            SizedBox::new().width(360.0).height(200.0).child(
                 SplitView::vertical(
                     pane("Editor", "Source text", SurfaceRole::Window),
                     pane("Console", "Build output", SurfaceRole::Panel),
@@ -609,56 +609,47 @@ fn pane_layouts(ctx: &StoryCtx) -> Vec<Section> {
             (
                 "Fixed pane split",
                 boxed(
-                    SizedBox::new()
-                        .width(280.0)
-                        .height(130.0)
-                        .with_child(framed(
-                            theme,
-                            FixedPaneSplit::horizontal(
-                                fill(SurfaceRole::Sidebar, "Fixed 96 px"),
-                                Separator::vertical().theme(theme),
-                                fill(SurfaceRole::Window, "Flexible"),
-                            )
-                            .fixed_first(96.0)
-                            .divider_extent(1.0),
-                        )),
+                    SizedBox::new().width(280.0).height(130.0).child(framed(
+                        theme,
+                        FixedPaneSplit::horizontal(
+                            fill(SurfaceRole::Sidebar, "Fixed 96 px"),
+                            Separator::vertical().theme(theme),
+                            fill(SurfaceRole::Window, "Flexible"),
+                        )
+                        .fixed_first(96.0)
+                        .divider_extent(1.0),
+                    )),
                 ),
             ),
             (
                 "Dock",
                 boxed(
-                    SizedBox::new()
-                        .width(280.0)
-                        .height(130.0)
-                        .with_child(framed(
-                            theme,
-                            Dock::new(fill(SurfaceRole::Window, "Body fills the rest"))
-                                .top(32.0, fill(SurfaceRole::Titlebar, "Top slot"))
-                                .bottom(32.0, fill(SurfaceRole::Titlebar, "Bottom slot")),
-                        )),
+                    SizedBox::new().width(280.0).height(130.0).child(framed(
+                        theme,
+                        Dock::new(fill(SurfaceRole::Window, "Body fills the rest"))
+                            .top(32.0, fill(SurfaceRole::Titlebar, "Top slot"))
+                            .bottom(32.0, fill(SurfaceRole::Titlebar, "Bottom slot")),
+                    )),
                 ),
             ),
             (
                 "Measured bottom dock",
                 boxed(
-                    SizedBox::new()
-                        .width(280.0)
-                        .height(130.0)
-                        .with_child(framed(
-                            theme,
-                            MeasuredBottomDock::new(
-                                fill(SurfaceRole::Window, "Body"),
-                                StatusBar::new()
-                                    .text_segment("Measured footer")
-                                    .theme(theme),
-                            ),
-                        )),
+                    SizedBox::new().width(280.0).height(130.0).child(framed(
+                        theme,
+                        MeasuredBottomDock::new(
+                            fill(SurfaceRole::Window, "Body"),
+                            StatusBar::new()
+                                .text_segment("Measured footer")
+                                .theme(theme),
+                        ),
+                    )),
                 ),
             ),
             (
                 "Trailing slot row",
                 boxed(
-                    SizedBox::new().width(280.0).height(34.0).with_child(
+                    SizedBox::new().width(280.0).height(34.0).child(
                         TrailingSlotRow::new(
                             ctx.text("Replication"),
                             StatusBadge::new("Active")
@@ -679,7 +670,7 @@ fn scroll_view(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let rows = |prefix: &str| {
         (1..=12).fold(
-            Stack::vertical().spacing(8.0).alignment(Alignment::Stretch),
+            Stack::vertical().gap(8.0).alignment(Alignment::Stretch),
             |stack, index| stack.with_child(ctx.text(format!("{prefix} {index}"))),
         )
     };
@@ -687,7 +678,7 @@ fn scroll_view(ctx: &StoryCtx) -> Vec<Section> {
         VirtualScrollView::new()
             .name("Virtual scroll sample")
             .padding(Insets::all(10.0))
-            .spacing(8.0)
+            .gap(8.0)
             .theme(theme),
         |view, index| view.with_child(ctx.text(format!("Virtual row {index}"))),
     );
@@ -698,7 +689,7 @@ fn scroll_view(ctx: &StoryCtx) -> Vec<Section> {
             (
                 "Scroll view",
                 boxed(
-                    SizedBox::new().width(240.0).height(140.0).with_child(
+                    SizedBox::new().width(240.0).height(140.0).child(
                         Surface::field(
                             ScrollView::vertical(Padding::all(10.0, rows("Scroll item")))
                                 .name("Inner scroll view")
@@ -715,7 +706,7 @@ fn scroll_view(ctx: &StoryCtx) -> Vec<Section> {
                     SizedBox::new()
                         .width(240.0)
                         .height(140.0)
-                        .with_child(Surface::field(virtual_rows).fill().theme(theme)),
+                        .child(Surface::field(virtual_rows).fill().theme(theme)),
                 ),
             ),
         ],

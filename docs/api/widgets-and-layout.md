@@ -38,7 +38,7 @@ fn account_form() -> impl Widget {
     Padding::all(
         24.0,
         Stack::vertical()
-            .spacing(12.0)
+            .gap(12.0)
             .alignment(Alignment::Stretch)
             .with_child(Label::new("Create account").font_size(22.0))
             .with_child(
@@ -174,14 +174,14 @@ overflow a bounded viewport:
 use sui::prelude::*;
 
 fn log_view(lines: impl IntoIterator<Item = String>) -> impl Widget {
-    let mut content = Stack::vertical().spacing(4.0);
+    let mut content = Stack::vertical().gap(4.0);
     for line in lines {
         content.push(Label::new(line));
     }
 
     SizedBox::new()
         .height(320.0)
-        .with_child(ScrollView::vertical(Padding::all(12.0, content)).name("Build log"))
+        .child(ScrollView::vertical(Padding::all(12.0, content)).name("Build log"))
 }
 ```
 
@@ -237,7 +237,7 @@ use sui::prelude::*;
 fn adaptive_actions() -> impl Widget {
     AdaptiveView::new(
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .with_child(Button::primary("Save"))
             .with_child(Button::new("Cancel")),
         Flex::horizontal()
@@ -360,7 +360,7 @@ let list = KeyedStack::vertical(
     |(id, _)| *id,
     |_, task| Label::new(task.get().1).text_when(move || task.get().1),
 )
-.spacing(6.0);
+.gap(6.0);
 ```
 
 `stagger`, `move_spec`, and `transition` tune the motion. Content that is
@@ -505,7 +505,7 @@ icons, nested layouts, input geometry, and semantics—without remeasuring it:
 use sui::prelude::*;
 
 let canvas = Canvas::new("Editor")
-    .content(
+    .child(
         Stack::vertical()
             .with_child(Label::new("World-space title"))
             .with_child(Image::new(preview_image)),

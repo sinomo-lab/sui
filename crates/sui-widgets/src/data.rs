@@ -76,6 +76,7 @@ impl ListItem {
         self
     }
 
+    #[deprecated(note = "use `detail`")]
     pub fn subtitle(self, subtitle: impl Into<String>) -> Self {
         self.detail(subtitle)
     }
@@ -129,18 +130,20 @@ impl ListItem {
         self.enabled(false)
     }
 
+    /// Let otherwise unhandled pointer presses on the [`Self::child`] content
+    /// activate the owning list row. Interactive descendants still receive
+    /// the event first.
     pub fn activate_with_child(mut self) -> Self {
         self.activate_with_child = true;
         self
     }
 
-    /// Let otherwise unhandled pointer presses on custom content activate the
-    /// owning list row. Interactive descendants still receive the event first.
+    #[deprecated(note = "use `activate_with_child`")]
     pub fn activate_with_content(self) -> Self {
         self.activate_with_child()
     }
 
-    pub fn with_child<W>(mut self, child: W) -> Self
+    pub fn child<W>(mut self, child: W) -> Self
     where
         W: Widget + 'static,
     {
@@ -148,13 +151,20 @@ impl ListItem {
         self
     }
 
-    /// Replace the built-in label/detail presentation with arbitrary retained
-    /// widget content for this row.
+    #[deprecated(note = "use `child`")]
+    pub fn with_child<W>(self, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.child(child)
+    }
+
+    #[deprecated(note = "use `child`")]
     pub fn with_content<W>(self, content: W) -> Self
     where
         W: Widget + 'static,
     {
-        self.with_child(content)
+        self.child(content)
     }
 
     pub fn label(&self) -> &str {
@@ -2340,14 +2350,19 @@ impl TreeItem {
 
     /// Let otherwise unhandled pointer presses on custom content activate the
     /// owning tree row. Interactive descendants still receive the event first.
-    pub fn activate_with_content(mut self) -> Self {
+    pub fn activate_with_child(mut self) -> Self {
         self.activate_with_content = true;
         self
     }
 
+    #[deprecated(note = "use `activate_with_child`")]
+    pub fn activate_with_content(self) -> Self {
+        self.activate_with_child()
+    }
+
     /// Replace the built-in label/detail presentation with arbitrary retained
     /// widget content while preserving this item's hierarchy and disclosure.
-    pub fn with_content<W>(mut self, content: W) -> Self
+    pub fn child<W>(mut self, content: W) -> Self
     where
         W: Widget + 'static,
     {
@@ -2355,17 +2370,38 @@ impl TreeItem {
         self
     }
 
-    pub fn with_child(mut self, child: TreeItem) -> Self {
+    #[deprecated(note = "use `child`")]
+    pub fn with_content<W>(self, content: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.child(content)
+    }
+
+    pub fn item(mut self, child: TreeItem) -> Self {
         self.children.push(child);
         self
     }
 
-    pub fn children<I>(mut self, children: I) -> Self
+    #[deprecated(note = "use `item`")]
+    pub fn with_child(self, child: TreeItem) -> Self {
+        self.item(child)
+    }
+
+    pub fn items<I>(mut self, children: I) -> Self
     where
         I: IntoIterator<Item = TreeItem>,
     {
         self.children.extend(children);
         self
+    }
+
+    #[deprecated(note = "use `items`")]
+    pub fn children<I>(self, children: I) -> Self
+    where
+        I: IntoIterator<Item = TreeItem>,
+    {
+        self.items(children)
     }
 
     pub fn label(&self) -> &str {
@@ -7838,14 +7874,14 @@ mod tests {
     #[test]
     fn data_focus_surfaces_keep_chrome_neutral() -> Result<()> {
         assert_focus_surface_keeps_chrome_neutral(
-            SizedBox::new().width(260.0).height(120.0).with_child(
+            SizedBox::new().width(260.0).height(120.0).child(
                 ListView::new("Assets").items([ListItem::new("First"), ListItem::new("Second")]),
             ),
             Point::new(24.0, 24.0),
         )?;
 
         assert_focus_surface_keeps_chrome_neutral(
-            SizedBox::new().width(280.0).height(120.0).with_child(
+            SizedBox::new().width(280.0).height(120.0).child(
                 LayerList::new("Layers")
                     .layers([LayerListItem::new("Paint"), LayerListItem::new("Ink")]),
             ),
@@ -7853,14 +7889,14 @@ mod tests {
         )?;
 
         assert_focus_surface_keeps_chrome_neutral(
-            SizedBox::new().width(260.0).height(120.0).with_child(
+            SizedBox::new().width(260.0).height(120.0).child(
                 TreeView::new("Scene").items([TreeItem::new("Canvas"), TreeItem::new("Lighting")]),
             ),
             Point::new(24.0, 24.0),
         )?;
 
         assert_focus_surface_keeps_chrome_neutral(
-            SizedBox::new().width(280.0).height(140.0).with_child(
+            SizedBox::new().width(280.0).height(140.0).child(
                 Table::new("Objects")
                     .columns([TableColumn::new("Name")])
                     .rows([TableRow::new(["Canvas"]), TableRow::new(["Lighting"])]),
@@ -7882,7 +7918,7 @@ mod tests {
     fn list_view_row_hover_and_press_use_theme_motion() -> Result<()> {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) =
-            build_runtime(SizedBox::new().width(260.0).height(140.0).with_child(
+            build_runtime(SizedBox::new().width(260.0).height(140.0).child(
                 ListView::new("Assets").theme(theme).items([
                     ListItem::new("First"),
                     ListItem::new("Second"),
@@ -7911,7 +7947,7 @@ mod tests {
     fn layer_list_action_hover_and_press_use_theme_motion() -> Result<()> {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(280.0).height(120.0).with_child(
+            SizedBox::new().width(280.0).height(120.0).child(
                 LayerList::new("Layers")
                     .theme(theme)
                     .layers([LayerListItem::new("Paint"), LayerListItem::new("Ink")]),
@@ -7941,7 +7977,7 @@ mod tests {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let captured = Rc::clone(&changes);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(280.0).height(168.0).with_child(
+            SizedBox::new().width(280.0).height(168.0).child(
                 LayerList::new("Layers")
                     .layers([
                         LayerListItem::new("Paint"),
@@ -8026,7 +8062,7 @@ mod tests {
                 + theme.metrics.table_row_height * 0.5,
         );
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(360.0).height(180.0).with_child(
+            SizedBox::new().width(360.0).height(180.0).child(
                 Table::new("Objects")
                     .theme(theme)
                     .columns([TableColumn::new("Name"), TableColumn::new("State")])
@@ -8052,7 +8088,7 @@ mod tests {
                 + theme.metrics.table_row_height * 0.5,
         );
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(360.0).height(180.0).with_child(
+            SizedBox::new().width(360.0).height(180.0).child(
                 Table::new("Objects")
                     .theme(theme)
                     .columns([TableColumn::new("Name"), TableColumn::new("State")])
@@ -8089,7 +8125,7 @@ mod tests {
             (
                 "list view",
                 render(
-                    SizedBox::new().width(300.0).height(96.0).with_child(
+                    SizedBox::new().width(300.0).height(96.0).child(
                         ListView::new("Assets")
                             .theme(theme)
                             .items([ListItem::new("Canvas"), ListItem::new("Lighting")])
@@ -8100,7 +8136,7 @@ mod tests {
             (
                 "layer list",
                 render(
-                    SizedBox::new().width(300.0).height(96.0).with_child(
+                    SizedBox::new().width(300.0).height(96.0).child(
                         LayerList::new("Layers")
                             .theme(theme)
                             .layers([LayerListItem::new("Canvas"), LayerListItem::new("Lighting")])
@@ -8111,7 +8147,7 @@ mod tests {
             (
                 "tree view",
                 render(
-                    SizedBox::new().width(300.0).height(96.0).with_child(
+                    SizedBox::new().width(300.0).height(96.0).child(
                         TreeView::new("Scene")
                             .theme(theme)
                             .items([TreeItem::new("Canvas"), TreeItem::new("Lighting")])
@@ -8122,7 +8158,7 @@ mod tests {
             (
                 "table",
                 render(
-                    SizedBox::new().width(300.0).height(128.0).with_child(
+                    SizedBox::new().width(300.0).height(128.0).child(
                         Table::new("Objects")
                             .theme(theme)
                             .columns([TableColumn::new("Name")])
@@ -8134,7 +8170,7 @@ mod tests {
             (
                 "virtual table",
                 render(
-                    SizedBox::new().width(300.0).height(128.0).with_child(
+                    SizedBox::new().width(300.0).height(128.0).child(
                         VirtualTable::new("Virtual objects")
                             .theme(theme)
                             .columns([VirtualTableColumn::new("Name")])
@@ -8187,15 +8223,17 @@ mod tests {
 
     #[test]
     fn breadcrumb_overflow_clips_and_defaults_to_trailing_items() {
-        let output = render(SizedBox::new().width(180.0).with_child(
-            Breadcrumb::new("Path").items([
-                BreadcrumbItem::new("SIFS"),
-                BreadcrumbItem::new("sinomo"),
-                BreadcrumbItem::new("nodes"),
-                BreadcrumbItem::new("node 01kvbbd...3fsrx"),
-                BreadcrumbItem::new("attachments"),
-            ]),
-        ));
+        let output = render(
+            SizedBox::new()
+                .width(180.0)
+                .child(Breadcrumb::new("Path").items([
+                    BreadcrumbItem::new("SIFS"),
+                    BreadcrumbItem::new("sinomo"),
+                    BreadcrumbItem::new("nodes"),
+                    BreadcrumbItem::new("node 01kvbbd...3fsrx"),
+                    BreadcrumbItem::new("attachments"),
+                ])),
+        );
 
         assert!(
             output.frame.scene.commands().iter().any(|command| matches!(
@@ -8219,7 +8257,7 @@ mod tests {
 
     #[test]
     fn breadcrumb_wheel_scrolls_overflowing_content_leftward() -> Result<()> {
-        let (mut runtime, window_id) = build_runtime(SizedBox::new().width(180.0).with_child(
+        let (mut runtime, window_id) = build_runtime(SizedBox::new().width(180.0).child(
             Breadcrumb::new("Path").items([
                 BreadcrumbItem::new("SIFS"),
                 BreadcrumbItem::new("sinomo"),
@@ -8248,7 +8286,7 @@ mod tests {
 
     #[test]
     fn breadcrumb_drag_scrolls_overflowing_content_leftward() -> Result<()> {
-        let (mut runtime, window_id) = build_runtime(SizedBox::new().width(180.0).with_child(
+        let (mut runtime, window_id) = build_runtime(SizedBox::new().width(180.0).child(
             Breadcrumb::new("Path").items([
                 BreadcrumbItem::new("SIFS"),
                 BreadcrumbItem::new("sinomo"),
@@ -8366,7 +8404,7 @@ mod tests {
     #[test]
     fn list_view_exposes_visible_row_semantics() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(260.0).height(132.0).with_child(
+            SizedBox::new().width(260.0).height(132.0).child(
                 ListView::new("Layers")
                     .items([
                         ListItem::new("Paint").detail("Normal / 100%"),
@@ -8430,7 +8468,7 @@ mod tests {
         let selected = Rc::new(RefCell::new(0_usize));
         let selected_reader = Rc::clone(&selected);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(260.0).height(132.0).with_child(
+            SizedBox::new().width(260.0).height(132.0).child(
                 ListView::new("Layers")
                     .items([
                         ListItem::new("Paint").detail("Normal / 100%"),
@@ -8490,7 +8528,7 @@ mod tests {
     #[test]
     fn layer_list_exposes_visibility_semantics() {
         let output = render(
-            SizedBox::new().width(280.0).height(112.0).with_child(
+            SizedBox::new().width(280.0).height(112.0).child(
                 LayerList::new("Layers")
                     .layers([
                         LayerListItem::new("Paint")
@@ -8572,7 +8610,7 @@ mod tests {
         let thumbnail = Color::rgba(0.30, 0.50, 0.70, 1.0);
 
         let output = render(
-            SizedBox::new().width(280.0).height(64.0).with_child(
+            SizedBox::new().width(280.0).height(64.0).child(
                 LayerList::new("Layers")
                     .theme(theme)
                     .layers([LayerListItem::new("Paper")
@@ -8602,7 +8640,7 @@ mod tests {
     #[test]
     fn layer_list_label_and_detail_visual_centers_match_row_slots() {
         let output = render(
-            SizedBox::new().width(280.0).height(64.0).with_child(
+            SizedBox::new().width(280.0).height(64.0).child(
                 LayerList::new("Layers").layer(
                     LayerListItem::new("Paint")
                         .detail("Normal / 100%")
@@ -8629,7 +8667,7 @@ mod tests {
         let visible = Rc::new(RefCell::new(true));
         let visible_reader = Rc::clone(&visible);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(280.0).height(112.0).with_child(
+            SizedBox::new().width(280.0).height(112.0).child(
                 LayerList::new("Layers")
                     .layers([
                         LayerListItem::new("Paint")
@@ -8705,7 +8743,7 @@ mod tests {
         let visibility_changes = Rc::new(RefCell::new(Vec::new()));
         let on_visibility_change = Rc::clone(&visibility_changes);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(280.0).height(112.0).with_child(
+            SizedBox::new().width(280.0).height(112.0).child(
                 LayerList::new("Layers")
                     .layers([
                         LayerListItem::new("Paint")
@@ -8799,7 +8837,7 @@ mod tests {
         let lock_changes = Rc::new(RefCell::new(Vec::new()));
         let on_lock_change = Rc::clone(&lock_changes);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(280.0).height(112.0).with_child(
+            SizedBox::new().width(280.0).height(112.0).child(
                 LayerList::new("Layers")
                     .layers([
                         LayerListItem::new("Paint")
@@ -8908,13 +8946,15 @@ mod tests {
         let presses = Rc::new(RefCell::new(0));
         let on_press = Rc::clone(&presses);
         let row = Stack::horizontal()
-            .spacing(8.0)
-            .with_child(SizedBox::new().width(96.0).with_child(Label::new("Asset")))
+            .gap(8.0)
+            .with_child(SizedBox::new().width(96.0).child(Label::new("Asset")))
             .with_child(Button::new("Open").on_press(move || *on_press.borrow_mut() += 1));
-        let (mut runtime, window_id) =
-            build_runtime(SizedBox::new().width(260.0).height(80.0).with_child(
-                ListView::new("Actions").item(ListItem::new("Asset").with_content(row)),
-            ));
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .width(260.0)
+                .height(80.0)
+                .child(ListView::new("Actions").item(ListItem::new("Asset").child(row))),
+        );
 
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
@@ -8945,16 +8985,16 @@ mod tests {
         let on_row = Rc::clone(&row_changes);
         let on_button = Rc::clone(&button_presses);
         let row = Stack::horizontal()
-            .spacing(8.0)
-            .with_child(SizedBox::new().width(96.0).with_child(Label::new("Asset")))
+            .gap(8.0)
+            .with_child(SizedBox::new().width(96.0).child(Label::new("Asset")))
             .with_child(Button::new("Open").on_press(move || *on_button.borrow_mut() += 1));
         let item = ListItem::new("Asset")
             .semantic_name("Asset row")
             .description("Selectable asset row")
-            .activate_with_content()
-            .with_content(row);
+            .activate_with_child()
+            .child(row);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(260.0).height(80.0).with_child(
+            SizedBox::new().width(260.0).height(80.0).child(
                 ListView::new("Actions")
                     .item(item)
                     .on_change(move |index, label| {
@@ -9009,15 +9049,13 @@ mod tests {
     fn list_item_child_respects_explicit_row_height() -> Result<()> {
         let row_changes = Rc::new(RefCell::new(Vec::new()));
         let on_row = Rc::clone(&row_changes);
-        let item = ListItem::new("Tall asset")
-            .activate_with_child()
-            .with_child(
-                SizedBox::new()
-                    .height(180.0)
-                    .with_child(Label::new("Tall custom row")),
-            );
+        let item = ListItem::new("Tall asset").activate_with_child().child(
+            SizedBox::new()
+                .height(180.0)
+                .child(Label::new("Tall custom row")),
+        );
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(260.0).height(96.0).with_child(
+            SizedBox::new().width(260.0).height(96.0).child(
                 ListView::new("Assets")
                     .row_height(36.0)
                     .item(item)
@@ -9064,13 +9102,13 @@ mod tests {
     #[test]
     fn list_item_child_widget_rearranges_when_scrolled() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(260.0).height(96.0).with_child(
+            SizedBox::new().width(260.0).height(96.0).child(
                 ListView::new("Assets")
                     .padding(Insets::ZERO)
                     .row_height(40.0)
                     .items([
                         ListItem::new("First"),
-                        ListItem::new("Custom row").with_content(Label::new("Floating child")),
+                        ListItem::new("Custom row").child(Label::new("Floating child")),
                         ListItem::new("Third"),
                         ListItem::new("Fourth"),
                     ]),
@@ -9104,7 +9142,7 @@ mod tests {
             bottom: 12.0,
         };
         let list = render(
-            SizedBox::new().width(320.0).height(120.0).with_child(
+            SizedBox::new().width(320.0).height(120.0).child(
                 ListView::new("Assets")
                     .padding(padding)
                     .item(ListItem::new("Asset")),
@@ -9122,7 +9160,7 @@ mod tests {
         assert!((list_row.bounds.width() - (320.0 - padding.left - padding.right)).abs() < 0.01);
 
         let tree = render(
-            SizedBox::new().width(320.0).height(120.0).with_child(
+            SizedBox::new().width(320.0).height(120.0).child(
                 TreeView::new("Scene")
                     .padding(padding)
                     .item(TreeItem::new("Node")),
@@ -9146,21 +9184,18 @@ mod tests {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_press = Rc::clone(&presses);
         let on_change = Rc::clone(&changes);
-        let content = SizedBox::new().height(52.0).with_child(
+        let content = SizedBox::new().height(52.0).child(
             Stack::horizontal()
-                .spacing(8.0)
-                .with_child(SizedBox::new().width(96.0).with_child(Label::new("Asset")))
+                .gap(8.0)
+                .with_child(SizedBox::new().width(96.0).child(Label::new("Asset")))
                 .with_child(Button::new("Open").on_press(move || *on_press.borrow_mut() += 1)),
         );
         let padding = Insets::all(12.0);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(320.0).height(120.0).with_child(
+            SizedBox::new().width(320.0).height(120.0).child(
                 TreeView::new("Scene")
                     .padding(padding)
-                    .item(
-                        TreeItem::new("Root")
-                            .with_child(TreeItem::new("Asset row").with_content(content)),
-                    )
+                    .item(TreeItem::new("Root").item(TreeItem::new("Asset row").child(content)))
                     .on_change(move |path, label| {
                         on_change.borrow_mut().push((path, label));
                     }),
@@ -9225,19 +9260,19 @@ mod tests {
     #[test]
     fn tree_item_child_widget_rearranges_when_scrolled() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(320.0).height(104.0).with_child(
+            SizedBox::new().width(320.0).height(104.0).child(
                 TreeView::new("Scene")
                     .padding(Insets::ZERO)
                     .row_height(40.0)
                     .item(
                         TreeItem::new("Root")
                             .expanded(true)
-                            .with_child(TreeItem::new("First child"))
-                            .with_child(
+                            .item(TreeItem::new("First child"))
+                            .item(
                                 TreeItem::new("Custom tree row")
-                                    .with_content(Label::new("Floating tree child")),
+                                    .child(Label::new("Floating tree child")),
                             )
-                            .with_child(TreeItem::new("Third child")),
+                            .item(TreeItem::new("Third child")),
                     ),
             ),
         );
@@ -9327,8 +9362,8 @@ mod tests {
                 .item(
                     TreeItem::new("Root")
                         .expanded(true)
-                        .with_child(TreeItem::new("Child A"))
-                        .with_child(TreeItem::new("Child B")),
+                        .item(TreeItem::new("Child A"))
+                        .item(TreeItem::new("Child B")),
                 )
                 .selected_path([0, 1]),
         );
@@ -9353,8 +9388,8 @@ mod tests {
             TreeView::new("Scene")
                 .item(
                     TreeItem::new("Root")
-                        .with_child(TreeItem::new("Child A"))
-                        .with_child(TreeItem::new("Child B")),
+                        .item(TreeItem::new("Child A"))
+                        .item(TreeItem::new("Child B")),
                 )
                 .on_change(move |path, label| on_change.borrow_mut().push((path, label))),
         );
@@ -9397,12 +9432,12 @@ mod tests {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(320.0).height(140.0).with_child(
+            SizedBox::new().width(320.0).height(140.0).child(
                 TreeView::new("Scene")
                     .item(
                         TreeItem::new("Root")
                             .key(42)
-                            .with_child(TreeItem::new("Child").key(7)),
+                            .item(TreeItem::new("Child").key(7)),
                     )
                     .on_change(move |path, label| on_change.borrow_mut().push((path, label))),
             ),
@@ -9485,7 +9520,7 @@ mod tests {
     #[test]
     fn virtual_table_semantics_include_columns_and_visible_rows() {
         let output = render(
-            SizedBox::new().width(360.0).height(120.0).with_child(
+            SizedBox::new().width(360.0).height(120.0).child(
                 VirtualTable::new("Files")
                     .columns([
                         VirtualTableColumn::new("Name").min_width(160.0),
@@ -9534,7 +9569,7 @@ mod tests {
     #[test]
     fn virtual_table_supports_variable_row_heights() {
         let output = render(
-            SizedBox::new().width(360.0).height(180.0).with_child(
+            SizedBox::new().width(360.0).height(180.0).child(
                 VirtualTable::new("Variable rows")
                     .columns([VirtualTableColumn::new("Name")])
                     .row_count(3)
@@ -9560,7 +9595,7 @@ mod tests {
         let key_reader = Rc::clone(&keys);
         let name_reader = Rc::clone(&keys);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(360.0).height(140.0).with_child(
+            SizedBox::new().width(360.0).height(140.0).child(
                 VirtualTable::new("Keyed rows")
                     .columns([VirtualTableColumn::new("Name")])
                     .row_count(2)
@@ -9603,7 +9638,7 @@ mod tests {
         let state = VirtualTableState::new();
         state.select_key(Some(42));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(360.0).height(140.0).with_child(
+            SizedBox::new().width(360.0).height(140.0).child(
                 VirtualTable::new("Retained keyed rows")
                     .state(state.clone())
                     .columns([VirtualTableColumn::new("Name")])
@@ -9659,7 +9694,7 @@ mod tests {
         let ctx_changes = Rc::new(RefCell::new(Vec::new()));
         let on_change_with_ctx = Rc::clone(&ctx_changes);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(360.0).height(160.0).with_child(
+            SizedBox::new().width(360.0).height(160.0).child(
                 VirtualTable::new("Selectable rows")
                     .columns([VirtualTableColumn::new("Name")])
                     .row_count(3)
@@ -9697,7 +9732,7 @@ mod tests {
         let state = VirtualTableState::new();
         state.scroll_to(900, ScrollAlignment::Start);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(360.0).height(140.0).with_child(
+            SizedBox::new().width(360.0).height(140.0).child(
                 VirtualTable::new("Files")
                     .state(state.clone())
                     .columns([VirtualTableColumn::new("Name")])
@@ -9757,7 +9792,7 @@ mod tests {
         let painted_width = Rc::new(RefCell::new(0.0));
         let width = Rc::clone(&painted_width);
         let _ = render(
-            SizedBox::new().width(360.0).height(140.0).with_child(
+            SizedBox::new().width(360.0).height(140.0).child(
                 VirtualTable::new("Retained widths")
                     .state(state.clone())
                     .columns([
@@ -9785,7 +9820,7 @@ mod tests {
         let separator_x = padding.left + available - 80.0;
         let header_y = padding.top + theme.metrics.table_header_height * 0.5;
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(width).height(140.0).with_child(
+            SizedBox::new().width(width).height(140.0).child(
                 VirtualTable::new("Resizable")
                     .theme(theme)
                     .columns([
@@ -9840,7 +9875,7 @@ mod tests {
         let painted = Rc::new(RefCell::new(Vec::<Vec<Rect>>::new()));
         let row_rects = Rc::clone(&painted);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(220.0).height(140.0).with_child(
+            SizedBox::new().width(220.0).height(140.0).child(
                 VirtualTable::new("Pinned")
                     .columns([
                         VirtualTableColumn::new("Name").width(100.0).pinned(true),
@@ -9878,7 +9913,7 @@ mod tests {
     #[test]
     fn table_numeric_column_uses_tabular_figures_and_shared_right_edge() {
         let output = render(
-            SizedBox::new().width(360.0).height(140.0).with_child(
+            SizedBox::new().width(360.0).height(140.0).child(
                 Table::new("Materials")
                     .columns([
                         TableColumn::new("Name"),
@@ -9919,7 +9954,7 @@ mod tests {
         theme.typography.body_font_size = 13.0;
         theme.typography.body_line_height = 21.0;
         let output = render(
-            SizedBox::new().width(360.0).height(140.0).with_child(
+            SizedBox::new().width(360.0).height(140.0).child(
                 Table::new("Materials")
                     .theme(theme)
                     .columns([
@@ -9978,7 +10013,7 @@ mod tests {
     fn collection_and_path_widgets_theme_when_paints_dark_tokens() {
         let theme = DefaultTheme::dark();
         let list = render(
-            SizedBox::new().width(320.0).height(120.0).with_child(
+            SizedBox::new().width(320.0).height(120.0).child(
                 ListView::new("Assets")
                     .theme_when(move || theme)
                     .item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
@@ -9992,7 +10027,7 @@ mod tests {
 
         let theme = DefaultTheme::dark();
         let tree = render(
-            SizedBox::new().width(320.0).height(120.0).with_child(
+            SizedBox::new().width(320.0).height(120.0).child(
                 TreeView::new("Scene")
                     .theme_when(move || theme)
                     .item(TreeItem::new("Environment").detail("Visible")),
@@ -10006,7 +10041,7 @@ mod tests {
 
         let theme = DefaultTheme::dark();
         let table = render(
-            SizedBox::new().width(320.0).height(140.0).with_child(
+            SizedBox::new().width(320.0).height(140.0).child(
                 Table::new("Materials")
                     .theme_when(move || theme)
                     .columns([TableColumn::new("Name")])
@@ -10047,7 +10082,7 @@ mod tests {
         let rows = (0..10).map(|index| TableRow::new([format!("Row {index}"), format!("{index}")]));
 
         let output = render(
-            SizedBox::new().width(320.0).height(120.0).with_child(
+            SizedBox::new().width(320.0).height(120.0).child(
                 Table::new("Materials")
                     .theme(theme)
                     .columns([
@@ -10106,7 +10141,7 @@ mod tests {
 
     #[test]
     fn list_view_detail_text_does_not_overlap_primary_label() {
-        let output = render(SizedBox::new().width(320.0).height(120.0).with_child(
+        let output = render(SizedBox::new().width(320.0).height(120.0).child(
             ListView::new("Assets").item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
         ));
 
@@ -10119,7 +10154,7 @@ mod tests {
     #[test]
     fn list_view_label_and_detail_visual_centers_match_row_slots() {
         let theme = DefaultTheme::default();
-        let output = render(SizedBox::new().width(320.0).height(72.0).with_child(
+        let output = render(SizedBox::new().width(320.0).height(72.0).child(
             ListView::new("Assets").item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
         ));
         let label = text_runs_for(&output, "Hero texture")
@@ -10158,7 +10193,7 @@ mod tests {
         theme.sync_derived_fields();
 
         let list = render(
-            SizedBox::new().width(320.0).height(72.0).with_child(
+            SizedBox::new().width(320.0).height(72.0).child(
                 ListView::new("Assets")
                     .theme(theme)
                     .item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
@@ -10173,7 +10208,7 @@ mod tests {
         );
 
         let layer = render(
-            SizedBox::new().width(280.0).height(72.0).with_child(
+            SizedBox::new().width(280.0).height(72.0).child(
                 LayerList::new("Layers").theme(theme).layer(
                     LayerListItem::new("Paint")
                         .detail("Normal / 100%")
@@ -10190,7 +10225,7 @@ mod tests {
         );
 
         let tree = render(
-            SizedBox::new().width(320.0).height(72.0).with_child(
+            SizedBox::new().width(320.0).height(72.0).child(
                 TreeView::new("Scene")
                     .theme(theme)
                     .item(TreeItem::new("Environment").detail("Visible")),
@@ -10212,7 +10247,7 @@ mod tests {
             SizedBox::new()
                 .width(170.0)
                 .height(56.0)
-                .with_child(ListView::new("Sessions").item(ListItem::new(title))),
+                .child(ListView::new("Sessions").item(ListItem::new(title))),
         );
 
         let run = text_runs_for(&output, title)
@@ -10232,9 +10267,10 @@ mod tests {
 
     #[test]
     fn tree_view_detail_text_does_not_overlap_primary_label() {
-        let output = render(SizedBox::new().width(320.0).height(120.0).with_child(
-            TreeView::new("Scene").item(TreeItem::new("Environment").detail("Visible")),
-        ));
+        let output =
+            render(SizedBox::new().width(320.0).height(120.0).child(
+                TreeView::new("Scene").item(TreeItem::new("Environment").detail("Visible")),
+            ));
 
         let label = text_rects_for(&output, "Environment")[0];
         let detail = text_rects_for(&output, "Visible")[0];
@@ -10244,12 +10280,13 @@ mod tests {
 
     #[test]
     fn list_and_tree_detail_text_stays_grouped_with_primary_label() {
-        let list = render(SizedBox::new().width(320.0).height(120.0).with_child(
+        let list = render(SizedBox::new().width(320.0).height(120.0).child(
             ListView::new("Assets").item(ListItem::new("Hero texture").detail("2048 x 2048 RGBA")),
         ));
-        let tree = render(SizedBox::new().width(320.0).height(120.0).with_child(
-            TreeView::new("Scene").item(TreeItem::new("Environment").detail("Visible")),
-        ));
+        let tree =
+            render(SizedBox::new().width(320.0).height(120.0).child(
+                TreeView::new("Scene").item(TreeItem::new("Environment").detail("Visible")),
+            ));
 
         for (output, label_text, detail_text) in [
             (&list, "Hero texture", "2048 x 2048 RGBA"),
@@ -10269,9 +10306,10 @@ mod tests {
     #[test]
     fn tree_view_label_and_detail_visual_centers_match_row_slots() {
         let theme = DefaultTheme::default();
-        let output = render(SizedBox::new().width(320.0).height(72.0).with_child(
-            TreeView::new("Scene").item(TreeItem::new("Environment").detail("Visible")),
-        ));
+        let output =
+            render(SizedBox::new().width(320.0).height(72.0).child(
+                TreeView::new("Scene").item(TreeItem::new("Environment").detail("Visible")),
+            ));
         let label = text_runs_for(&output, "Environment")
             .into_iter()
             .next()
@@ -10301,7 +10339,7 @@ mod tests {
     #[test]
     fn list_view_does_not_paint_internal_scroll_thumb() {
         let output = render(
-            SizedBox::new().width(320.0).height(100.0).with_child(
+            SizedBox::new().width(320.0).height(100.0).child(
                 ListView::new("Assets")
                     .items([
                         ListItem::new("Hero texture").detail("2048 x 2048 RGBA"),
@@ -10319,7 +10357,7 @@ mod tests {
     #[test]
     fn list_view_scrolls_overflowing_rows_without_thumb() -> Result<()> {
         let (mut runtime, window_id) =
-            build_runtime(SizedBox::new().width(320.0).height(100.0).with_child(
+            build_runtime(SizedBox::new().width(320.0).height(100.0).child(
                 ListView::new("Assets").items([
                     ListItem::new("Hero texture").detail("2048 x 2048 RGBA"),
                     ListItem::new("UI icon sheet").detail("Tagged for export"),
@@ -10347,7 +10385,7 @@ mod tests {
     fn list_view_clips_scrolled_selection_highlight_to_viewport() -> Result<()> {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(320.0).height(100.0).with_child(
+            SizedBox::new().width(320.0).height(100.0).child(
                 ListView::new("Assets")
                     .theme(theme)
                     .items([
@@ -10379,12 +10417,12 @@ mod tests {
     #[test]
     fn tree_view_does_not_paint_internal_scroll_thumb() {
         let output = render(
-            SizedBox::new().width(320.0).height(120.0).with_child(
+            SizedBox::new().width(320.0).height(120.0).child(
                 TreeView::new("Scene").item(
                     TreeItem::new("Environment")
-                        .with_child(TreeItem::new("Sky dome").detail("Visible"))
-                        .with_child(TreeItem::new("Fog volume").detail("Animated"))
-                        .with_child(TreeItem::new("Characters").detail("Selected")),
+                        .item(TreeItem::new("Sky dome").detail("Visible"))
+                        .item(TreeItem::new("Fog volume").detail("Animated"))
+                        .item(TreeItem::new("Characters").detail("Selected")),
                 ),
             ),
         );
@@ -10395,14 +10433,14 @@ mod tests {
     #[test]
     fn tree_view_scrolls_overflowing_rows_without_thumb() -> Result<()> {
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(320.0).height(120.0).with_child(
+            SizedBox::new().width(320.0).height(120.0).child(
                 TreeView::new("Scene").item(
                     TreeItem::new("Scene")
                         .expanded(true)
-                        .with_child(TreeItem::new("Environment").detail("Visible"))
-                        .with_child(TreeItem::new("Sky dome").detail("Visible"))
-                        .with_child(TreeItem::new("Fog volume").detail("Animated"))
-                        .with_child(TreeItem::new("Pilot").detail("Selected")),
+                        .item(TreeItem::new("Environment").detail("Visible"))
+                        .item(TreeItem::new("Sky dome").detail("Visible"))
+                        .item(TreeItem::new("Fog volume").detail("Animated"))
+                        .item(TreeItem::new("Pilot").detail("Selected")),
                 ),
             ),
         );
@@ -10426,14 +10464,14 @@ mod tests {
     fn tree_view_clips_scrolled_selection_highlight_to_viewport() -> Result<()> {
         let theme = DefaultTheme::default();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(320.0).height(120.0).with_child(
+            SizedBox::new().width(320.0).height(120.0).child(
                 TreeView::new("Scene").item(
                     TreeItem::new("Scene")
                         .expanded(true)
-                        .with_child(TreeItem::new("Environment").detail("Visible"))
-                        .with_child(TreeItem::new("Sky dome").detail("Visible"))
-                        .with_child(TreeItem::new("Fog volume").detail("Animated"))
-                        .with_child(TreeItem::new("Pilot").detail("Selected")),
+                        .item(TreeItem::new("Environment").detail("Visible"))
+                        .item(TreeItem::new("Sky dome").detail("Visible"))
+                        .item(TreeItem::new("Fog volume").detail("Animated"))
+                        .item(TreeItem::new("Pilot").detail("Selected")),
                 ),
             ),
         );
@@ -10464,14 +10502,11 @@ mod tests {
 
     #[test]
     fn tree_view_disclosure_does_not_overlap_primary_label() {
-        let output = render(
-            SizedBox::new().width(320.0).height(120.0).with_child(
-                TreeView::new("Scene").item(
-                    TreeItem::new("Environment")
-                        .with_child(TreeItem::new("Sky dome").detail("Visible")),
-                ),
+        let output = render(SizedBox::new().width(320.0).height(120.0).child(
+            TreeView::new("Scene").item(
+                TreeItem::new("Environment").item(TreeItem::new("Sky dome").detail("Visible")),
             ),
-        );
+        ));
 
         let label = text_rects_for(&output, "Environment")[0];
         let mut disclosure_bounds = Vec::new();
@@ -10495,7 +10530,7 @@ mod tests {
     #[test]
     fn table_text_rect_uses_full_line_height() {
         let output = render(
-            SizedBox::new().width(320.0).height(140.0).with_child(
+            SizedBox::new().width(320.0).height(140.0).child(
                 Table::new("Materials")
                     .columns([TableColumn::new("Name")])
                     .rows([TableRow::new(["Glass"])]),
@@ -10519,7 +10554,7 @@ mod tests {
         theme.metrics.table_row_height = 48.0;
 
         let output = render(
-            SizedBox::new().width(360.0).height(136.0).with_child(
+            SizedBox::new().width(360.0).height(136.0).child(
                 Table::new("Materials")
                     .theme(theme)
                     .columns([
@@ -10597,11 +10632,11 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new()
                 .size(Size::new(220.0, 120.0))
-                .with_child(ScrollView::vertical(
+                .child(ScrollView::vertical(
                     Stack::vertical()
                         .with_child(SizedBox::new().width(220.0).height(80.0))
                         .with_child(
-                            SizedBox::new().width(220.0).height(120.0).with_child(
+                            SizedBox::new().width(220.0).height(120.0).child(
                                 Table::new("Materials")
                                     .columns([
                                         TableColumn::new("Name"),
@@ -10981,7 +11016,7 @@ mod tests {
         theme.metrics.list_row_height = 52.0;
 
         let output = render(
-            SizedBox::new().width(320.0).height(72.0).with_child(
+            SizedBox::new().width(320.0).height(72.0).child(
                 ListView::new("Assets")
                     .theme(theme)
                     .item(ListItem::new("Glass")),
@@ -11017,7 +11052,7 @@ mod tests {
     fn list_row_leading_and_trailing_text_align_to_row_center_and_edge() {
         let theme = DefaultTheme::default();
         let output = render(
-            SizedBox::new().width(260.0).with_child(
+            SizedBox::new().width(260.0).child(
                 ListView::new("Assets").item(
                     ListItem::new("Hero texture")
                         .leading_text("A")
@@ -11080,7 +11115,7 @@ mod tests {
         theme.metrics.list_row_height = 64.0;
 
         let output = render(
-            SizedBox::new().width(320.0).height(88.0).with_child(
+            SizedBox::new().width(320.0).height(88.0).child(
                 ListView::new("Assets").theme(theme).item(
                     ListItem::new("Hero texture")
                         .leading_text("A")
@@ -11137,7 +11172,7 @@ mod tests {
         };
         theme.sync_derived_fields();
         let output = render(
-            SizedBox::new().width(260.0).with_child(
+            SizedBox::new().width(260.0).child(
                 ListView::new("Assets")
                     .theme(theme)
                     .selected(0)

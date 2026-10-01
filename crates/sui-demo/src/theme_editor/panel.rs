@@ -49,7 +49,7 @@ fn panel_content(
     app_theme: Option<DevAppTheme>,
 ) -> impl Widget {
     let mut content = Stack::vertical()
-        .spacing(26.0)
+        .gap(26.0)
         .alignment(Alignment::Stretch)
         .with_child(header(state.clone(), Rc::clone(&shell), app_theme))
         .with_child(foundation(state.clone(), Rc::clone(&shell)));
@@ -107,7 +107,7 @@ fn header(
         );
     }
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(demo_label(
             &shell,
@@ -150,7 +150,7 @@ fn foundation(state: ThemeEditorState, shell: DevThemeReader) -> impl Widget {
         "Foundation",
         "Start from a preset, then pick a control size.",
         Stack::vertical()
-            .spacing(10.0)
+            .gap(10.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 PropertyRow::new(
@@ -197,7 +197,7 @@ where
     W: Widget + 'static,
 {
     Stack::vertical()
-        .spacing(4.0)
+        .gap(4.0)
         .alignment(Alignment::Stretch)
         .with_child(demo_label(
             shell,
@@ -217,7 +217,7 @@ where
 
 fn token_group(group: TokenGroup, state: ThemeEditorState, shell: DevThemeReader) -> impl Widget {
     let rows = group.tokens().map(Token::Source).fold(
-        Stack::vertical().spacing(2.0).alignment(Alignment::Stretch),
+        Stack::vertical().gap(2.0).alignment(Alignment::Stretch),
         |rows, token| rows.with_child(token_with_editor(token, state.clone(), Rc::clone(&shell))),
     );
     group_frame(&shell, group.title(), group.summary(), rows)
@@ -225,7 +225,7 @@ fn token_group(group: TokenGroup, state: ThemeEditorState, shell: DevThemeReader
 
 fn token_with_editor(token: Token, state: ThemeEditorState, shell: DevThemeReader) -> impl Widget {
     Stack::vertical()
-        .spacing(0.0)
+        .gap(0.0)
         .alignment(Alignment::Stretch)
         .with_child(TokenRow::new(token, state.clone(), Rc::clone(&shell)))
         .with_child(editor_slot(vec![token], state, shell))
@@ -248,7 +248,7 @@ fn decorative_group(state: ThemeEditorState, shell: DevThemeReader) -> impl Widg
         TokenGroup::Decorative.title(),
         TokenGroup::Decorative.summary(),
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Stretch)
             .with_child(chips)
             .with_child(editor_slot(tokens, state, Rc::clone(&shell))),
@@ -260,7 +260,7 @@ fn role_overrides(state: ThemeEditorState, shell: DevThemeReader) -> impl Widget
     let add_state = state.clone();
     let add_roles = available.clone();
     let rows = state.overrides().into_iter().map(Token::Role).fold(
-        Stack::vertical().spacing(2.0).alignment(Alignment::Stretch),
+        Stack::vertical().gap(2.0).alignment(Alignment::Stretch),
         |rows, token| rows.with_child(token_with_editor(token, state.clone(), Rc::clone(&shell))),
     );
     group_frame(
@@ -268,7 +268,7 @@ fn role_overrides(state: ThemeEditorState, shell: DevThemeReader) -> impl Widget
         "Role overrides",
         "Roles follow the source colors. Override one to set it directly.",
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Stretch)
             .with_child(rows)
             .with_child(
@@ -365,7 +365,7 @@ fn color_editor(token: Token, state: ThemeEditorState, shell: DevThemeReader) ->
         },
         Surface::panel(
             Stack::vertical()
-                .spacing(10.0)
+                .gap(10.0)
                 .alignment(Alignment::Stretch)
                 .with_child(controls)
                 .with_child(picker)
@@ -422,9 +422,7 @@ fn shape_and_type(state: ThemeEditorState, shell: DevThemeReader) -> impl Widget
         },
     ];
     let body = rows.into_iter().fold(
-        Stack::vertical()
-            .spacing(12.0)
-            .alignment(Alignment::Stretch),
+        Stack::vertical().gap(12.0).alignment(Alignment::Stretch),
         |body, row| body.with_child(row.build(state.clone(), Rc::clone(&shell))),
     );
     group_frame(
@@ -475,7 +473,7 @@ impl ScaleRow {
             .theme_when(clone_dev_theme_reader(&shell))
             .on_change(move |value| write(&write_state, value));
         Stack::vertical()
-            .spacing(4.0)
+            .gap(4.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 Flex::horizontal()

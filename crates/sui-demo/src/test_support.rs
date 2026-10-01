@@ -48,7 +48,7 @@ where
         .window(
             WindowBuilder::new()
                 .title(title)
-                .root(SizedBox::new().size(size).with_child(child)),
+                .root(SizedBox::new().size(size).child(child)),
         )
         .build()?;
     let window_id = runtime.window_ids()[0];
@@ -73,7 +73,7 @@ where
         .window(
             WindowBuilder::new()
                 .title(title)
-                .root(SizedBox::new().size(size).with_child(child)),
+                .root(SizedBox::new().size(size).child(child)),
         )
         .build()
         .expect("themed widget runtime should build");

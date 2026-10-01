@@ -913,8 +913,13 @@ impl PropertyRow {
         self
     }
 
-    pub fn child(&self) -> &sui_runtime::WidgetPod {
+    pub fn child_pod(&self) -> &sui_runtime::WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &sui_runtime::WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut sui_runtime::WidgetPod {
@@ -1644,8 +1649,13 @@ impl FormRow {
         self
     }
 
+    pub fn child_pod(&self) -> &sui_runtime::WidgetPod {
+        self.row.child_pod()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
     pub fn child(&self) -> &sui_runtime::WidgetPod {
-        self.row.child()
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut sui_runtime::WidgetPod {
@@ -1731,9 +1741,14 @@ impl FieldGroup {
         self.children.push(child);
     }
 
-    pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = Some(spacing.max(0.0));
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.spacing = Some(gap.max(0.0));
         self
+    }
+
+    #[deprecated(note = "use `gap`")]
+    pub fn spacing(self, spacing: f32) -> Self {
+        self.gap(spacing)
     }
 
     pub fn padding(mut self, padding: Insets) -> Self {
@@ -1990,9 +2005,14 @@ impl FormSection {
         self
     }
 
-    pub fn radius(mut self, radius: f32) -> Self {
-        self.radius = Some(radius.max(0.0));
+    pub fn corner_radius(mut self, corner_radius: f32) -> Self {
+        self.radius = Some(corner_radius.max(0.0));
         self
+    }
+
+    #[deprecated(note = "use `corner_radius`")]
+    pub fn radius(self, radius: f32) -> Self {
+        self.corner_radius(radius)
     }
 
     pub fn elevation(mut self, elevation: SurfaceElevation) -> Self {
@@ -2000,8 +2020,13 @@ impl FormSection {
         self
     }
 
-    pub fn child(&self) -> &sui_runtime::WidgetPod {
+    pub fn child_pod(&self) -> &sui_runtime::WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &sui_runtime::WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut sui_runtime::WidgetPod {
@@ -2436,8 +2461,13 @@ impl PanelSection {
         self
     }
 
-    pub fn child(&self) -> &sui_runtime::WidgetPod {
+    pub fn child_pod(&self) -> &sui_runtime::WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &sui_runtime::WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut sui_runtime::WidgetPod {
@@ -2968,8 +2998,13 @@ impl DockPanel {
         self
     }
 
-    pub fn child(&self) -> &sui_runtime::WidgetPod {
+    pub fn child_pod(&self) -> &sui_runtime::WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &sui_runtime::WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut sui_runtime::WidgetPod {

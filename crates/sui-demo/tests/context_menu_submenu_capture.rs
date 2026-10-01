@@ -40,7 +40,7 @@ fn build_submenu_scene(theme: DefaultTheme) -> Application {
     ]);
 
     let content = Stack::vertical()
-        .spacing(16.0)
+        .gap(16.0)
         .alignment(Alignment::Stretch)
         .with_child(
             Label::new("Recursive context menu")
@@ -54,17 +54,16 @@ fn build_submenu_scene(theme: DefaultTheme) -> Application {
                 .line_height(20.0)
                 .color(theme.palette.text_muted),
         )
-        .with_child(
-            SizedBox::new()
-                .width(1216.0)
-                .height(64.0)
-                .with_child(Align::new(Alignment::End, Alignment::Center, menu)),
-        );
+        .with_child(SizedBox::new().width(1216.0).height(64.0).child(Align::new(
+            Alignment::End,
+            Alignment::Center,
+            menu,
+        )));
 
     let root = SizedBox::new()
         .width(1280.0)
         .height(720.0)
-        .with_child(Background::new(
+        .child(Background::new(
             theme.palette.surface,
             Padding::all(32.0, content),
         ));

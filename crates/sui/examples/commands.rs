@@ -23,7 +23,7 @@ fn main() -> Result<()> {
     let root = Padding::all(
         24.0,
         Stack::vertical()
-            .spacing(12.0)
+            .gap(12.0)
             .alignment(Alignment::Stretch)
             .with_child(Label::new("Typed commands"))
             .with_child(Label::new("").text_from(worker_status))

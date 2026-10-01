@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     let handle = control.handle();
 
     let toolbar = Stack::horizontal()
-        .spacing(8.0)
+        .gap(8.0)
         .with_child(Button::new("Reload").on_press({
             let handle = handle.clone();
             move || {
@@ -42,7 +42,7 @@ fn main() -> Result<()> {
         }));
 
     let content = Stack::vertical()
-        .spacing(12.0)
+        .gap(12.0)
         .with_child(toolbar)
         .with_child(control);
 

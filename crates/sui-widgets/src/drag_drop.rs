@@ -100,8 +100,13 @@ impl DragDropHost {
         &self.scope
     }
 
-    pub fn child(&self) -> &WidgetPod {
+    pub fn child_pod(&self) -> &WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -585,8 +590,13 @@ impl Draggable {
         &self.scope
     }
 
-    pub fn child(&self) -> &WidgetPod {
+    pub fn child_pod(&self) -> &WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -841,8 +851,13 @@ impl DropTarget {
         &self.scope
     }
 
-    pub fn child(&self) -> &WidgetPod {
+    pub fn child_pod(&self) -> &WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -1243,7 +1258,7 @@ mod tests {
                 SizedBox::new()
                     .width(80.0)
                     .height(40.0)
-                    .with_child(Label::new("Drop here")),
+                    .child(Label::new("Drop here")),
             )
             .theme_when(move || {
                 let mut resolved = theme;
@@ -1859,7 +1874,7 @@ mod tests {
         let scroll = SizedBox::new()
             .width(220.0)
             .height(200.0)
-            .with_child(ScrollView::new(content).state(state.clone()));
+            .child(ScrollView::new(content).state(state.clone()));
         let root = DragDropHost::new(scope, Stack::vertical().with_child(scroll));
         let (mut runtime, window_id) = build_runtime(root);
         runtime.set_frame_pacing(window_id, FramePacing::Display)?;

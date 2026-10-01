@@ -51,7 +51,7 @@ pub(super) fn gallery(theme_reader: DevThemeReader) -> impl Widget {
                     )
                 },
                 Stack::vertical()
-                    .spacing(8.0)
+                    .gap(8.0)
                     .alignment(Alignment::Start)
                     .with_child(Switch::new("Wi-Fi").checked(true).theme_when(theme()))
                     .with_child(
@@ -152,7 +152,7 @@ pub(super) fn gallery(theme_reader: DevThemeReader) -> impl Widget {
                         millis(theme.motion.hover_duration())
                     )
                 },
-                SizedBox::new().width(200.0).with_child(
+                SizedBox::new().width(200.0).child(
                     Select::new("Fruit")
                         .options(["Apple", "Banana", "Cherry"])
                         .selected(0)
@@ -171,7 +171,7 @@ pub(super) fn gallery(theme_reader: DevThemeReader) -> impl Widget {
                         millis(theme.motion.focus_duration())
                     )
                 },
-                SizedBox::new().width(220.0).with_child(
+                SizedBox::new().width(220.0).child(
                     TextInput::new("Name")
                         .value("Ada Lovelace")
                         .theme_when(theme()),
@@ -189,7 +189,7 @@ pub(super) fn gallery(theme_reader: DevThemeReader) -> impl Widget {
                         millis(theme.motion.hover_duration())
                     )
                 },
-                SizedBox::new().width(220.0).with_child(
+                SizedBox::new().width(220.0).child(
                     Slider::new("Volume")
                         .range(0.0, 100.0)
                         .value(40.0)
@@ -222,7 +222,7 @@ where
     let token_theme = Rc::clone(theme_reader);
     Surface::panel(
         Stack::vertical()
-            .spacing(6.0)
+            .gap(6.0)
             .alignment(Alignment::Stretch)
             .with_child(Label::new(title).text_style_when(demo_text_style_when(
                 theme_reader,

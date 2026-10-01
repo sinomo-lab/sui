@@ -397,7 +397,7 @@ fn header(page: &Page) -> impl Widget + use<> {
             bottom: 8.0,
         },
         Stack::vertical()
-            .spacing(4.0)
+            .gap(4.0)
             .alignment(Alignment::Stretch)
             .with_child(demo_label(
                 &page.theme_reader,
@@ -504,7 +504,7 @@ fn toolbar(page: &Page) -> impl Widget + use<> {
     let divider = || {
         SizedBox::new()
             .size(Size::new(1.0, 24.0))
-            .with_child(Separator::vertical().theme_when(clone_dev_theme_reader(theme_reader)))
+            .child(Separator::vertical().theme_when(clone_dev_theme_reader(theme_reader)))
     };
     Padding::symmetric(
         20.0,
@@ -529,7 +529,7 @@ fn toolbar(page: &Page) -> impl Widget + use<> {
                 DemoTextRole::Metadata,
                 DemoTextColor::Muted,
             ))
-            .with_child(SizedBox::new().width(150.0).with_child(style))
+            .with_child(SizedBox::new().width(150.0).child(style))
             .with_child(divider())
             .with_child(fit),
     )
@@ -693,7 +693,7 @@ fn side_panel(page: &Page) -> impl Widget + use<> {
     ScrollView::vertical(Padding::all(
         14.0,
         Stack::vertical()
-            .spacing(14.0)
+            .gap(14.0)
             .alignment(Alignment::Stretch)
             .with_child(card(
                 theme_reader,
@@ -721,7 +721,7 @@ where
 {
     Surface::panel(
         Stack::vertical()
-            .spacing(10.0)
+            .gap(10.0)
             .alignment(Alignment::Stretch)
             .with_child(demo_label(
                 theme_reader,

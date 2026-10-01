@@ -222,7 +222,7 @@ visual grouping, and a window surface paints the root background:
 
 ```rust,ignore
 let form = Stack::vertical()
-    .spacing(12.0)
+    .gap(12.0)
     .alignment(Alignment::Start)
     .with_child(Label::new("Create a profile").theme(theme))
     .with_child(name)

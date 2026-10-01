@@ -642,7 +642,7 @@ pub fn build_animation_benchmark() -> impl Widget {
     Padding::all(
         24.0,
         Stack::vertical()
-            .spacing(18.0)
+            .gap(18.0)
             .alignment(Alignment::Stretch)
             .with_child(AnimationBenchmarkRetainedLane::new())
             .with_child(AnimationBenchmarkRepaintLane::new())
@@ -666,16 +666,16 @@ pub fn build_retained_text_benchmark_with_theme(theme_reader: DevThemeReader) ->
 
     let scroll_state = ScrollState::new();
     let mut content = Stack::vertical()
-        .spacing(18.0)
+        .gap(18.0)
         .alignment(Alignment::Stretch)
         .with_child(panel(
         "Retained text wall",
         "Focused benchmark surface for measuring text-heavy cached scroll regeneration without the live overlay or mixed control chrome.",
         Stack::vertical()
-            .spacing(10.0)
+            .gap(10.0)
             .alignment(Alignment::Stretch)
             .with_child(
-                SizedBox::new().width(900.0).with_child(
+                SizedBox::new().width(900.0).child(
                     Label::new(
                         "The outer scroll view stays retained, the visible content stays dominated by wrapped labels, and the benchmark scrolls through enough sections to keep retained packet rebuilds focused on atlas text payloads.",
                     )
@@ -687,7 +687,7 @@ pub fn build_retained_text_benchmark_with_theme(theme_reader: DevThemeReader) ->
                 ),
             )
             .with_child(
-                SizedBox::new().width(900.0).with_child(
+                SizedBox::new().width(900.0).child(
                     Label::new(
                         "Each section deliberately uses several long paragraphs so the per-frame upload delta is shaped by text submission rather than button chrome, icons, or image content.",
                     )
@@ -702,11 +702,11 @@ pub fn build_retained_text_benchmark_with_theme(theme_reader: DevThemeReader) ->
 
     for section_index in 0..SECTION_COUNT {
         let (title, subtitle) = retained_text_benchmark_section(section_index);
-        let mut body = Stack::vertical().spacing(8.0).alignment(Alignment::Stretch);
+        let mut body = Stack::vertical().gap(8.0).alignment(Alignment::Stretch);
 
         for paragraph_index in 0..PARAGRAPHS_PER_SECTION {
             body = body.with_child(
-                SizedBox::new().width(900.0).with_child(
+                SizedBox::new().width(900.0).child(
                     Label::new(retained_text_benchmark_paragraph(
                         section_index,
                         paragraph_index,
@@ -725,7 +725,7 @@ pub fn build_retained_text_benchmark_with_theme(theme_reader: DevThemeReader) ->
             Padding::all(
                 18.0,
                 Stack::vertical()
-                    .spacing(10.0)
+                    .gap(10.0)
                     .alignment(Alignment::Stretch)
                     .with_child(Label::new(title).text_style_when(demo_text_style_when(
                         &theme_reader,
@@ -745,7 +745,7 @@ pub fn build_retained_text_benchmark_with_theme(theme_reader: DevThemeReader) ->
     VerticalScrollPane::new(
         ScrollView::vertical(Padding::all(
             24.0,
-            SizedBox::new().width(948.0).with_child(content),
+            SizedBox::new().width(948.0).child(content),
         ))
         .state(scroll_state.clone())
         .overlay_scroll_bars(false)

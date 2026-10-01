@@ -247,7 +247,7 @@ fn text_area(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let make = |value: &'static str| {
         move |preview, enabled: bool| {
-            SizedBox::new().width(200.0).height(88.0).with_child(
+            SizedBox::new().width(200.0).height(88.0).child(
                 TextArea::new("Notes")
                     .placeholder("Write notes")
                     .value(value)

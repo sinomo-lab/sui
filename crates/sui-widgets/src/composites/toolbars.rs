@@ -327,9 +327,14 @@ impl Toolbar {
         self
     }
 
-    pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = Some(spacing.max(0.0));
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.spacing = Some(gap.max(0.0));
         self
+    }
+
+    #[deprecated(note = "use `gap`")]
+    pub fn spacing(self, spacing: f32) -> Self {
+        self.gap(spacing)
     }
 
     /// Allow toolbar items to flow into additional rows or columns while
@@ -343,9 +348,14 @@ impl Toolbar {
         self.wrap(FlexWrap::Wrap)
     }
 
-    pub fn line_spacing(mut self, spacing: f32) -> Self {
-        self.line_spacing = Some(spacing.max(0.0));
+    pub fn cross_gap(mut self, gap: f32) -> Self {
+        self.line_spacing = Some(gap.max(0.0));
         self
+    }
+
+    #[deprecated(note = "use `cross_gap`")]
+    pub fn line_spacing(self, spacing: f32) -> Self {
+        self.cross_gap(spacing)
     }
 
     pub fn background(mut self, color: Color) -> Self {
@@ -701,9 +711,14 @@ impl CommandGroup {
         self
     }
 
-    pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = Some(spacing.max(0.0));
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.spacing = Some(gap.max(0.0));
         self
+    }
+
+    #[deprecated(note = "use `gap`")]
+    pub fn spacing(self, spacing: f32) -> Self {
+        self.gap(spacing)
     }
 
     pub fn corner_radius(mut self, corner_radius: f32) -> Self {
@@ -1098,9 +1113,14 @@ impl ToolPalette {
         self
     }
 
-    pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = Some(spacing.max(0.0));
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.spacing = Some(gap.max(0.0));
         self
+    }
+
+    #[deprecated(note = "use `gap`")]
+    pub fn spacing(self, spacing: f32) -> Self {
+        self.gap(spacing)
     }
 
     pub fn item_size(mut self, item_size: f32) -> Self {

@@ -71,17 +71,21 @@ pub enum CanvasGridStyle {
     Lines,
 }
 
+/// Former name of [`CanvasColors`].
+#[deprecated(note = "use `CanvasColors`")]
+pub type CanvasAppearance = CanvasColors;
+
 /// Widget-owned canvas color overrides. Unset fields resolve from common
 /// semantic theme roles on every paint, preserving live theme switching.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct CanvasAppearance {
+pub struct CanvasColors {
     pub background: Option<Color>,
     pub grid: Option<Color>,
     pub axis_x: Option<Color>,
     pub axis_y: Option<Color>,
 }
 
-impl CanvasAppearance {
+impl CanvasColors {
     fn resolve(self, theme: &DefaultTheme) -> [Color; 4] {
         let dark = theme.surfaces.dark;
         [
@@ -108,15 +112,19 @@ impl CanvasAppearance {
     }
 }
 
+/// Former name of [`CanvasRulerColors`].
+#[deprecated(note = "use `CanvasRulerColors`")]
+pub type CanvasRulerAppearance = CanvasRulerColors;
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct CanvasRulerAppearance {
+pub struct CanvasRulerColors {
     pub background: Option<Color>,
     pub border: Option<Color>,
     pub tick: Option<Color>,
     pub text: Option<Color>,
 }
 
-impl CanvasRulerAppearance {
+impl CanvasRulerColors {
     fn resolve(self, theme: &DefaultTheme) -> [Color; 4] {
         [
             self.background.unwrap_or(theme.palette.surface_raised),
@@ -128,8 +136,12 @@ impl CanvasRulerAppearance {
     }
 }
 
+/// Former name of [`PixelCanvasColors`].
+#[deprecated(note = "use `PixelCanvasColors`")]
+pub type PixelCanvasAppearance = PixelCanvasColors;
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct PixelCanvasAppearance {
+pub struct PixelCanvasColors {
     pub background: Option<Color>,
     pub paper: Option<Color>,
     pub document_edge: Option<Color>,
@@ -138,7 +150,7 @@ pub struct PixelCanvasAppearance {
     pub grid: Option<Color>,
 }
 
-impl PixelCanvasAppearance {
+impl PixelCanvasColors {
     fn resolve(self, theme: &DefaultTheme) -> [Color; 6] {
         let dark = theme.surfaces.dark;
         [
@@ -193,8 +205,18 @@ impl CanvasViewport {
     }
 
     pub fn zoom(mut self, zoom: f32) -> Self {
-        self.zoom = zoom.max(0.01);
+        self.zoom = zoom;
         self
+    }
+
+    /// The zoom the viewport draws with: at least 1%, and 100% when the
+    /// stored zoom is not a number.
+    fn effective_zoom(self) -> f32 {
+        if self.zoom.is_finite() {
+            self.zoom.max(0.01)
+        } else {
+            1.0
+        }
     }
 
     pub fn rotation(mut self, rotation: f32) -> Self {
@@ -212,7 +234,10 @@ impl CanvasViewport {
     pub fn transform(self, bounds: Rect, document_origin: Point) -> Transform {
         let center = Self::center(bounds) + self.pan;
         Transform::translation(-document_origin.x, -document_origin.y)
-            .then(Transform::scale(self.zoom, self.zoom))
+            .then(Transform::scale(
+                self.effective_zoom(),
+                self.effective_zoom(),
+            ))
             .then(Transform::rotation(self.rotation))
             .then(Transform::translation(center.x, center.y))
     }
@@ -225,9 +250,10 @@ impl CanvasViewport {
             (relative.x * cos) + (relative.y * -sin),
             (relative.x * sin) + (relative.y * cos),
         );
+        let zoom = self.effective_zoom();
         Point::new(
-            document_origin.x + (rotated.x / self.zoom),
-            document_origin.y + (rotated.y / self.zoom),
+            document_origin.x + (rotated.x / zoom),
+            document_origin.y + (rotated.y / zoom),
         )
     }
 
@@ -244,7 +270,7 @@ impl CanvasViewport {
         document_origin: Point,
     ) {
         let before = self.screen_to_world(bounds, anchor, document_origin);
-        self.zoom = (self.zoom * factor.max(0.01)).max(0.01);
+        self.zoom = (self.effective_zoom() * factor.max(0.01)).max(0.01);
         let after = self.world_to_screen(bounds, before, document_origin);
         self.pan += anchor - after;
     }
@@ -341,6 +367,12 @@ struct CanvasWidgetEntry {
     zoom: CanvasZoomBehavior,
 }
 
+impl Default for CanvasSurface {
+    fn default() -> Self {
+        Self::new(CanvasViewport::default())
+    }
+}
+
 impl CanvasSurface {
     pub fn new(viewport: CanvasViewport) -> Self {
         Self {
@@ -356,8 +388,9 @@ impl CanvasSurface {
         self
     }
 
+    /// The grid step in document units; painting uses at least 1.
     pub fn grid_spacing(mut self, spacing: f32) -> Self {
-        self.grid_spacing = spacing.max(1.0);
+        self.grid_spacing = spacing;
         self
     }
 
@@ -412,7 +445,7 @@ pub struct CanvasRuler {
     viewport_size: Size,
     viewport_reader: Option<Box<dyn Fn() -> (CanvasViewport, Size)>>,
     extent: Option<f32>,
-    appearance: CanvasRulerAppearance,
+    appearance: CanvasRulerColors,
 }
 
 impl CanvasRuler {
@@ -427,7 +460,7 @@ impl CanvasRuler {
             viewport_size: Size::ZERO,
             viewport_reader: None,
             extent: None,
-            appearance: CanvasRulerAppearance::default(),
+            appearance: CanvasRulerColors::default(),
         }
     }
 
@@ -473,9 +506,14 @@ impl CanvasRuler {
         self
     }
 
-    pub fn appearance(mut self, appearance: CanvasRulerAppearance) -> Self {
-        self.appearance = appearance;
+    pub fn colors(mut self, colors: CanvasRulerColors) -> Self {
+        self.appearance = colors;
         self
+    }
+
+    #[deprecated(note = "use `colors`")]
+    pub fn appearance(self, appearance: CanvasRulerColors) -> Self {
+        self.colors(appearance)
     }
 
     fn viewport_snapshot(&self) -> (CanvasViewport, Size) {
@@ -674,7 +712,7 @@ pub struct Canvas {
     draw_stroke: CanvasStroke,
     focus_animation: AnimatedScalar,
     desired_size: Size,
-    appearance: CanvasAppearance,
+    appearance: CanvasColors,
     content: Option<SingleChild>,
     content_bounds: Rect,
     content_zoom: CanvasZoomBehavior,
@@ -697,7 +735,7 @@ impl Canvas {
             draw_stroke: CanvasStroke::new(theme.palette.accent, 2.5),
             focus_animation: AnimatedScalar::new(0.0),
             desired_size: Size::new(520.0, 360.0),
-            appearance: CanvasAppearance::default(),
+            appearance: CanvasColors::default(),
             content: None,
             content_bounds: Rect::new(0.0, 0.0, 520.0, 360.0),
             content_zoom: CanvasZoomBehavior::Uniform,
@@ -749,17 +787,30 @@ impl Canvas {
         self
     }
 
-    pub fn appearance(mut self, appearance: CanvasAppearance) -> Self {
-        self.appearance = appearance;
+    pub fn colors(mut self, colors: CanvasColors) -> Self {
+        self.appearance = colors;
         self
     }
 
-    pub fn content<W>(mut self, content: W) -> Self
+    #[deprecated(note = "use `colors`")]
+    pub fn appearance(self, appearance: CanvasColors) -> Self {
+        self.colors(appearance)
+    }
+
+    pub fn child<W>(mut self, content: W) -> Self
     where
         W: Widget + 'static,
     {
         self.content = Some(SingleChild::new(content));
         self
+    }
+
+    #[deprecated(note = "use `child`")]
+    pub fn content<W>(self, content: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.child(content)
     }
 
     pub fn content_bounds(mut self, bounds: Rect) -> Self {
@@ -2094,7 +2145,7 @@ pub struct PixelCanvas {
     desired_size: Size,
     fit_on_first_layout: bool,
     initial_fit_applied: bool,
-    appearance: PixelCanvasAppearance,
+    appearance: PixelCanvasColors,
 }
 
 impl PixelCanvas {
@@ -2122,7 +2173,7 @@ impl PixelCanvas {
             desired_size: Size::new(520.0, 360.0),
             fit_on_first_layout: false,
             initial_fit_applied: false,
-            appearance: PixelCanvasAppearance::default(),
+            appearance: PixelCanvasColors::default(),
         }
     }
 
@@ -2161,10 +2212,15 @@ impl PixelCanvas {
         self
     }
 
-    pub fn appearance(mut self, appearance: PixelCanvasAppearance) -> Self {
-        self.appearance = appearance;
+    pub fn colors(mut self, colors: PixelCanvasColors) -> Self {
+        self.appearance = colors;
         self.paint_image_cache.borrow_mut().take();
         self
+    }
+
+    #[deprecated(note = "use `colors`")]
+    pub fn appearance(self, appearance: PixelCanvasColors) -> Self {
+        self.colors(appearance)
     }
 
     pub fn desired_size(mut self, size: Size) -> Self {
@@ -3898,9 +3954,9 @@ mod tests {
     use std::{cell::RefCell, rc::Rc};
 
     use super::{
-        Canvas, CanvasAppearance, CanvasRuler, CanvasShape, CanvasStroke, CanvasViewport,
-        CanvasZoomBehavior, PixelCanvas, PixelCanvasAppearance, PixelCanvasBlendMode,
-        PixelCanvasBrushShape, PixelCanvasState, PixelCanvasTool, PixelColor,
+        Canvas, CanvasColors, CanvasRuler, CanvasShape, CanvasStroke, CanvasViewport,
+        CanvasZoomBehavior, PixelCanvas, PixelCanvasBlendMode, PixelCanvasBrushShape,
+        PixelCanvasColors, PixelCanvasState, PixelCanvasTool, PixelColor,
     };
     use crate::{CanvasRulerAxis, DefaultTheme, ThemeTextToken};
     use sui_core::{
@@ -4227,6 +4283,19 @@ mod tests {
     }
 
     #[test]
+    fn canvas_value_types_are_plain_data_that_paint_safely() {
+        let viewport = CanvasViewport::new().zoom(0.0);
+        assert_eq!(viewport.zoom, 0.0, "the builder stores what it is given");
+        let bounds = Rect::new(0.0, 0.0, 200.0, 100.0);
+        let world = viewport.screen_to_world(bounds, Point::new(150.0, 30.0), Point::ZERO);
+        assert!(world.x.is_finite() && world.y.is_finite());
+
+        let surface = super::CanvasSurface::default().grid_spacing(0.0);
+        assert_eq!(surface.grid_spacing, 0.0);
+        assert_eq!(surface.viewport, CanvasViewport::default());
+    }
+
+    #[test]
     fn viewport_screen_world_mapping_round_trips_nonzero_bounds() {
         let viewport = CanvasViewport::new()
             .pan(Vector::new(24.0, -18.0))
@@ -4249,7 +4318,7 @@ mod tests {
         let output = render(
             crate::SizedBox::new()
                 .size(Size::new(420.0, theme.metrics.canvas_ruler_extent))
-                .with_child(
+                .child(
                     CanvasRuler::horizontal("Horizontal ruler", Size::new(1920.0, 1080.0))
                         .viewport(CanvasViewport::new().zoom(0.5), Size::new(420.0, 260.0)),
                 ),
@@ -4294,14 +4363,15 @@ mod tests {
         let compact = DefaultTheme::compact();
         let touch = DefaultTheme::touch();
 
-        let compact_output = render(crate::SizedBox::new().width(420.0).with_child(
+        let compact_output = render(crate::SizedBox::new().width(420.0).child(
             CanvasRuler::horizontal("Compact ruler", Size::new(1920.0, 1080.0)).theme(compact),
         ));
-        let touch_output = render(crate::SizedBox::new().width(420.0).with_child(
-            CanvasRuler::horizontal("Touch ruler", Size::new(1920.0, 1080.0)).theme(touch),
-        ));
+        let touch_output =
+            render(crate::SizedBox::new().width(420.0).child(
+                CanvasRuler::horizontal("Touch ruler", Size::new(1920.0, 1080.0)).theme(touch),
+            ));
         let override_output = render(
-            crate::SizedBox::new().width(420.0).with_child(
+            crate::SizedBox::new().width(420.0).child(
                 CanvasRuler::horizontal("Override ruler", Size::new(1920.0, 1080.0))
                     .theme(touch)
                     .extent(18.0),
@@ -4335,7 +4405,7 @@ mod tests {
         let output = render(
             crate::SizedBox::new()
                 .size(Size::new(420.0, theme.metrics.canvas_ruler_extent))
-                .with_child(
+                .child(
                     CanvasRuler::horizontal("Horizontal ruler", Size::new(1920.0, 1080.0))
                         .viewport(
                             CanvasViewport::new().pan(Vector::new(750.0, 0.0)),
@@ -4392,17 +4462,15 @@ mod tests {
 
         let extent = 96.0;
         let output = render(
-            crate::SizedBox::new()
-                .size(Size::new(420.0, extent))
-                .with_child(
-                    CanvasRuler::horizontal("Tall horizontal ruler", Size::new(1920.0, 1080.0))
-                        .theme(theme)
-                        .extent(extent)
-                        .viewport(
-                            CanvasViewport::new().pan(Vector::new(750.0, 0.0)),
-                            Size::new(420.0, 260.0),
-                        ),
-                ),
+            crate::SizedBox::new().size(Size::new(420.0, extent)).child(
+                CanvasRuler::horizontal("Tall horizontal ruler", Size::new(1920.0, 1080.0))
+                    .theme(theme)
+                    .extent(extent)
+                    .viewport(
+                        CanvasViewport::new().pan(Vector::new(750.0, 0.0)),
+                        Size::new(420.0, 260.0),
+                    ),
+            ),
         );
         let text = numeric_text_runs(&output)
             .into_iter()
@@ -4452,13 +4520,11 @@ mod tests {
         let viewport_size = Size::new(260.0, 420.0);
         let extent = 72.0;
         let output = render(
-            crate::SizedBox::new()
-                .size(Size::new(extent, 420.0))
-                .with_child(
-                    CanvasRuler::vertical("Vertical ruler", document_size)
-                        .extent(extent)
-                        .viewport(viewport, viewport_size),
-                ),
+            crate::SizedBox::new().size(Size::new(extent, 420.0)).child(
+                CanvasRuler::vertical("Vertical ruler", document_size)
+                    .extent(extent)
+                    .viewport(viewport, viewport_size),
+            ),
         );
         let bounds = Rect::new(0.0, 0.0, extent, 420.0);
         let canvas_bounds =
@@ -4533,14 +4599,12 @@ mod tests {
         let viewport_size = Size::new(260.0, 420.0);
         let extent = 96.0;
         let output = render(
-            crate::SizedBox::new()
-                .size(Size::new(extent, 420.0))
-                .with_child(
-                    CanvasRuler::vertical("Tall vertical ruler", document_size)
-                        .theme(theme)
-                        .extent(extent)
-                        .viewport(viewport, viewport_size),
-                ),
+            crate::SizedBox::new().size(Size::new(extent, 420.0)).child(
+                CanvasRuler::vertical("Tall vertical ruler", document_size)
+                    .theme(theme)
+                    .extent(extent)
+                    .viewport(viewport, viewport_size),
+            ),
         );
         let bounds = Rect::new(0.0, 0.0, extent, 420.0);
         let canvas_bounds =
@@ -4672,13 +4736,13 @@ mod tests {
 
     #[test]
     fn canvas_appearance_overrides_semantic_theme_defaults() {
-        let appearance = CanvasAppearance {
+        let appearance = CanvasColors {
             background: Some(Color::rgba(0.91, 0.83, 0.72, 1.0)),
             grid: Some(Color::rgba(0.24, 0.33, 0.44, 0.40)),
             axis_x: Some(Color::rgba(0.80, 0.20, 0.30, 0.70)),
             axis_y: Some(Color::rgba(0.20, 0.60, 0.40, 0.70)),
         };
-        let output = render(Canvas::new("Vector").appearance(appearance));
+        let output = render(Canvas::new("Vector").colors(appearance));
         let fills = solid_fill_colors(&output);
         let strokes = solid_stroke_colors(&output);
 
@@ -4692,7 +4756,7 @@ mod tests {
     fn canvas_uniformly_scales_normal_widget_content_and_inverse_maps_input() {
         let pointer_positions = Rc::new(RefCell::new(Vec::new()));
         let canvas = Canvas::new("Widget canvas")
-            .content(CanvasContentProbe {
+            .child(CanvasContentProbe {
                 name: "canvas content probe",
                 pointer_positions: Rc::clone(&pointer_positions),
             })
@@ -4747,7 +4811,7 @@ mod tests {
     #[test]
     fn canvas_touch_pinch_uniformly_scales_widget_content() {
         let canvas = Canvas::new("Pinch canvas")
-            .content(CanvasContentProbe {
+            .child(CanvasContentProbe {
                 name: "pinch content",
                 pointer_positions: Rc::new(RefCell::new(Vec::new())),
             })
@@ -4800,7 +4864,7 @@ mod tests {
         let pointer_positions = Rc::new(RefCell::new(Vec::new()));
         let canvas = Canvas::new("Rotated canvas")
             .viewport(CanvasViewport::new().rotation(std::f32::consts::FRAC_PI_2))
-            .content(CanvasContentProbe {
+            .child(CanvasContentProbe {
                 name: "rotated content",
                 pointer_positions: Rc::clone(&pointer_positions),
             })
@@ -4835,7 +4899,7 @@ mod tests {
     #[test]
     fn canvas_screen_space_content_keeps_visual_size_while_zooming() {
         let canvas = Canvas::new("Screen-space canvas")
-            .content(CanvasContentProbe {
+            .child(CanvasContentProbe {
                 name: "canvas content probe",
                 pointer_positions: Rc::new(RefCell::new(Vec::new())),
             })
@@ -4975,7 +5039,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
                 .size(Size::new(160.0, 120.0))
-                .with_child(Canvas::new("Vector").theme(theme)),
+                .child(Canvas::new("Vector").theme(theme)),
         );
 
         let _ = runtime.render(window_id).expect("render should succeed");
@@ -5011,7 +5075,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
                 .size(Size::new(160.0, 120.0))
-                .with_child(PixelCanvas::new("Paint", 8, 8).theme(theme)),
+                .child(PixelCanvas::new("Paint", 8, 8).theme(theme)),
         );
 
         let _ = runtime.render(window_id).expect("render should succeed");
@@ -5548,15 +5612,15 @@ mod tests {
     #[test]
     fn pixel_canvas_appearance_controls_paper_for_render_and_export() -> sui_core::Result<()> {
         let paper_color = Color::rgba(0.80, 0.62, 0.36, 1.0);
-        let appearance = PixelCanvasAppearance {
+        let appearance = PixelCanvasColors {
             paper: Some(paper_color),
-            ..PixelCanvasAppearance::default()
+            ..PixelCanvasColors::default()
         };
         let state = PixelCanvasState::new();
         state.set_display_visible(false);
         let (mut runtime, window_id) = build_runtime(
             PixelCanvas::new("Paint", 1, 1)
-                .appearance(appearance)
+                .colors(appearance)
                 .state(state.clone())
                 .with_pixels(vec![Color::rgba(1.0, 0.0, 0.0, 1.0)]),
         );
@@ -5581,16 +5645,16 @@ mod tests {
     #[test]
     fn pixel_canvas_explicit_paper_color_overrides_theme_for_render_and_export()
     -> sui_core::Result<()> {
-        let appearance = PixelCanvasAppearance {
+        let appearance = PixelCanvasColors {
             paper: Some(Color::rgba(0.80, 0.62, 0.36, 1.0)),
-            ..PixelCanvasAppearance::default()
+            ..PixelCanvasColors::default()
         };
         let paper_color = Color::WHITE;
         let state = PixelCanvasState::new();
         state.set_display_visible(false);
         let (mut runtime, window_id) = build_runtime(
             PixelCanvas::new("Paint", 1, 1)
-                .appearance(appearance)
+                .colors(appearance)
                 .paper_color(paper_color)
                 .state(state.clone())
                 .with_pixels(vec![Color::rgba(1.0, 0.0, 0.0, 1.0)]),

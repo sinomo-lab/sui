@@ -1452,12 +1452,20 @@ pub struct BrushPreviewSpec {
     pub shape: BrushPreviewShape,
 }
 
+impl Default for BrushPreviewSpec {
+    fn default() -> Self {
+        Self::new(Color::BLACK, 12.0, 1.0, BrushPreviewShape::Round)
+    }
+}
+
 impl BrushPreviewSpec {
+    /// A brush preview; the preview draws at least 1 unit wide and clamps
+    /// `opacity` to 0 through 1.
     pub fn new(color: Color, size: f32, opacity: f32, shape: BrushPreviewShape) -> Self {
         Self {
             color,
-            size: size.max(1.0),
-            opacity: opacity.clamp(0.0, 1.0),
+            size,
+            opacity,
             shape,
         }
     }
@@ -1531,10 +1539,24 @@ impl BrushPreview {
     }
 
     fn current_spec(&self) -> BrushPreviewSpec {
-        self.spec_reader
+        let spec = self
+            .spec_reader
             .as_ref()
             .map(|reader| reader())
-            .unwrap_or(self.spec)
+            .unwrap_or(self.spec);
+        BrushPreviewSpec {
+            size: if spec.size.is_finite() {
+                spec.size.max(1.0)
+            } else {
+                1.0
+            },
+            opacity: if spec.opacity.is_finite() {
+                spec.opacity.clamp(0.0, 1.0)
+            } else {
+                1.0
+            },
+            ..spec
+        }
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -1975,10 +1997,14 @@ enum ColorPickerSemanticPart {
     Hex,
 }
 
+/// Former name of [`ColorPickerColors`].
+#[deprecated(note = "use `ColorPickerColors`")]
+pub type ColorPickerAppearance = ColorPickerColors;
+
 /// Widget-owned color-tool paint overrides. The default appearance is derived
 /// from common semantic theme roles rather than global picker-specific tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct ColorPickerAppearance {
+pub struct ColorPickerColors {
     pub checkerboard_light: Option<Color>,
     pub checkerboard_dark: Option<Color>,
     pub chrome_border: Option<Color>,
@@ -1991,7 +2017,7 @@ pub struct ColorPickerAppearance {
     pub hdr_divider: Option<Color>,
 }
 
-impl ColorPickerAppearance {
+impl ColorPickerColors {
     fn apply(self, mut theme: DefaultTheme) -> DefaultTheme {
         let dark = theme.surfaces.dark;
         theme.surfaces.checkerboard_light = self
@@ -2062,7 +2088,7 @@ pub struct ColorPicker {
     color_reader: Option<Box<dyn Fn() -> Color>>,
     on_change: Option<Box<dyn FnMut(Color)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, Color)>>,
-    appearance: ColorPickerAppearance,
+    appearance: ColorPickerColors,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2102,7 +2128,7 @@ pub struct SimpleColorPicker {
     color_reader: Option<Box<dyn Fn() -> Color>>,
     on_change: Option<Box<dyn FnMut(Color)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, Color)>>,
-    appearance: ColorPickerAppearance,
+    appearance: ColorPickerColors,
 }
 
 impl ColorPicker {
@@ -2140,7 +2166,7 @@ impl ColorPicker {
             color_reader: None,
             on_change: None,
             on_change_with_ctx: None,
-            appearance: ColorPickerAppearance::default(),
+            appearance: ColorPickerColors::default(),
         }
     }
 
@@ -2210,9 +2236,14 @@ impl ColorPicker {
         self
     }
 
-    pub fn appearance(mut self, appearance: ColorPickerAppearance) -> Self {
-        self.appearance = appearance;
+    pub fn colors(mut self, colors: ColorPickerColors) -> Self {
+        self.appearance = colors;
         self
+    }
+
+    #[deprecated(note = "use `colors`")]
+    pub fn appearance(self, appearance: ColorPickerColors) -> Self {
+        self.colors(appearance)
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -2240,7 +2271,7 @@ impl ColorPicker {
         self
     }
 
-    pub fn color(&self) -> Color {
+    pub fn current_color(&self) -> Color {
         hsv_to_color(
             self.editing_space,
             self.hue,
@@ -2248,6 +2279,11 @@ impl ColorPicker {
             self.value,
             self.alpha,
         )
+    }
+
+    #[deprecated(note = "use `current_color`")]
+    pub fn color(&self) -> Color {
+        self.current_color()
     }
 
     fn hdr_capable(&self) -> bool {
@@ -2305,7 +2341,7 @@ impl ColorPicker {
         }
 
         ColorPickerResolvedState {
-            color: self.color(),
+            color: self.current_color(),
             editing_space: self.editing_space,
             hue: self.hue,
             saturation: self.saturation,
@@ -2320,7 +2356,7 @@ impl ColorPicker {
         let Some(color) = self.external_color() else {
             return false;
         };
-        if !colors_close(self.color(), color) {
+        if !colors_close(self.current_color(), color) {
             self.apply_color(color);
             return true;
         }
@@ -2624,7 +2660,7 @@ impl ColorPicker {
     }
 
     fn emit_change(&mut self, ctx: &mut EventCtx) {
-        let color = self.color();
+        let color = self.current_color();
         if let Some(on_change) = &mut self.on_change {
             on_change(color);
         }
@@ -2652,7 +2688,7 @@ impl ColorPicker {
             return;
         }
 
-        let current = self.color();
+        let current = self.current_color();
         self.apply_color(Color::new(
             next_space,
             current.red,
@@ -2670,7 +2706,11 @@ impl ColorPicker {
         position: Point,
     ) {
         let t = self.slider_position(self.rgb_row_rect(bounds, channel_index), position);
-        let mut channels = [self.color().red, self.color().green, self.color().blue];
+        let mut channels = [
+            self.current_color().red,
+            self.current_color().green,
+            self.current_color().blue,
+        ];
         channels[channel_index] = self.max_channel_value() * t;
         self.apply_color(Color::new(
             self.editing_space,
@@ -3010,7 +3050,7 @@ impl SimpleColorPicker {
             color_reader: None,
             on_change: None,
             on_change_with_ctx: None,
-            appearance: ColorPickerAppearance::default(),
+            appearance: ColorPickerColors::default(),
         }
     }
 
@@ -3030,7 +3070,7 @@ impl SimpleColorPicker {
 
     pub fn mode(mut self, mode: SimpleColorPickerMode) -> Self {
         if self.mode != mode {
-            let current = self.color();
+            let current = self.current_color();
             self.mode = mode;
             self.apply_color(current);
         }
@@ -3052,9 +3092,14 @@ impl SimpleColorPicker {
         self
     }
 
-    pub fn appearance(mut self, appearance: ColorPickerAppearance) -> Self {
-        self.appearance = appearance;
+    pub fn colors(mut self, colors: ColorPickerColors) -> Self {
+        self.appearance = colors;
         self
+    }
+
+    #[deprecated(note = "use `colors`")]
+    pub fn appearance(self, appearance: ColorPickerColors) -> Self {
+        self.colors(appearance)
     }
 
     pub fn on_change<F>(mut self, on_change: F) -> Self
@@ -3081,7 +3126,7 @@ impl SimpleColorPicker {
         self
     }
 
-    pub fn color(&self) -> Color {
+    pub fn current_color(&self) -> Color {
         match self.mode {
             SimpleColorPickerMode::Hsl => hsl_to_color(
                 self.editing_space,
@@ -3109,6 +3154,11 @@ impl SimpleColorPicker {
                 oklch_to_color(self.editing_space, self.oklch_with_alpha())
             }
         }
+    }
+
+    #[deprecated(note = "use `current_color`")]
+    pub fn color(&self) -> Color {
+        self.current_color()
     }
 
     fn oklch_with_alpha(&self) -> Oklch {
@@ -3251,7 +3301,7 @@ impl SimpleColorPicker {
 
     fn resolved_values(&self) -> ColorSliderValues {
         match self.external_color() {
-            Some(color) if !colors_close(self.color(), color) => {
+            Some(color) if !colors_close(self.current_color(), color) => {
                 let mut values = ColorSliderValues::from_color(color);
                 if values.oklch.chroma < OKLCH_ACHROMATIC_CHROMA {
                     values.oklch.hue = self.oklch.hue;
@@ -3274,7 +3324,7 @@ impl SimpleColorPicker {
         let Some(color) = self.external_color() else {
             return false;
         };
-        if !colors_close(self.color(), color) {
+        if !colors_close(self.current_color(), color) {
             self.apply_color(color);
             return true;
         }
@@ -3301,7 +3351,7 @@ impl SimpleColorPicker {
             return;
         }
 
-        let current = self.color();
+        let current = self.current_color();
         self.apply_color(Color::new(
             next_space,
             current.red,
@@ -3312,7 +3362,7 @@ impl SimpleColorPicker {
     }
 
     fn emit_change(&mut self, ctx: &mut EventCtx) {
-        let color = self.color();
+        let color = self.current_color();
         if let Some(on_change) = &mut self.on_change {
             on_change(color);
         }
@@ -3359,7 +3409,7 @@ impl SimpleColorPicker {
     }
 
     fn refresh_inactive_channels(&mut self) {
-        let values = ColorSliderValues::from_color(self.color());
+        let values = ColorSliderValues::from_color(self.current_color());
         match self.mode {
             SimpleColorPickerMode::Hsl => {
                 self.hsv_saturation = values.hsv_saturation;
@@ -5060,10 +5110,10 @@ mod tests {
 
     use super::{
         ActiveChannel, BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette,
-        ColorPaletteSwatch, ColorPicker, ColorPickerAppearance, ColorPickerSemanticPart,
-        ColorSwatch, Image, OKLCH_MAX_CHROMA, SignalMeter, SimpleColorPicker,
-        SimpleColorPickerMode, color_picker_child_semantics_id, format_color, hsl_to_color,
-        hsv_to_rgb, rgb_to_hsl, rgb_to_hsv, signal_meter_bar_layout,
+        ColorPaletteSwatch, ColorPicker, ColorPickerColors, ColorPickerSemanticPart, ColorSwatch,
+        Image, OKLCH_MAX_CHROMA, SignalMeter, SimpleColorPicker, SimpleColorPickerMode,
+        color_picker_child_semantics_id, format_color, hsl_to_color, hsv_to_rgb, rgb_to_hsl,
+        rgb_to_hsv, signal_meter_bar_layout,
     };
     use crate::{DefaultTheme, SemanticTone, ThemeTextToken};
     use sui_core::{
@@ -6576,11 +6626,11 @@ mod tests {
             Color::new(ColorSpace::LinearSrgb, 2.0, 0.5, 0.25, 1.0),
         );
 
-        assert_eq!(picker.color().space, ColorSpace::LinearSrgb);
-        assert!((picker.color().red - 2.0).abs() < f32::EPSILON);
-        assert!((picker.color().green - 0.5).abs() < f32::EPSILON);
-        assert!((picker.color().blue - 0.25).abs() < f32::EPSILON);
-        assert!((picker.color().alpha - 1.0).abs() < f32::EPSILON);
+        assert_eq!(picker.current_color().space, ColorSpace::LinearSrgb);
+        assert!((picker.current_color().red - 2.0).abs() < f32::EPSILON);
+        assert!((picker.current_color().green - 0.5).abs() < f32::EPSILON);
+        assert!((picker.current_color().blue - 0.25).abs() < f32::EPSILON);
+        assert!((picker.current_color().alpha - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -6755,7 +6805,7 @@ mod tests {
 
     #[test]
     fn color_picker_appearance_overrides_semantic_theme_defaults() -> Result<()> {
-        let appearance = ColorPickerAppearance {
+        let appearance = ColorPickerColors {
             checkerboard_light: Some(Color::rgba(0.91, 0.86, 0.78, 1.0)),
             checkerboard_dark: Some(Color::rgba(0.66, 0.58, 0.48, 1.0)),
             chrome_border: Some(Color::rgba(0.20, 0.30, 0.42, 0.61)),
@@ -6770,7 +6820,7 @@ mod tests {
 
         let (mut runtime, window_id) = build_runtime(
             ColorPicker::from_color("Accent picker", Color::rgba(0.84, 0.72, 0.18, 1.0))
-                .appearance(appearance),
+                .colors(appearance),
         );
         let output = runtime.render(window_id)?;
         let fills = solid_fill_colors(&output);

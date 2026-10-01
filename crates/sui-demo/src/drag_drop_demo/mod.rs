@@ -180,7 +180,7 @@ pub(crate) fn build_drag_drop_demo_with_theme(theme_reader: DevThemeReader) -> i
     let page = Page::new(theme_reader);
     let theme_reader = &page.theme_reader;
     let content = Stack::vertical()
-        .spacing(24.0)
+        .gap(24.0)
         .alignment(Alignment::Stretch)
         .with_child(header(theme_reader))
         .with_child(event_log(&page))
@@ -268,10 +268,10 @@ fn drag_preview(page: &Page, dragged: &DragPreview) -> Option<Box<dyn Widget>> {
             let id = dragged.payload.custom_data::<CardRef>()?.id;
             let title = page.board.get().card(id)?.title.clone();
             Some(Box::new(
-                SizedBox::new().width(220.0).with_child(
+                SizedBox::new().width(220.0).child(
                     Surface::panel(
                         Stack::vertical()
-                            .spacing(4.0)
+                            .gap(4.0)
                             .alignment(Alignment::Stretch)
                             .with_child(demo_label(
                                 theme_reader,
@@ -296,7 +296,7 @@ fn drag_preview(page: &Page, dragged: &DragPreview) -> Option<Box<dyn Widget>> {
         Some(ASSET_KIND) => {
             let asset = *dragged.payload.custom_data::<Asset>()?;
             Some(Box::new(
-                SizedBox::new().width(200.0).with_child(
+                SizedBox::new().width(200.0).child(
                     Surface::panel(chip_row(
                         theme_reader,
                         asset_icon(asset.kind),
@@ -316,7 +316,7 @@ fn drag_preview(page: &Page, dragged: &DragPreview) -> Option<Box<dyn Widget>> {
 
 fn header(theme_reader: &DevThemeReader) -> impl Widget + use<> {
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(demo_label(
             theme_reader,
@@ -344,9 +344,9 @@ fn header(theme_reader: &DevThemeReader) -> impl Widget + use<> {
 fn event_log(page: &Page) -> impl Widget + use<> {
     let theme_reader = &page.theme_reader;
     Surface::field(
-        SizedBox::new().height(128.0).with_child(
+        SizedBox::new().height(128.0).child(
             Stack::vertical()
-                .spacing(6.0)
+                .gap(6.0)
                 .alignment(Alignment::Stretch)
                 .with_child(demo_label(
                     theme_reader,
@@ -428,7 +428,7 @@ fn shelf_chip(theme_reader: &DevThemeReader, icon: IconGlyph, name: &str, badge:
 fn shelf(page: &Page) -> impl Widget + use<> {
     let theme_reader = &page.theme_reader;
     let mut items = Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(demo_label(
             theme_reader,
@@ -513,7 +513,7 @@ fn column_view(page: &Page, column: Column) -> impl Widget + use<> {
     let builder = page.clone();
     Surface::panel(
         Stack::vertical()
-            .spacing(2.0)
+            .gap(2.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 Flex::horizontal()
@@ -734,7 +734,7 @@ fn card_content(page: &Page, card: &Signal<Card>) -> impl Widget + use<> {
     Padding::all(
         12.0,
         Stack::vertical()
-            .spacing(6.0)
+            .gap(6.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 Flex::horizontal()
@@ -769,7 +769,7 @@ fn attachment_chips(theme_reader: &DevThemeReader, attachments: &[Asset]) -> Fle
         chips.push(
             Surface::field(
                 Stack::horizontal()
-                    .spacing(4.0)
+                    .gap(4.0)
                     .alignment(Alignment::Center)
                     .with_child(
                         Icon::new(asset_icon(asset.kind))
@@ -925,7 +925,7 @@ fn zone_heading(
 ) -> impl Widget + use<> {
     let color = Rc::clone(theme_reader);
     Stack::horizontal()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Center)
         .with_child(
             Icon::new(icon)
@@ -960,7 +960,7 @@ fn trash(page: &Page) -> impl Widget + use<> {
             Padding::all(
                 14.0,
                 Stack::vertical()
-                    .spacing(10.0)
+                    .gap(10.0)
                     .alignment(Alignment::Start)
                     .with_child(zone_heading(theme_reader, IconGlyph::Trash, TRASH_NAME))
                     .with_child(
@@ -1040,7 +1040,7 @@ fn text_field(page: &Page) -> impl Widget + use<> {
             Padding::all(
                 14.0,
                 Stack::vertical()
-                    .spacing(10.0)
+                    .gap(10.0)
                     .alignment(Alignment::Stretch)
                     .with_child(zone_heading(theme_reader, IconGlyph::Type, "Text field"))
                     .with_child(
@@ -1108,7 +1108,7 @@ fn locked_palette(page: &Page) -> impl Widget + use<> {
     let swatch = Draggable::new(
         Surface::field(
             Stack::horizontal()
-                .spacing(4.0)
+                .gap(4.0)
                 .alignment(Alignment::Center)
                 .with_child(swatch_dot(theme_reader, DecorativeHue::Violet))
                 .with_child(swatch_dot(theme_reader, DecorativeHue::Magenta))
@@ -1173,7 +1173,7 @@ fn locked_palette(page: &Page) -> impl Widget + use<> {
         scope,
         Surface::panel(
             Stack::vertical()
-                .spacing(10.0)
+                .gap(10.0)
                 .alignment(Alignment::Stretch)
                 .with_child(zone_heading(
                     theme_reader,
@@ -1220,7 +1220,7 @@ fn desktop_files(page: &Page) -> impl Widget + use<> {
         Padding::all(
             14.0,
             Stack::vertical()
-                .spacing(10.0)
+                .gap(10.0)
                 .alignment(Alignment::Stretch)
                 .with_child(zone_heading(theme_reader, IconGlyph::File, FILES_NAME))
                 .with_child(demo_label(

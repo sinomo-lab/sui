@@ -540,7 +540,7 @@ where
             Padding::all(
                 18.0,
                 Stack::vertical()
-                    .spacing(10.0)
+                    .gap(10.0)
                     .alignment(Alignment::Stretch)
                     .with_child(MaximumWidth::new(
                         GALLERY_TEXT_MAX_WIDTH,

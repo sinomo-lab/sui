@@ -89,6 +89,23 @@ instead of gaining `theme_when`.
 
 ## Phase 5: Names, Layout Words, Children, and Value Types
 
+Status: done, with these decisions:
+
+- Every container's `child()` getter became `child_pod()`, since `child` is
+  now a builder. `spacing` became `gap`, and `radius` became `corner_radius`,
+  on every widget and paint helper that had them, not only those listed.
+- All six value types are plain data: their builders store what they are
+  given, they implement `Default`, and the widgets clamp at use.
+  `TransientNotification` could not be encapsulated without getters that
+  clash with its `duration` and `urgency` builders.
+- `Spinner::label` keeps reporting the visible label as the spinner's
+  description, so assistive technology reads what is shown; the spinner's
+  name still comes from `new`.
+
+Still to do: `Flex::item` and `Flex::items` read children back under builder
+names, and item types such as `TabBarItem` and `MenuItem` read their labels
+with `label()`.
+
 - Getters stop sharing names with builders: `Button::label`,
   `TextInput::name`, `ColorPicker::color`, `FloatingWorkspace::state`, and
   `DockWorkspace::state`. `Link::url` becomes a builder on `Link::new`.

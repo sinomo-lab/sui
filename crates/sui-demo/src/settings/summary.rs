@@ -91,7 +91,7 @@ impl OutputSummaryRows {
                 .value_when(move || value(&rows.borrow()))
         };
         let content = Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Stretch)
             .with_child(row(OUTPUT_ROW_NAME, |rows| rows.output.clone()))
             .with_child(row(SDR_WHITE_ROW_NAME, |rows| rows.sdr_white.clone()))

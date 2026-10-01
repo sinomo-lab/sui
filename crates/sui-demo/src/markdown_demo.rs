@@ -359,7 +359,7 @@ pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader
         ScrollView::vertical(Padding::all(
             18.0,
             Stack::vertical()
-                .spacing(14.0)
+                .gap(14.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
                     Label::new("Rich documents").text_style_when(demo_text_style_when(
@@ -521,7 +521,7 @@ where
         Padding::all(
             12.0,
             Stack::vertical()
-                .spacing(10.0)
+                .gap(10.0)
                 .alignment(Alignment::Stretch)
                 .with_child(Label::new(title).text_style_when(demo_text_style_when(
                     &theme_reader,
@@ -560,7 +560,7 @@ mod tests {
         let root = SizedBox::new()
             .width(width)
             .height(height)
-            .with_child(build_markdown_render_demo_with_theme(theme_reader));
+            .child(build_markdown_render_demo_with_theme(theme_reader));
         let mut runtime = Application::new()
             .window(
                 WindowBuilder::new()
@@ -648,7 +648,7 @@ mod tests {
                 WindowBuilder::new().title("Rich document image").root(
                     SizedBox::new()
                         .size(Size::new(1400.0, 2400.0))
-                        .with_child(build_markdown_render_demo_with_theme(theme_reader)),
+                        .child(build_markdown_render_demo_with_theme(theme_reader)),
                 ),
             )
             .build()

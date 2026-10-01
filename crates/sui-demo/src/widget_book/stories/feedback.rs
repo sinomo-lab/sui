@@ -342,7 +342,7 @@ fn empty_state(ctx: &StoryCtx) -> Vec<Section> {
             (
                 "With action",
                 boxed(
-                    SizedBox::new().width(320.0).height(200.0).with_child(
+                    SizedBox::new().width(320.0).height(200.0).child(
                         EmptyState::new(
                             "No search results",
                             "Try a broader query or clear active filters.",
@@ -356,7 +356,7 @@ fn empty_state(ctx: &StoryCtx) -> Vec<Section> {
             (
                 "Transparent",
                 boxed(
-                    SizedBox::new().width(280.0).height(160.0).with_child(
+                    SizedBox::new().width(280.0).height(160.0).child(
                         EmptyState::new("No layers", "Add a layer to start drawing.")
                             .icon(IconGlyph::File)
                             .transparent()

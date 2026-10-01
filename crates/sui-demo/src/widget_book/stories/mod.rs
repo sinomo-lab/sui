@@ -78,7 +78,7 @@ pub(super) fn sized<W>(width: f32, child: W) -> SizedBox
 where
     W: sui::Widget + 'static,
 {
-    sui::SizedBox::new().width(width).with_child(child)
+    sui::SizedBox::new().width(width).child(child)
 }
 
 use sui::SizedBox;

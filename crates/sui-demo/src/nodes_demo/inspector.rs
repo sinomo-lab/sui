@@ -50,7 +50,7 @@ fn nothing_selected(page: &Page) -> impl Widget + use<> {
             )
         });
     Stack::vertical()
-        .spacing(6.0)
+        .gap(6.0)
         .alignment(Alignment::Stretch)
         .with_child(
             demo_label(
@@ -96,7 +96,7 @@ fn node_inspector(page: &Page, id: &NodeId) -> impl Widget + use<> {
             })
     };
     Stack::vertical()
-        .spacing(10.0)
+        .gap(10.0)
         .alignment(Alignment::Stretch)
         .with_child(name)
         .with_child(demo_label(
@@ -212,7 +212,7 @@ fn edge_inspector(page: &Page, id: &EdgeId) -> impl Widget + use<> {
             })
     };
     Stack::vertical()
-        .spacing(10.0)
+        .gap(10.0)
         .alignment(Alignment::Stretch)
         .with_child(
             demo_label(

@@ -62,7 +62,7 @@ fn as_color(value: &Option<Value>) -> Option<Color> {
 /// The node's title, in the row its output handle sits beside.
 fn header(lab: &LabContext, node: &NodeSignal<LabNode>, muted: bool) -> impl Widget + use<> {
     let title = node.select_named("Lab node title", |node| node.label.clone());
-    SizedBox::new().height(HEADER).with_child(Align::new(
+    SizedBox::new().height(HEADER).child(Align::new(
         Alignment::Start,
         Alignment::Center,
         demo_label(
@@ -125,7 +125,7 @@ where
 {
     SizedBox::new()
         .height(rows as f32 * ROW)
-        .with_child(Padding::new(
+        .child(Padding::new(
             Insets {
                 left: 76.0,
                 ..Insets::all(0.0)
@@ -164,7 +164,7 @@ pub(super) fn color_node(
         lab,
         &node,
         Stack::vertical()
-            .spacing(6.0)
+            .gap(6.0)
             .alignment(Alignment::Stretch)
             .with_child(result(lab, lab.output(id)))
             .with_child(hue),
@@ -203,7 +203,7 @@ pub(super) fn number_node(
         lab,
         &node,
         Stack::vertical()
-            .spacing(4.0)
+            .gap(4.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 demo_mono_label(&lab.theme_reader, "", DemoTextRole::Body, |theme| {
@@ -252,7 +252,7 @@ pub(super) fn contrast_node(
         beside_inputs(
             2,
             Stack::vertical()
-                .spacing(2.0)
+                .gap(2.0)
                 .alignment(Alignment::End)
                 .with_child(
                     demo_mono_label(&lab.theme_reader, "", DemoTextRole::Body, |theme| {
@@ -286,7 +286,7 @@ pub(super) fn preview_node(
         lab,
         &node,
         Stack::vertical()
-            .spacing(6.0)
+            .gap(6.0)
             .alignment(Alignment::Stretch)
             .with_child(SizedBox::new().height(ROW))
             .with_child(Swatch::new(

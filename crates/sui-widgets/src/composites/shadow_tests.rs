@@ -111,7 +111,7 @@ fn a_surface_shadow_replaces_its_elevation_and_draws_inset_layers_over_its_fill(
     let output = render(
         Surface::field(SizedBox::new().width(80.0).height(40.0))
             .theme(theme)
-            .radius(8.0)
+            .corner_radius(8.0)
             .elevation(crate::SurfaceElevation::Large)
             .shadow(|_| ThemeShadow::double(layer(4.0, 8.0, false), layer(2.0, 4.0, true))),
     );
@@ -139,7 +139,7 @@ fn a_surface_draws_inset_shadows_inside_its_border() {
         Surface::field(SizedBox::new().width(80.0).height(40.0))
             .name("Field")
             .theme(theme)
-            .radius(8.0)
+            .corner_radius(8.0)
             .shadow(|_| ThemeShadow::single(layer(1.0, 0.0, true))),
     );
     let face = output
@@ -174,7 +174,7 @@ fn surfaces_glow_only_where_the_theme_glows() {
         shadows(&render(
             Surface::panel(SizedBox::new().width(80.0).height(40.0))
                 .theme(theme)
-                .radius(8.0)
+                .corner_radius(8.0)
                 .glow(GlowTone::Accent),
         ))
     };
@@ -199,7 +199,7 @@ fn a_shadow_box_casts_around_its_child_and_insets_over_it() {
     let output = render(
         ShadowBox::new(Block(face))
             .theme(DefaultTheme::dark())
-            .radius(6.0)
+            .corner_radius(6.0)
             .shadow(|_| ThemeShadow::double(layer(4.0, 8.0, false), layer(2.0, 4.0, true)))
             .glow(GlowTone::Secondary),
     );

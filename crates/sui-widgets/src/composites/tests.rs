@@ -106,7 +106,7 @@ where
 fn filling_surface_measures_flex_text_at_its_arranged_width() {
     const TEXT: &str = "Evolution dashboard source ready";
     let output = render(
-        crate::SizedBox::new().width(640.0).height(78.0).with_child(
+        crate::SizedBox::new().width(640.0).height(78.0).child(
             Surface::window(
                 crate::Flex::horizontal()
                     .with_item(crate::Label::new(TEXT), sui_layout::FlexItem::flex(1.0))
@@ -145,17 +145,14 @@ fn wrapping_toolbar_retains_items_across_multiple_rows() {
     let toolbar = Toolbar::horizontal()
         .wrapping()
         .padding(sui_layout::Padding::ZERO)
-        .spacing(4.0)
-        .line_spacing(6.0)
+        .gap(4.0)
+        .cross_gap(6.0)
         .divider(false)
         .with_child(SizedBox::new().size(Size::new(60.0, 20.0)))
         .with_child(SizedBox::new().size(Size::new(60.0, 20.0)))
         .with_child(SizedBox::new().size(Size::new(60.0, 20.0)));
-    let (mut runtime, window) = build_runtime(
-        SizedBox::new()
-            .size(Size::new(128.0, 80.0))
-            .with_child(toolbar),
-    );
+    let (mut runtime, window) =
+        build_runtime(SizedBox::new().size(Size::new(128.0, 80.0)).child(toolbar));
     runtime.render(window).unwrap();
 
     let graph = runtime.widget_graph(window).unwrap();
@@ -258,7 +255,7 @@ fn segmented_control_selection_thumb_is_evenly_inset() {
         crate::SizedBox::new()
             .width(360.0)
             .height(theme.metrics.tab_height)
-            .with_child(
+            .child(
                 SegmentedControl::new("Conversation view")
                     .theme(theme)
                     .segments(["All", "Chats", "Channels"]),
@@ -305,7 +302,7 @@ fn segmented_control_click_updates_radio_semantics() -> Result<(), String> {
     let changes = Rc::new(RefCell::new(Vec::new()));
     let on_change = Rc::clone(&changes);
     let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new().width(260.0).height(28.0).with_child(
+        crate::SizedBox::new().width(260.0).height(28.0).child(
             SegmentedControl::new("Conversation view")
                 .items([
                     SegmentedControlItem::new("All 2").semantic_name("Show all conversations"),
@@ -637,13 +634,13 @@ fn popover_keyboard_and_semantic_actions_share_open_contract() {
 #[test]
 fn popover_end_alignment_keeps_a_narrow_trigger_on_the_trailing_edge() {
     let output = render(
-        crate::SizedBox::new().width(360.0).with_child(
+        crate::SizedBox::new().width(360.0).child(
             Popover::new(
                 "Trailing inspector",
                 crate::Button::new("Open").min_width(92.0),
                 crate::SizedBox::new()
                     .width(240.0)
-                    .with_child(crate::Label::new("Inspector body")),
+                    .child(crate::Label::new("Inspector body")),
             )
             .alignment(PopoverAlignment::End)
             .open(true),
@@ -673,17 +670,17 @@ fn popover_surface_escapes_a_tight_toolbar_slot() {
         crate::SizedBox::new()
             .width(800.0)
             .height(600.0)
-            .with_child(crate::Align::new(
+            .child(crate::Align::new(
                 Alignment::End,
                 Alignment::Start,
-                crate::SizedBox::new().width(150.0).height(24.0).with_child(
+                crate::SizedBox::new().width(150.0).height(24.0).child(
                     Popover::new(
                         "Toolbar recovery",
                         crate::Button::new("2 issues").min_width(150.0),
                         crate::SizedBox::new()
                             .width(400.0)
                             .height(300.0)
-                            .with_child(crate::Label::new("Recovery panel")),
+                            .child(crate::Label::new("Recovery panel")),
                     )
                     .alignment(PopoverAlignment::End)
                     .open(true),
@@ -1453,41 +1450,37 @@ fn density_modes_resize_composite_status_widgets() {
 #[test]
 fn composite_focus_rings_use_theme_motion() -> Result<(), String> {
     assert_focus_ring_uses_theme_motion(
-        crate::SizedBox::new()
-            .size(Size::new(112.0, 44.0))
-            .with_child(
-                ToolPalette::horizontal("Tools")
-                    .items([
-                        ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush"),
-                        ToolPaletteItem::new(crate::IconGlyph::Eraser, "Erase"),
-                    ])
-                    .selected(0),
-            ),
+        crate::SizedBox::new().size(Size::new(112.0, 44.0)).child(
+            ToolPalette::horizontal("Tools")
+                .items([
+                    ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush"),
+                    ToolPaletteItem::new(crate::IconGlyph::Eraser, "Erase"),
+                ])
+                .selected(0),
+        ),
         Point::new(18.0, 18.0),
     )?;
 
     assert_focus_ring_uses_theme_motion(
         crate::SizedBox::new()
             .size(Size::new(260.0, 92.0))
-            .with_child(ActionCard::new("Paint", "Pixel canvas workspace")),
+            .child(ActionCard::new("Paint", "Pixel canvas workspace")),
         Point::new(18.0, 18.0),
     )?;
 
     assert_focus_ring_uses_theme_motion(
         crate::SizedBox::new()
             .size(Size::new(240.0, 40.0))
-            .with_child(PresetStrip::new("Brush presets").presets(["8 px", "18 px"])),
+            .child(PresetStrip::new("Brush presets").presets(["8 px", "18 px"])),
         Point::new(24.0, 18.0),
     )?;
 
     assert_focus_ring_uses_theme_motion(
-        crate::SizedBox::new()
-            .size(Size::new(260.0, 92.0))
-            .with_child(
-                PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
-                    .collapsible(true)
-                    .collapsed(),
-            ),
+        crate::SizedBox::new().size(Size::new(260.0, 92.0)).child(
+            PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
+                .collapsible(true)
+                .collapsed(),
+        ),
         Point::new(24.0, 18.0),
     )?;
 
@@ -1506,7 +1499,7 @@ fn composite_focus_rings_use_theme_motion() -> Result<(), String> {
     assert_focus_ring_uses_theme_motion(
         crate::SizedBox::new()
             .size(Size::new(640.0, 420.0))
-            .with_child(Dialog::new(
+            .child(Dialog::new(
                 "Confirm",
                 crate::Label::new("Apply the change?"),
             )),
@@ -1590,12 +1583,12 @@ fn detail_row_wraps_metadata_and_exposes_value_semantics() {
     let narrow = render(
         crate::SizedBox::new()
             .width(140.0)
-            .with_child(DetailRow::new("Placement", value).theme(theme)),
+            .child(DetailRow::new("Placement", value).theme(theme)),
     );
     let wide = render(
         crate::SizedBox::new()
             .width(360.0)
-            .with_child(DetailRow::new("Placement", value).theme(theme)),
+            .child(DetailRow::new("Placement", value).theme(theme)),
     );
 
     assert!(
@@ -1687,7 +1680,7 @@ fn section_and_detail_row_styles_preserve_compact_token_line_heights() {
 fn section_label_uses_micro_label_token_and_text_semantics() {
     let theme = DefaultTheme::default();
     let output = render(
-        crate::SizedBox::new().width(120.0).height(18.0).with_child(
+        crate::SizedBox::new().width(120.0).height(18.0).child(
             SectionLabel::new("file tasks")
                 .semantic_name("File tasks")
                 .theme(theme),
@@ -2140,7 +2133,7 @@ fn action_tile_paint_supports_surface_overrides_and_reserved_slots() {
             .title_color(theme.palette.text)
             .subtitle_color(theme.surfaces.text_faint)
             .icon_color(theme.palette.accent)
-            .radius(theme.radius.xl)
+            .corner_radius(theme.radius.xl)
             .padding_x(12.0)
             .leading_width(18.0)
             .trailing_width(48.0),
@@ -2499,16 +2492,14 @@ fn placement_badge_paint_applies_cell_padding() {
 #[test]
 fn action_card_exposes_accessible_description() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(320.0, 104.0))
-            .with_child(
-                ActionCard::new(
-                    "Paint",
-                    "Pixel canvas painting workspace with editor-style panels.",
-                )
-                .icon(crate::IconGlyph::Brush)
-                .accent(Color::rgba(0.80, 0.22, 0.44, 1.0)),
-            ),
+        crate::SizedBox::new().size(Size::new(320.0, 104.0)).child(
+            ActionCard::new(
+                "Paint",
+                "Pixel canvas painting workspace with editor-style panels.",
+            )
+            .icon(crate::IconGlyph::Brush)
+            .accent(Color::rgba(0.80, 0.22, 0.44, 1.0)),
+        ),
     );
 
     let card = output
@@ -2535,13 +2526,11 @@ fn action_card_exposes_accessible_description() {
 fn action_card_text_visual_centers_match_title_and_description_slots() {
     let theme = DefaultTheme::default();
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(320.0, 104.0))
-            .with_child(
-                ActionCard::new("Paint", "Pixel canvas workspace")
-                    .theme(theme)
-                    .icon(crate::IconGlyph::Brush),
-            ),
+        crate::SizedBox::new().size(Size::new(320.0, 104.0)).child(
+            ActionCard::new("Paint", "Pixel canvas workspace")
+                .theme(theme)
+                .icon(crate::IconGlyph::Brush),
+        ),
     );
     let card = output
         .semantics
@@ -2601,13 +2590,10 @@ fn action_card_text_visual_centers_match_title_and_description_slots() {
 #[test]
 fn action_card_multiline_description_stays_inside_clip_slot() {
     let description = "Catalog of controls, containers, media, and text surfaces.";
-    let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(360.0, 104.0))
-            .with_child(
-                ActionCard::new("Widget book", description).icon(crate::IconGlyph::MoreHorizontal),
-            ),
-    );
+    let output =
+        render(crate::SizedBox::new().size(Size::new(360.0, 104.0)).child(
+            ActionCard::new("Widget book", description).icon(crate::IconGlyph::MoreHorizontal),
+        ));
     let run = text_run_for(&output, description);
     let clip = clip_rect_for_text(&output, description);
     let layout = TextSystem::new()
@@ -2644,13 +2630,11 @@ fn action_card_text_preserves_tall_measurements_in_compact_line_boxes() {
         line_height: 12.0,
     };
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(360.0, 148.0))
-            .with_child(
-                ActionCard::new("Paint", "Glyph box")
-                    .theme(theme)
-                    .icon(crate::IconGlyph::Brush),
-            ),
+        crate::SizedBox::new().size(Size::new(360.0, 148.0)).child(
+            ActionCard::new("Paint", "Glyph box")
+                .theme(theme)
+                .icon(crate::IconGlyph::Brush),
+        ),
     );
     let card = output
         .semantics
@@ -2756,7 +2740,7 @@ fn composite_default_text_styles_follow_theme_text_tokens() {
     let action_card = render(
         crate::SizedBox::new()
             .size(Size::new(320.0, 112.0))
-            .with_child(ActionCard::new("Token action", "Token action detail").theme(theme)),
+            .child(ActionCard::new("Token action", "Token action detail").theme(theme)),
     );
     assert_text_run_uses_token(&text_run_for(&action_card, "Token action"), theme.text.base);
     assert_text_run_uses_token(
@@ -2765,13 +2749,11 @@ fn composite_default_text_styles_follow_theme_text_tokens() {
     );
 
     let property_row = render(
-        crate::SizedBox::new()
-            .size(Size::new(320.0, 64.0))
-            .with_child(
-                PropertyRow::new("Token property", crate::Button::new("Edit"))
-                    .theme(theme)
-                    .inline(),
-            ),
+        crate::SizedBox::new().size(Size::new(320.0, 64.0)).child(
+            PropertyRow::new("Token property", crate::Button::new("Edit"))
+                .theme(theme)
+                .inline(),
+        ),
     );
     assert_text_run_uses_token(
         &text_run_for(&property_row, "Token property"),
@@ -2779,13 +2761,11 @@ fn composite_default_text_styles_follow_theme_text_tokens() {
     );
 
     let form_section = render(
-        crate::SizedBox::new()
-            .size(Size::new(360.0, 140.0))
-            .with_child(
-                FormSection::new("Token section", crate::Button::new("Apply"))
-                    .theme(theme)
-                    .description("Token section detail"),
-            ),
+        crate::SizedBox::new().size(Size::new(360.0, 140.0)).child(
+            FormSection::new("Token section", crate::Button::new("Apply"))
+                .theme(theme)
+                .description("Token section detail"),
+        ),
     );
     assert_text_run_uses_token(&text_run_for(&form_section, "Token section"), theme.text.sm);
     assert_text_run_uses_token(
@@ -2794,13 +2774,11 @@ fn composite_default_text_styles_follow_theme_text_tokens() {
     );
 
     let preset_strip = render(
-        crate::SizedBox::new()
-            .size(Size::new(240.0, 44.0))
-            .with_child(
-                PresetStrip::new("Brush")
-                    .theme(theme)
-                    .preset("Token preset"),
-            ),
+        crate::SizedBox::new().size(Size::new(240.0, 44.0)).child(
+            PresetStrip::new("Brush")
+                .theme(theme)
+                .preset("Token preset"),
+        ),
     );
     assert_text_run_uses_token(
         &text_run_for(&preset_strip, "Token preset"),
@@ -2850,7 +2828,7 @@ fn composite_default_text_styles_follow_theme_text_tokens() {
     let status_bar = render(
         crate::SizedBox::new()
             .size(Size::new(240.0, 32.0))
-            .with_child(StatusBar::new().theme(theme).text_segment("Token status")),
+            .child(StatusBar::new().theme(theme).text_segment("Token status")),
     );
     assert_text_run_uses_token(&text_run_for(&status_bar, "Token status"), theme.text.xs);
 }
@@ -2858,13 +2836,11 @@ fn composite_default_text_styles_follow_theme_text_tokens() {
 #[test]
 fn preset_strip_exposes_selected_preset_semantics() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(220.0, 32.0))
-            .with_child(
-                PresetStrip::new("Brush presets")
-                    .presets(["8 px", "18 px", "36 px"])
-                    .selected(1),
-            ),
+        crate::SizedBox::new().size(Size::new(220.0, 32.0)).child(
+            PresetStrip::new("Brush presets")
+                .presets(["8 px", "18 px", "36 px"])
+                .selected(1),
+        ),
     );
 
     let strip = output
@@ -2894,13 +2870,11 @@ fn preset_strip_exposes_selected_preset_semantics() {
 fn preset_strip_label_clips_to_padded_item_slot() {
     let theme = DefaultTheme::default();
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(220.0, 40.0))
-            .with_child(
-                PresetStrip::new("Brush presets")
-                    .item_width(180.0)
-                    .preset("Soft"),
-            ),
+        crate::SizedBox::new().size(Size::new(220.0, 40.0)).child(
+            PresetStrip::new("Brush presets")
+                .item_width(180.0)
+                .preset("Soft"),
+        ),
     );
     let preset = output
         .semantics
@@ -2931,15 +2905,13 @@ fn preset_strip_label_preserves_tall_measurements_and_item_centering() {
     theme.sync_derived_fields();
 
     let output = render_isolated(
-        crate::SizedBox::new()
-            .size(Size::new(240.0, 56.0))
-            .with_child(
-                PresetStrip::new("Brush presets")
-                    .theme(theme)
-                    .item_height(56.0)
-                    .item_width(180.0)
-                    .preset("Soft"),
-            ),
+        crate::SizedBox::new().size(Size::new(240.0, 56.0)).child(
+            PresetStrip::new("Brush presets")
+                .theme(theme)
+                .item_height(56.0)
+                .item_width(180.0)
+                .preset("Soft"),
+        ),
     );
     let preset = output
         .semantics
@@ -2965,16 +2937,14 @@ fn preset_strip_pointer_activation_updates_selection() -> sui_core::Result<()> {
     let chosen = Rc::new(RefCell::new(None));
     let chosen_writer = Rc::clone(&chosen);
     let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .size(Size::new(220.0, 32.0))
-            .with_child(
-                PresetStrip::new("Brush presets")
-                    .presets(["8 px", "18 px", "36 px"])
-                    .selected(0)
-                    .on_change(move |index, label| {
-                        *chosen_writer.borrow_mut() = Some((index, label));
-                    }),
-            ),
+        crate::SizedBox::new().size(Size::new(220.0, 32.0)).child(
+            PresetStrip::new("Brush presets")
+                .presets(["8 px", "18 px", "36 px"])
+                .selected(0)
+                .on_change(move |index, label| {
+                    *chosen_writer.borrow_mut() = Some((index, label));
+                }),
+        ),
     );
     let output = runtime.render(window_id)?;
     let preset = output
@@ -3025,13 +2995,11 @@ fn preset_strip_hover_and_press_use_theme_motion() -> Result<(), String> {
         theme.interaction.pressed_blend,
     );
     let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .size(Size::new(220.0, 32.0))
-            .with_child(
-                PresetStrip::new("Brush presets")
-                    .theme(theme)
-                    .presets(["8 px", "18 px", "36 px"]),
-            ),
+        crate::SizedBox::new().size(Size::new(220.0, 32.0)).child(
+            PresetStrip::new("Brush presets")
+                .theme(theme)
+                .presets(["8 px", "18 px", "36 px"]),
+        ),
     );
     let output = runtime
         .render(window_id)
@@ -3209,7 +3177,7 @@ fn compact_coverage_keeps_the_exact_count_on_one_line() {
                 SizedBox::new()
                     .width(width)
                     .height(28.0)
-                    .with_child(CoverageDots::new("Replicas", count, count)),
+                    .child(CoverageDots::new("Replicas", count, count)),
             );
             let text = format!("{count}/{count}");
             let layout = text_layout_for(&output, &text);
@@ -3282,13 +3250,11 @@ fn status_bar_numeric_segments_use_tabular_figures_without_forcing_plain_labels(
 #[test]
 fn status_bar_segment_text_visual_center_matches_segment_center() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(220.0, 40.0))
-            .with_child(
-                StatusBar::new()
-                    .height(40.0)
-                    .segment(StatusBarSegment::new("Ready").min_width(96.0)),
-            ),
+        crate::SizedBox::new().size(Size::new(220.0, 40.0)).child(
+            StatusBar::new()
+                .height(40.0)
+                .segment(StatusBarSegment::new("Ready").min_width(96.0)),
+        ),
     );
     let text = text_run_for(&output, "Ready");
     let layout = TextSystem::new()
@@ -3319,15 +3285,13 @@ fn status_bar_segments_preserve_tall_measurements_and_numeric_features() {
     };
     theme.metrics.status_bar_height = 52.0;
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(360.0, 52.0))
-            .with_child(
-                StatusBar::new()
-                    .theme(theme)
-                    .height(52.0)
-                    .segment(StatusBarSegment::new("Ready").min_width(120.0))
-                    .segment(StatusBarSegment::new("Zoom 35%").min_width(140.0)),
-            ),
+        crate::SizedBox::new().size(Size::new(360.0, 52.0)).child(
+            StatusBar::new()
+                .theme(theme)
+                .height(52.0)
+                .segment(StatusBarSegment::new("Ready").min_width(120.0))
+                .segment(StatusBarSegment::new("Zoom 35%").min_width(140.0)),
+        ),
     );
     for label in ["Ready", "Zoom 35%"] {
         let text = text_run_for(&output, label);
@@ -3367,18 +3331,16 @@ fn status_bar_segments_preserve_tall_measurements_and_numeric_features() {
 #[test]
 fn horizontal_toolbar_centers_children_and_exposes_group_semantics() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(320.0, 52.0))
-            .with_child(
-                Toolbar::horizontal()
-                    .name("Editor toolbar")
-                    .with_child(crate::Button::new("Fit").min_width(48.0).min_height(32.0))
-                    .with_child(
-                        crate::Button::new("Export")
-                            .min_width(72.0)
-                            .min_height(32.0),
-                    ),
-            ),
+        crate::SizedBox::new().size(Size::new(320.0, 52.0)).child(
+            Toolbar::horizontal()
+                .name("Editor toolbar")
+                .with_child(crate::Button::new("Fit").min_width(48.0).min_height(32.0))
+                .with_child(
+                    crate::Button::new("Export")
+                        .min_width(72.0)
+                        .min_height(32.0),
+                ),
+        ),
     );
 
     let toolbar = output
@@ -3404,22 +3366,20 @@ fn horizontal_toolbar_centers_children_and_exposes_group_semantics() {
 fn command_group_keeps_natural_size_and_exposes_group_semantics() {
     let theme = DefaultTheme::default();
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(320.0, 48.0))
-            .with_child(
-                Toolbar::horizontal()
-                    .name("Editor toolbar")
-                    .padding(sui_layout::Padding::all(4.0))
-                    .with_child(
-                        CommandGroup::horizontal("History commands")
-                            .with_child(
-                                crate::IconButton::new(crate::IconGlyph::Undo, "Undo").size(28.0),
-                            )
-                            .with_child(
-                                crate::IconButton::new(crate::IconGlyph::Redo, "Redo").size(28.0),
-                            ),
-                    ),
-            ),
+        crate::SizedBox::new().size(Size::new(320.0, 48.0)).child(
+            Toolbar::horizontal()
+                .name("Editor toolbar")
+                .padding(sui_layout::Padding::all(4.0))
+                .with_child(
+                    CommandGroup::horizontal("History commands")
+                        .with_child(
+                            crate::IconButton::new(crate::IconGlyph::Undo, "Undo").size(28.0),
+                        )
+                        .with_child(
+                            crate::IconButton::new(crate::IconGlyph::Redo, "Redo").size(28.0),
+                        ),
+                ),
+        ),
     );
 
     let group = output
@@ -3463,19 +3423,17 @@ fn command_group_keeps_natural_size_and_exposes_group_semantics() {
 #[test]
 fn vertical_toolbar_uses_fixed_extent_and_centers_children() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(80.0, 180.0))
-            .with_child(
-                Toolbar::vertical()
-                    .name("Paint tools")
-                    .extent(60.0)
-                    .with_child(
-                        crate::IconButton::new(crate::IconGlyph::Brush, "Brush tool").size(44.0),
-                    )
-                    .with_child(
-                        crate::IconButton::new(crate::IconGlyph::Eraser, "Eraser tool").size(44.0),
-                    ),
-            ),
+        crate::SizedBox::new().size(Size::new(80.0, 180.0)).child(
+            Toolbar::vertical()
+                .name("Paint tools")
+                .extent(60.0)
+                .with_child(
+                    crate::IconButton::new(crate::IconGlyph::Brush, "Brush tool").size(44.0),
+                )
+                .with_child(
+                    crate::IconButton::new(crate::IconGlyph::Eraser, "Eraser tool").size(44.0),
+                ),
+        ),
     );
 
     let toolbar = output
@@ -3502,17 +3460,15 @@ fn vertical_toolbar_uses_fixed_extent_and_centers_children() {
 #[test]
 fn tool_palette_exposes_selected_tool_semantics() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(64.0, 180.0))
-            .with_child(
-                ToolPalette::vertical("Paint tools")
-                    .items([
-                        ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush tool"),
-                        ToolPaletteItem::new(crate::IconGlyph::Eraser, "Eraser tool"),
-                        ToolPaletteItem::new(crate::IconGlyph::PaintBucket, "Fill tool"),
-                    ])
-                    .selected(1),
-            ),
+        crate::SizedBox::new().size(Size::new(64.0, 180.0)).child(
+            ToolPalette::vertical("Paint tools")
+                .items([
+                    ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush tool"),
+                    ToolPaletteItem::new(crate::IconGlyph::Eraser, "Eraser tool"),
+                    ToolPaletteItem::new(crate::IconGlyph::PaintBucket, "Fill tool"),
+                ])
+                .selected(1),
+        ),
     );
 
     let palette = output
@@ -3546,20 +3502,18 @@ fn tool_palette_pointer_activation_updates_selection() -> sui_core::Result<()> {
     let chosen = Rc::new(RefCell::new(None));
     let chosen_writer = Rc::clone(&chosen);
     let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .size(Size::new(64.0, 180.0))
-            .with_child(
-                ToolPalette::vertical("Paint tools")
-                    .items([
-                        ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush tool"),
-                        ToolPaletteItem::new(crate::IconGlyph::Eraser, "Eraser tool"),
-                        ToolPaletteItem::new(crate::IconGlyph::PaintBucket, "Fill tool"),
-                    ])
-                    .selected(0)
-                    .on_change(move |index, label| {
-                        *chosen_writer.borrow_mut() = Some((index, label));
-                    }),
-            ),
+        crate::SizedBox::new().size(Size::new(64.0, 180.0)).child(
+            ToolPalette::vertical("Paint tools")
+                .items([
+                    ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush tool"),
+                    ToolPaletteItem::new(crate::IconGlyph::Eraser, "Eraser tool"),
+                    ToolPaletteItem::new(crate::IconGlyph::PaintBucket, "Fill tool"),
+                ])
+                .selected(0)
+                .on_change(move |index, label| {
+                    *chosen_writer.borrow_mut() = Some((index, label));
+                }),
+        ),
     );
     let output = runtime.render(window_id)?;
     let fill = output
@@ -3605,15 +3559,14 @@ fn tool_palette_hover_and_press_use_theme_motion() -> Result<(), String> {
         theme.palette.control_active,
         theme.interaction.pressed_blend,
     );
-    let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .size(Size::new(64.0, 180.0))
-            .with_child(ToolPalette::vertical("Paint tools").theme(theme).items([
+    let (mut runtime, window_id) =
+        build_runtime(crate::SizedBox::new().size(Size::new(64.0, 180.0)).child(
+            ToolPalette::vertical("Paint tools").theme(theme).items([
                 ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush tool"),
                 ToolPaletteItem::new(crate::IconGlyph::Eraser, "Eraser tool"),
                 ToolPaletteItem::new(crate::IconGlyph::PaintBucket, "Fill tool"),
-            ])),
-    );
+            ]),
+        ));
     let output = runtime
         .render(window_id)
         .map_err(|error| error.to_string())?;
@@ -3681,20 +3634,18 @@ fn tool_palette_keyboard_moves_between_tools() -> sui_core::Result<()> {
     let chosen = Rc::new(RefCell::new(Vec::new()));
     let chosen_writer = Rc::clone(&chosen);
     let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .size(Size::new(64.0, 180.0))
-            .with_child(
-                ToolPalette::vertical("Paint tools")
-                    .items([
-                        ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush tool"),
-                        ToolPaletteItem::new(crate::IconGlyph::Eraser, "Eraser tool"),
-                        ToolPaletteItem::new(crate::IconGlyph::PaintBucket, "Fill tool"),
-                    ])
-                    .selected(0)
-                    .on_change(move |index, label| {
-                        chosen_writer.borrow_mut().push((index, label));
-                    }),
-            ),
+        crate::SizedBox::new().size(Size::new(64.0, 180.0)).child(
+            ToolPalette::vertical("Paint tools")
+                .items([
+                    ToolPaletteItem::new(crate::IconGlyph::Brush, "Brush tool"),
+                    ToolPaletteItem::new(crate::IconGlyph::Eraser, "Eraser tool"),
+                    ToolPaletteItem::new(crate::IconGlyph::PaintBucket, "Fill tool"),
+                ])
+                .selected(0)
+                .on_change(move |index, label| {
+                    chosen_writer.borrow_mut().push((index, label));
+                }),
+        ),
     );
     let output = runtime.render(window_id)?;
     let brush = output
@@ -3734,14 +3685,9 @@ fn tool_palette_keyboard_moves_between_tools() -> sui_core::Result<()> {
 
 #[test]
 fn property_row_stacked_exposes_label_and_control_semantics() {
-    let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(320.0, 72.0))
-            .with_child(
-                PropertyRow::new("Brush size", crate::NumberInput::new("Brush size"))
-                    .control_width(120.0),
-            ),
-    );
+    let output = render(crate::SizedBox::new().size(Size::new(320.0, 72.0)).child(
+        PropertyRow::new("Brush size", crate::NumberInput::new("Brush size")).control_width(120.0),
+    ));
 
     let row = output
         .semantics
@@ -3773,13 +3719,11 @@ fn property_row_stacked_exposes_label_and_control_semantics() {
 fn property_row_inline_arranges_control_after_label() {
     let theme = DefaultTheme::default();
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(320.0, 36.0))
-            .with_child(
-                PropertyRow::new("Opacity", crate::Slider::new("Opacity"))
-                    .layout(PropertyRowLayout::Inline)
-                    .label_width(96.0),
-            ),
+        crate::SizedBox::new().size(Size::new(320.0, 36.0)).child(
+            PropertyRow::new("Opacity", crate::Slider::new("Opacity"))
+                .layout(PropertyRowLayout::Inline)
+                .label_width(96.0),
+        ),
     );
 
     let label = output
@@ -3800,13 +3744,11 @@ fn property_row_inline_arranges_control_after_label() {
 #[test]
 fn property_row_inline_label_visual_center_matches_row_center() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(320.0, 36.0))
-            .with_child(
-                PropertyRow::new("Opacity", crate::Slider::new("Opacity"))
-                    .layout(PropertyRowLayout::Inline)
-                    .label_width(96.0),
-            ),
+        crate::SizedBox::new().size(Size::new(320.0, 36.0)).child(
+            PropertyRow::new("Opacity", crate::Slider::new("Opacity"))
+                .layout(PropertyRowLayout::Inline)
+                .label_width(96.0),
+        ),
     );
     let text = text_run_for(&output, "Opacity");
     let layout = TextSystem::new()
@@ -3827,19 +3769,17 @@ fn property_row_inline_label_visual_center_matches_row_center() {
 fn property_row_numeric_control_aligns_value_to_control_edge() {
     let theme = DefaultTheme::default();
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(320.0, 36.0))
-            .with_child(
-                PropertyRow::new(
-                    "Brush size",
-                    crate::NumberInput::new("Brush size")
-                        .precision(0)
-                        .value(128.0),
-                )
-                .layout(PropertyRowLayout::Inline)
-                .label_width(96.0)
-                .control_width(120.0),
-            ),
+        crate::SizedBox::new().size(Size::new(320.0, 36.0)).child(
+            PropertyRow::new(
+                "Brush size",
+                crate::NumberInput::new("Brush size")
+                    .precision(0)
+                    .value(128.0),
+            )
+            .layout(PropertyRowLayout::Inline)
+            .label_width(96.0)
+            .control_width(120.0),
+        ),
     );
     let value = text_run_for(&output, "128");
     let label = text_run_for(&output, "Brush size");
@@ -3884,21 +3824,19 @@ fn property_row_inline_label_preserves_tall_metrics_with_numeric_control() {
     theme.sync_derived_fields();
     theme.metrics.min_height = 56.0;
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(380.0, 64.0))
-            .with_child(
-                PropertyRow::new(
-                    "Brush size",
-                    crate::NumberInput::new("Brush size")
-                        .theme(theme)
-                        .precision(0)
-                        .value(128.0),
-                )
-                .theme(theme)
-                .layout(PropertyRowLayout::Inline)
-                .label_width(132.0)
-                .control_width(150.0),
-            ),
+        crate::SizedBox::new().size(Size::new(380.0, 64.0)).child(
+            PropertyRow::new(
+                "Brush size",
+                crate::NumberInput::new("Brush size")
+                    .theme(theme)
+                    .precision(0)
+                    .value(128.0),
+            )
+            .theme(theme)
+            .layout(PropertyRowLayout::Inline)
+            .label_width(132.0)
+            .control_width(150.0),
+        ),
     );
     let label = text_run_for(&output, "Brush size");
     let label_layout = TextSystem::new()
@@ -3942,7 +3880,7 @@ fn form_row_control_uses_full_available_width_by_default() {
     let output = render(
         crate::SizedBox::new()
             .size(Size::new(width, 36.0))
-            .with_child(FormRow::new(
+            .child(FormRow::new(
                 "Model",
                 crate::TextInput::new("provider-model"),
             )),
@@ -3966,20 +3904,18 @@ fn form_row_control_uses_full_available_width_by_default() {
 #[test]
 fn form_section_bounds_grouped_rows_and_exposes_semantics() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(900.0, 180.0))
-            .with_child(
-                FormSection::new(
-                    "Providers",
-                    FieldGroup::new()
-                        .with_child(FormRow::new("API key", crate::Label::new("Configured")))
-                        .with_child(FormRow::new(
-                            "Default model",
-                            crate::Label::new("Provider default"),
-                        )),
-                )
-                .description("Credentials and model defaults"),
-            ),
+        crate::SizedBox::new().size(Size::new(900.0, 180.0)).child(
+            FormSection::new(
+                "Providers",
+                FieldGroup::new()
+                    .with_child(FormRow::new("API key", crate::Label::new("Configured")))
+                    .with_child(FormRow::new(
+                        "Default model",
+                        crate::Label::new("Provider default"),
+                    )),
+            )
+            .description("Credentials and model defaults"),
+        ),
     );
 
     let theme = DefaultTheme::default();
@@ -4022,18 +3958,16 @@ fn form_section_bounds_grouped_rows_and_exposes_semantics() {
 fn form_section_header_text_block_centers_against_tall_header_action() {
     let theme = DefaultTheme::default();
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(420.0, 140.0))
-            .with_child(
-                FormSection::new("Providers", crate::Label::new("Configured"))
-                    .theme(theme)
-                    .description("Credentials and defaults")
-                    .header_action(
-                        crate::SizedBox::new()
-                            .size(Size::new(76.0, 52.0))
-                            .with_child(crate::Label::new("Sync")),
-                    ),
-            ),
+        crate::SizedBox::new().size(Size::new(420.0, 140.0)).child(
+            FormSection::new("Providers", crate::Label::new("Configured"))
+                .theme(theme)
+                .description("Credentials and defaults")
+                .header_action(
+                    crate::SizedBox::new()
+                        .size(Size::new(76.0, 52.0))
+                        .child(crate::Label::new("Sync")),
+                ),
+        ),
     );
     let section = output
         .semantics
@@ -4106,18 +4040,16 @@ fn form_section_header_text_preserves_tall_measurements_in_compact_line_boxes() 
     theme.sync_derived_fields();
 
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(460.0, 190.0))
-            .with_child(
-                FormSection::new("Providers", crate::Label::new("Configured"))
-                    .theme(theme)
-                    .description("Credentials and defaults")
-                    .header_action(
-                        crate::SizedBox::new()
-                            .size(Size::new(76.0, 52.0))
-                            .with_child(crate::Label::new("Sync")),
-                    ),
-            ),
+        crate::SizedBox::new().size(Size::new(460.0, 190.0)).child(
+            FormSection::new("Providers", crate::Label::new("Configured"))
+                .theme(theme)
+                .description("Credentials and defaults")
+                .header_action(
+                    crate::SizedBox::new()
+                        .size(Size::new(76.0, 52.0))
+                        .child(crate::Label::new("Sync")),
+                ),
+        ),
     );
     let section = output
         .semantics
@@ -4177,7 +4109,7 @@ fn panel_section_exposes_group_title_and_child_semantics() {
     let output = render(
         crate::SizedBox::new()
             .size(Size::new(240.0, 92.0))
-            .with_child(PanelSection::new("Brush", crate::Label::new("Opacity"))),
+            .child(PanelSection::new("Brush", crate::Label::new("Opacity"))),
     );
 
     let section = output
@@ -4208,12 +4140,10 @@ fn panel_section_exposes_group_title_and_child_semantics() {
 #[test]
 fn panel_section_header_action_is_arranged_after_title() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(240.0, 92.0))
-            .with_child(
-                PanelSection::new("Layers", crate::Label::new("Paint"))
-                    .header_action(crate::IconButton::new(crate::IconGlyph::Add, "Add layer")),
-            ),
+        crate::SizedBox::new().size(Size::new(240.0, 92.0)).child(
+            PanelSection::new("Layers", crate::Label::new("Paint"))
+                .header_action(crate::IconButton::new(crate::IconGlyph::Add, "Add layer")),
+        ),
     );
 
     let section = output
@@ -4252,12 +4182,10 @@ fn panel_section_header_action_is_arranged_after_title() {
 #[test]
 fn panel_section_title_visual_center_matches_title_slot_center() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(240.0, 92.0))
-            .with_child(
-                PanelSection::new("Layers", crate::Label::new("Paint"))
-                    .header_action(crate::IconButton::new(crate::IconGlyph::Add, "Add layer")),
-            ),
+        crate::SizedBox::new().size(Size::new(240.0, 92.0)).child(
+            PanelSection::new("Layers", crate::Label::new("Paint"))
+                .header_action(crate::IconButton::new(crate::IconGlyph::Add, "Add layer")),
+        ),
     );
     let section = output
         .semantics
@@ -4300,13 +4228,11 @@ fn panel_section_title_preserves_tall_measurement_and_header_centering() {
     theme.sync_derived_fields();
 
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(280.0, 120.0))
-            .with_child(
-                PanelSection::new("Layers", crate::Label::new("Paint"))
-                    .theme(theme)
-                    .header_action(crate::IconButton::new(crate::IconGlyph::Add, "Add layer")),
-            ),
+        crate::SizedBox::new().size(Size::new(280.0, 120.0)).child(
+            PanelSection::new("Layers", crate::Label::new("Paint"))
+                .theme(theme)
+                .header_action(crate::IconButton::new(crate::IconGlyph::Add, "Add layer")),
+        ),
     );
     let section = output
         .semantics
@@ -4339,13 +4265,11 @@ fn panel_section_title_preserves_tall_measurement_and_header_centering() {
 #[test]
 fn collapsible_panel_section_hides_collapsed_child_semantics() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(240.0, 92.0))
-            .with_child(
-                PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
-                    .collapsible(true)
-                    .collapsed(),
-            ),
+        crate::SizedBox::new().size(Size::new(240.0, 92.0)).child(
+            PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
+                .collapsible(true)
+                .collapsed(),
+        ),
     );
 
     let section = output
@@ -4371,13 +4295,11 @@ fn collapsible_panel_section_hides_collapsed_child_semantics() {
 #[test]
 fn collapsible_panel_section_pointer_toggle_exposes_child() -> sui_core::Result<()> {
     let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .size(Size::new(240.0, 120.0))
-            .with_child(
-                PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
-                    .collapsible(true)
-                    .collapsed(),
-            ),
+        crate::SizedBox::new().size(Size::new(240.0, 120.0)).child(
+            PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
+                .collapsible(true)
+                .collapsed(),
+        ),
     );
     let output = runtime.render(window_id)?;
     let section = output
@@ -4439,14 +4361,12 @@ fn collapsible_panel_section_header_motion_uses_theme_motion() -> Result<(), Str
         .text
         .with_alpha((theme.interaction.selected_blend * 0.48).min(0.14));
     let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .size(Size::new(240.0, 120.0))
-            .with_child(
-                PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
-                    .theme(theme)
-                    .collapsible(true)
-                    .collapsed(),
-            ),
+        crate::SizedBox::new().size(Size::new(240.0, 120.0)).child(
+            PanelSection::new("Advanced color", crate::Label::new("RGB sliders"))
+                .theme(theme)
+                .collapsible(true)
+                .collapsed(),
+        ),
     );
     let output = runtime
         .render(window_id)
@@ -4514,13 +4434,11 @@ fn panel_section_title_id_is_javascript_safe() {
 #[test]
 fn dock_panel_exposes_title_and_arranges_child_below_header() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(280.0, 160.0))
-            .with_child(
-                DockPanel::new("Tool properties", crate::Label::new("Brush size"))
-                    .name("Inspector")
-                    .padding(sui_layout::Padding::all(8.0)),
-            ),
+        crate::SizedBox::new().size(Size::new(280.0, 160.0)).child(
+            DockPanel::new("Tool properties", crate::Label::new("Brush size"))
+                .name("Inspector")
+                .padding(sui_layout::Padding::all(8.0)),
+        ),
     );
 
     let panel = output
@@ -4560,15 +4478,13 @@ fn dock_panel_exposes_title_and_arranges_child_below_header() {
 fn empty_state_exposes_content_and_action_semantics() {
     let theme = DefaultTheme::default();
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(320.0, 220.0))
-            .with_child(
-                EmptyState::new("Empty directory", "Nothing here yet.")
-                    .theme(theme)
-                    .icon(crate::IconGlyph::Folder)
-                    .detail("No files matched the active filter.")
-                    .action(crate::Button::new("Create file").theme(theme)),
-            ),
+        crate::SizedBox::new().size(Size::new(320.0, 220.0)).child(
+            EmptyState::new("Empty directory", "Nothing here yet.")
+                .theme(theme)
+                .icon(crate::IconGlyph::Folder)
+                .detail("No files matched the active filter.")
+                .action(crate::Button::new("Create file").theme(theme)),
+        ),
     );
 
     let state = output
@@ -4627,13 +4543,11 @@ fn empty_state_exposes_content_and_action_semantics() {
 #[test]
 fn dock_panel_title_visual_center_matches_header_title_slot_center() {
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(280.0, 160.0))
-            .with_child(
-                DockPanel::new("Tool properties", crate::Label::new("Brush size"))
-                    .name("Inspector")
-                    .padding(sui_layout::Padding::all(8.0)),
-            ),
+        crate::SizedBox::new().size(Size::new(280.0, 160.0)).child(
+            DockPanel::new("Tool properties", crate::Label::new("Brush size"))
+                .name("Inspector")
+                .padding(sui_layout::Padding::all(8.0)),
+        ),
     );
     let panel = output
         .semantics
@@ -4678,14 +4592,12 @@ fn dock_panel_title_preserves_tall_measurement_and_header_centering() {
     theme.metrics.dock_panel_header_height = 52.0;
 
     let output = render(
-        crate::SizedBox::new()
-            .size(Size::new(300.0, 180.0))
-            .with_child(
-                DockPanel::new("Tool properties", crate::Label::new("Brush size"))
-                    .theme(theme)
-                    .name("Inspector")
-                    .padding(sui_layout::Padding::all(8.0)),
-            ),
+        crate::SizedBox::new().size(Size::new(300.0, 180.0)).child(
+            DockPanel::new("Tool properties", crate::Label::new("Brush size"))
+                .theme(theme)
+                .name("Inspector")
+                .padding(sui_layout::Padding::all(8.0)),
+        ),
     );
     let panel = output
         .semantics
@@ -4728,7 +4640,7 @@ fn status_bar_host_reserves_footer_height() {
     let output = render(
         crate::SizedBox::new()
             .size(Size::new(320.0, 160.0))
-            .with_child(StatusBarHost::new(
+            .child(StatusBarHost::new(
                 crate::Label::new("Canvas content"),
                 StatusBar::new()
                     .name("Editor status")
@@ -5445,15 +5357,13 @@ fn tab_widgets_focus_highlights_selected_tab_button() -> Result<(), String> {
         18.0,
     );
     let (mut tabs_runtime, tabs_window) = build_runtime(
-        crate::SizedBox::new()
-            .size(Size::new(260.0, 120.0))
-            .with_child(
-                Tabs::new("Main tabs")
-                    .theme(theme)
-                    .selected(1)
-                    .tab("Design", crate::Label::new("Design"))
-                    .tab("Inspect", crate::Label::new("Inspect")),
-            ),
+        crate::SizedBox::new().size(Size::new(260.0, 120.0)).child(
+            Tabs::new("Main tabs")
+                .theme(theme)
+                .selected(1)
+                .tab("Design", crate::Label::new("Design"))
+                .tab("Inspect", crate::Label::new("Inspect")),
+        ),
     );
     let _ = tabs_runtime
         .render(tabs_window)
@@ -6471,14 +6381,11 @@ fn context_menu_row_label_visual_center_matches_row_center() -> Result<(), Strin
     // Dropdown anchoring keeps the row geometry derivable from the
     // trigger bounds; pointer anchoring is covered separately.
     let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .width(320.0)
-            .height(180.0)
-            .with_child(
-                ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
-                    .anchor_to_pointer(false)
-                    .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
-            ),
+        crate::SizedBox::new().width(320.0).height(180.0).child(
+            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .anchor_to_pointer(false)
+                .items([MenuItem::new("Rename"), MenuItem::new("Duplicate")]),
+        ),
     );
 
     let closed = runtime
@@ -6603,7 +6510,7 @@ fn context_menu_primary_activation_owns_interactive_trigger_click() {
     let menu_activations = Rc::new(Cell::new(0));
     let recorded_menu_activations = Rc::clone(&menu_activations);
     let (mut runtime, window_id) = build_runtime(
-        SizedBox::new().width(320.0).height(180.0).with_child(
+        SizedBox::new().width(320.0).height(180.0).child(
             ContextMenu::new(
                 "Actions menu",
                 crate::Button::new("Actions").on_press(move || {
@@ -6690,7 +6597,7 @@ fn context_menu_primary_activation_owns_interactive_trigger_click() {
 #[test]
 fn context_menu_primary_keyboard_and_semantics_share_open_contract() {
     let (mut runtime, window_id) = build_runtime(
-        SizedBox::new().width(320.0).height(180.0).with_child(
+        SizedBox::new().width(320.0).height(180.0).child(
             ContextMenu::new("Actions menu", crate::Button::new("Actions"))
                 .activation_button(PointerButton::Primary)
                 .anchor_to_pointer(false)
@@ -6779,7 +6686,7 @@ fn context_menu_pointer_opens_submenu_and_activates_leaf_path() {
     let activations = Rc::new(RefCell::new(Vec::new()));
     let recorded_activations = Rc::clone(&activations);
     let (mut runtime, window_id) = build_runtime(
-        SizedBox::new().width(360.0).height(240.0).with_child(
+        SizedBox::new().width(360.0).height(240.0).child(
             ContextMenu::new("Actions menu", crate::Button::new("Actions"))
                 .activation_button(PointerButton::Primary)
                 .anchor_to_pointer(false)
@@ -6927,7 +6834,7 @@ fn widgets_that_always_show_a_choice_treat_none_as_the_first() {
 fn a_submenu_covers_the_focus_ring_of_the_menu_it_opened_from() {
     let theme = DefaultTheme::default();
     let (mut runtime, window_id) = build_runtime(
-        SizedBox::new().width(480.0).height(320.0).with_child(
+        SizedBox::new().width(480.0).height(320.0).child(
             ContextMenu::new("Actions menu", crate::Button::new("Actions"))
                 .theme(theme)
                 .activation_button(PointerButton::Primary)
@@ -7028,7 +6935,7 @@ fn context_menu_keyboard_enters_and_leaves_submenus() {
     let activated_path = Rc::new(RefCell::new(None));
     let recorded_path = Rc::clone(&activated_path);
     let (mut runtime, window_id) = build_runtime(
-        SizedBox::new().width(360.0).height(240.0).with_child(
+        SizedBox::new().width(360.0).height(240.0).child(
             ContextMenu::new("Actions menu", crate::Button::new("Actions"))
                 .activation_button(PointerButton::Primary)
                 .anchor_to_pointer(false)
@@ -7432,12 +7339,12 @@ fn context_menu_pointer_activation_escapes_tight_trigger_inside_scroll_view() ->
     });
     let root = SizedBox::new()
         .size(Size::new(600.0, 360.0))
-        .with_child(ScrollView::vertical(Padding::all(
+        .child(ScrollView::vertical(Padding::all(
             24.0,
             Stack::vertical()
-                .spacing(16.0)
+                .gap(16.0)
                 .with_child(SizedBox::new().height(96.0))
-                .with_child(SizedBox::new().height(68.0).width(480.0).with_child(menu))
+                .with_child(SizedBox::new().height(68.0).width(480.0).child(menu))
                 .with_child(SizedBox::new().height(420.0)),
         )));
     let (mut runtime, window_id) = build_runtime(root);
@@ -7523,14 +7430,11 @@ fn context_menu_pointer_activation_escapes_tight_trigger_inside_scroll_view() ->
 fn context_menu_shortcut_aligns_to_trailing_edge() -> Result<(), String> {
     let theme = DefaultTheme::default();
     let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .width(320.0)
-            .height(180.0)
-            .with_child(
-                ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
-                    .anchor_to_pointer(false)
-                    .items([MenuItem::new("Rename").shortcut("F2")]),
-            ),
+        crate::SizedBox::new().width(320.0).height(180.0).child(
+            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .anchor_to_pointer(false)
+                .items([MenuItem::new("Rename").shortcut("F2")]),
+        ),
     );
 
     let closed = runtime
@@ -7588,14 +7492,11 @@ fn context_menu_shortcuts_preserve_tall_measurements_and_row_center() -> Result<
     theme.metrics.menu_row_height = 64.0;
     let metrics = theme.metrics;
     let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .width(320.0)
-            .height(180.0)
-            .with_child(
-                ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
-                    .theme(theme)
-                    .items([MenuItem::new("Rename").shortcut("F2")]),
-            ),
+        crate::SizedBox::new().width(320.0).height(180.0).child(
+            ContextMenu::new("Canvas menu", crate::Button::new("Open menu"))
+                .theme(theme)
+                .items([MenuItem::new("Rename").shortcut("F2")]),
+        ),
     );
 
     let closed = runtime
@@ -8168,7 +8069,7 @@ fn tooltip_end_alignment_keeps_bubble_inside_trailing_trigger_edge() -> Result<(
     let (mut runtime, window_id) = build_runtime(
         crate::SizedBox::new()
             .size(Size::new(360.0, 160.0))
-            .with_child(crate::Padding::all(
+            .child(crate::Padding::all(
                 16.0,
                 crate::Tooltip::new(
                     tooltip_text,
@@ -8225,7 +8126,7 @@ fn tooltip_text_visual_center_matches_padded_bubble_center() -> Result<(), Strin
     let (mut runtime, window_id) = build_runtime(
         crate::SizedBox::new()
             .size(Size::new(360.0, 160.0))
-            .with_child(crate::Padding::all(
+            .child(crate::Padding::all(
                 16.0,
                 crate::Tooltip::new(
                     tooltip_text,
@@ -8293,7 +8194,7 @@ fn tooltip_text_preserves_tall_measurement_in_padded_bubble() -> Result<(), Stri
     let (mut runtime, window_id) = build_runtime(
         crate::SizedBox::new()
             .size(Size::new(360.0, 160.0))
-            .with_child(crate::Padding::all(
+            .child(crate::Padding::all(
                 16.0,
                 crate::Tooltip::new(
                     tooltip_text,
@@ -9033,7 +8934,7 @@ fn modal_dialog_uses_direct_effect_layer_metadata() {
     let output = render(
         crate::SizedBox::new()
             .size(Size::new(640.0, 420.0))
-            .with_child(Dialog::new(
+            .child(Dialog::new(
                 "Confirm",
                 crate::Label::new("Apply the change?"),
             )),
@@ -9055,15 +8956,16 @@ fn modal_dialog_uses_direct_effect_layer_metadata() {
 fn modal_dialog_first_pointer_click_reaches_scrolled_body_control() {
     let activated = Rc::new(Cell::new(false));
     let action = Rc::clone(&activated);
-    let body = SizedBox::new()
-        .height(200.0)
-        .with_child(ScrollView::vertical(Stack::vertical().with_child(
-            crate::Button::new("Done").on_press(move || action.set(true)),
-        )));
+    let body =
+        SizedBox::new()
+            .height(200.0)
+            .child(ScrollView::vertical(Stack::vertical().with_child(
+                crate::Button::new("Done").on_press(move || action.set(true)),
+            )));
     let (mut runtime, window_id) = build_runtime(
         SizedBox::new()
             .size(Size::new(640.0, 420.0))
-            .with_child(Dialog::new("Confirm", body)),
+            .child(Dialog::new("Confirm", body)),
     );
 
     let output = runtime.render(window_id).unwrap();
@@ -9109,9 +9011,7 @@ fn modal_dialog_entrance_uses_theme_motion_effect_layer_properties() -> Result<(
     let (mut runtime, window_id) = build_runtime(
         crate::SizedBox::new()
             .size(Size::new(640.0, 420.0))
-            .with_child(
-                Dialog::new("Confirm", crate::Label::new("Apply the change?")).theme(theme),
-            ),
+            .child(Dialog::new("Confirm", crate::Label::new("Apply the change?")).theme(theme)),
     );
 
     let start = runtime
@@ -9171,13 +9071,10 @@ fn dialog_entrance_animates_without_repainting_retained_body() -> Result<(), Str
     let theme = slow_normal_motion_theme();
     let entrance_duration = theme.motion.entrance_duration();
     let body = Rc::new(RefCell::new(PanelCounters::default()));
-    let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .size(Size::new(640.0, 420.0))
-            .with_child(
-                Dialog::new("Confirm", SpyPanel::new("dialog-body", Rc::clone(&body))).theme(theme),
-            ),
-    );
+    let (mut runtime, window_id) =
+        build_runtime(crate::SizedBox::new().size(Size::new(640.0, 420.0)).child(
+            Dialog::new("Confirm", SpyPanel::new("dialog-body", Rc::clone(&body))).theme(theme),
+        ));
 
     let start = runtime
         .render(window_id)
@@ -9238,7 +9135,7 @@ fn non_modal_dialog_entrance_uses_overlay_translation() {
     let output = render(
         crate::SizedBox::new()
             .size(Size::new(640.0, 420.0))
-            .with_child(Dialog::new("Inspector", crate::Label::new("Layer settings")).modal(false)),
+            .child(Dialog::new("Inspector", crate::Label::new("Layer settings")).modal(false)),
     );
 
     let dialog = output
@@ -9259,9 +9156,7 @@ fn bottom_sheet_uses_requested_height_and_bottom_edge() {
     let output = render(
         crate::SizedBox::new()
             .size(Size::new(640.0, 480.0))
-            .with_child(
-                BottomSheet::new("Filters", crate::Label::new("Filter options")).height(240.0),
-            ),
+            .child(BottomSheet::new("Filters", crate::Label::new("Filter options")).height(240.0)),
     );
 
     let sheet = output
@@ -9276,14 +9171,10 @@ fn bottom_sheet_uses_requested_height_and_bottom_edge() {
 #[test]
 fn sheet_state_presents_a_retained_bottom_sheet() {
     let state = SheetState::default();
-    let (mut runtime, window_id) = build_runtime(
-        crate::SizedBox::new()
-            .size(Size::new(640.0, 480.0))
-            .with_child(
-                BottomSheet::new("Filters", crate::Label::new("Filter options"))
-                    .state(state.clone()),
-            ),
-    );
+    let (mut runtime, window_id) =
+        build_runtime(crate::SizedBox::new().size(Size::new(640.0, 480.0)).child(
+            BottomSheet::new("Filters", crate::Label::new("Filter options")).state(state.clone()),
+        ));
 
     assert!(
         !runtime
@@ -9310,7 +9201,7 @@ where
     B: Widget + 'static,
 {
     crate::Stack::vertical()
-        .spacing(12.0)
+        .gap(12.0)
         .with_child(top)
         .with_child(bottom)
 }
@@ -9328,7 +9219,7 @@ fn semantics_bounds(output: &RenderOutput, role: SemanticsRole, name: &str) -> R
 fn inline_overlays_reserve_layout_space_without_floating_layers() {
     let output = render(
         crate::Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Start)
             .with_child(
                 crate::Tooltip::new("Copy link", crate::Button::new("Share"))
@@ -9400,7 +9291,7 @@ fn inline_context_menu_panels_scroll_with_their_scroll_view() {
     let (mut runtime, window_id) = build_runtime(
         SizedBox::new()
             .size(Size::new(360.0, 240.0))
-            .with_child(ScrollView::vertical(
+            .child(ScrollView::vertical(
                 Stack::vertical()
                     .alignment(Alignment::Start)
                     .with_child(SizedBox::new().height(40.0))
@@ -9455,7 +9346,7 @@ fn inline_overlays_ignore_dismissal() {
     let (mut runtime, window_id) = build_runtime(crate::Padding::all(
         16.0,
         crate::Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Start)
             .with_child(
                 Popover::new(
@@ -9506,7 +9397,7 @@ fn inline_overlays_ignore_dismissal() {
 fn progress_bar_value_label_contrasts_with_fill_and_track() {
     let theme = DefaultTheme::default();
     let output = render(
-        SizedBox::new().width(240.0).with_child(
+        SizedBox::new().width(240.0).child(
             ProgressBar::new("Export")
                 .range(0.0, 100.0)
                 .value(35.0)
@@ -9572,10 +9463,10 @@ fn inline_popover_paints_its_surface_frame() {
 fn inline_dialog_lays_out_at_its_content_size() {
     let output = render(
         crate::Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Start)
             .with_child(
-                SizedBox::new().width(420.0).with_child(
+                SizedBox::new().width(420.0).child(
                     Dialog::new(
                         "Project settings",
                         crate::Label::new("Autosave every 90 seconds"),

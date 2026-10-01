@@ -154,7 +154,7 @@ fn icons(ctx: &StoryCtx) -> Vec<Section> {
             (
                 name.as_str(),
                 boxed(
-                    SizedBox::new().width(72.0).with_child(Align::center(
+                    SizedBox::new().width(72.0).child(Align::center(
                         Icon::new(*glyph)
                             .size(20.0)
                             .color(theme.palette.text)
@@ -222,7 +222,7 @@ document.append_markdown("incremental tail");
     document.append_extension(operation);
     vec![example(
         "",
-        SizedBox::new().width(620.0).height(320.0).with_child(
+        SizedBox::new().width(620.0).height(320.0).child(
             ScrollView::vertical(RichDocumentView::new(document).theme(theme))
                 .retain_content_layer()
                 .theme(theme),
@@ -284,7 +284,7 @@ fn color_picker(ctx: &StoryCtx) -> Vec<Section> {
     vec![
         example(
             "HDR color picker",
-            SizedBox::new().width(420.0).height(440.0).with_child(
+            SizedBox::new().width(420.0).height(440.0).child(
                 ColorPicker::from_color(
                     "Accent picker",
                     Color::new(ColorSpace::LinearSrgb, 2.0, 0.65, 0.4, 1.0),
@@ -438,7 +438,7 @@ fn canvas(ctx: &StoryCtx) -> Vec<Section> {
     vec![example(
         "",
         Stack::vertical()
-            .spacing(0.0)
+            .gap(0.0)
             .alignment(Alignment::Start)
             .with_child(sized(
                 440.0,
@@ -447,7 +447,7 @@ fn canvas(ctx: &StoryCtx) -> Vec<Section> {
                     .theme(theme),
             ))
             .with_child(
-                SizedBox::new().width(440.0).height(220.0).with_child(
+                SizedBox::new().width(440.0).height(220.0).child(
                     Canvas::new("Vector canvas")
                         .desired_size(Size::new(440.0, 220.0))
                         .viewport(viewport)
@@ -478,7 +478,7 @@ fn pixel_canvas(ctx: &StoryCtx) -> Vec<Section> {
     let amber = theme.decorative.get(DecorativeHue::Amber).solid;
     vec![example(
         "",
-        SizedBox::new().width(360.0).height(180.0).with_child(
+        SizedBox::new().width(360.0).height(180.0).child(
             PixelCanvas::from_fn("Pixel canvas", 16, 12, |x, y| {
                 if (x + y) % 2 == 0 { blue } else { amber }
             })

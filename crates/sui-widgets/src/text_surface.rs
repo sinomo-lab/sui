@@ -2602,13 +2602,11 @@ mod tests {
         let focus_duration = theme.motion.focus_duration();
         let expected_hover = theme.palette.border_hover;
         let (mut runtime, window_id) = build_runtime(
-            crate::SizedBox::new()
-                .size(Size::new(220.0, 96.0))
-                .with_child(
-                    TextSurface::new("Editor")
-                        .theme(theme)
-                        .placeholder("Write notes"),
-                ),
+            crate::SizedBox::new().size(Size::new(220.0, 96.0)).child(
+                TextSurface::new("Editor")
+                    .theme(theme)
+                    .placeholder("Write notes"),
+            ),
         );
 
         let _ = runtime.render(window_id).expect("render should succeed");
@@ -2661,17 +2659,15 @@ mod tests {
         let theme_reader = Rc::clone(&theme);
         let style_reader = Rc::clone(&theme);
         let (mut runtime, window_id) = build_runtime(
-            crate::SizedBox::new()
-                .size(Size::new(180.0, 72.0))
-                .with_child(
-                    TextSurface::new("Editor")
-                        .value("themed text")
-                        .theme_when(move || *theme_reader.borrow())
-                        .text_style_when(move |_| {
-                            let theme = *style_reader.borrow();
-                            theme.text_style(theme.palette.text)
-                        }),
-                ),
+            crate::SizedBox::new().size(Size::new(180.0, 72.0)).child(
+                TextSurface::new("Editor")
+                    .value("themed text")
+                    .theme_when(move || *theme_reader.borrow())
+                    .text_style_when(move |_| {
+                        let theme = *style_reader.borrow();
+                        theme.text_style(theme.palette.text)
+                    }),
+            ),
         );
 
         let light = runtime.render(window_id).expect("render should succeed");
@@ -2705,7 +2701,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
                 .size(Size::new(180.0, 96.0))
-                .with_child(TextSurface::new("Editor").value(long_text)),
+                .child(TextSurface::new("Editor").value(long_text)),
         );
         set_window_scene_statistics_detail_mode(window_id, SceneStatisticsDetailMode::Detailed);
 
@@ -2736,7 +2732,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
                 .size(Size::new(120.0, 120.0))
-                .with_child(TextSurface::new("Editor").wrap(TextWrap::Word).value(value)),
+                .child(TextSurface::new("Editor").wrap(TextWrap::Word).value(value)),
         );
 
         let output = runtime.render(window_id).expect("render should succeed");
@@ -2947,7 +2943,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
                 .size(Size::new(260.0, 96.0))
-                .with_child(surface),
+                .child(surface),
         );
         let output = runtime.render(window_id).expect("render should succeed");
         let shaped = shaped_text_commands(&output);
@@ -3155,13 +3151,11 @@ mod tests {
         let text = "alpha\nbeta\ngamma";
         let status = sui_reactive::Signal::new(super::TextSurfaceStatus::default());
         let (mut runtime, window_id) = build_runtime(
-            crate::SizedBox::new()
-                .size(Size::new(320.0, 120.0))
-                .with_child(
-                    TextSurface::new("Editor")
-                        .value(text)
-                        .status(status.clone()),
-                ),
+            crate::SizedBox::new().size(Size::new(320.0, 120.0)).child(
+                TextSurface::new("Editor")
+                    .value(text)
+                    .status(status.clone()),
+            ),
         );
         runtime
             .render(window_id)
@@ -3210,7 +3204,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
                 .size(Size::new(320.0, 160.0))
-                .with_child(TextSurface::new("Editor").value(text)),
+                .child(TextSurface::new("Editor").value(text)),
         );
         runtime.render(window_id).expect("render should succeed");
         runtime
@@ -3254,15 +3248,13 @@ mod tests {
         for spans in [Vec::new(), vec![span]] {
             for wrap in [TextWrap::Word, TextWrap::NoWrap] {
                 let (mut runtime, window_id) = build_runtime(
-                    crate::SizedBox::new()
-                        .size(Size::new(320.0, 120.0))
-                        .with_child(
-                            TextSurface::new("Editor")
-                                .value("abc\ndef")
-                                .wrap(wrap)
-                                .direction(TextDirection::RightToLeft)
-                                .style_spans(spans.clone()),
-                        ),
+                    crate::SizedBox::new().size(Size::new(320.0, 120.0)).child(
+                        TextSurface::new("Editor")
+                            .value("abc\ndef")
+                            .wrap(wrap)
+                            .direction(TextDirection::RightToLeft)
+                            .style_spans(spans.clone()),
+                    ),
                 );
                 let output = runtime.render(window_id).expect("render should succeed");
                 let runs = laid_out_runs(&output);
@@ -3284,17 +3276,15 @@ mod tests {
     fn text_surface_wraps_styled_text_line_by_line() {
         let text = "alpha\nbeta\ngamma";
         let (mut runtime, window_id) = build_runtime(
-            crate::SizedBox::new()
-                .size(Size::new(320.0, 120.0))
-                .with_child(
-                    TextSurface::new("Editor")
-                        .value(text)
-                        .wrap(TextWrap::Word)
-                        .style_spans(vec![TextSurfaceStyleSpan {
-                            range: 6..10,
-                            style: TextStyle::default(),
-                        }]),
-                ),
+            crate::SizedBox::new().size(Size::new(320.0, 120.0)).child(
+                TextSurface::new("Editor")
+                    .value(text)
+                    .wrap(TextWrap::Word)
+                    .style_spans(vec![TextSurfaceStyleSpan {
+                        range: 6..10,
+                        style: TextStyle::default(),
+                    }]),
+            ),
         );
         let output = runtime.render(window_id).expect("render should succeed");
         let layouts = shaped_text_commands(&output)
@@ -3324,14 +3314,12 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let (runtime, window_id) = build_runtime(
-            crate::SizedBox::new()
-                .size(Size::new(220.0, 160.0))
-                .with_child(
-                    TextSurface::new("Editor")
-                        .value(text.clone())
-                        .wrap(TextWrap::Word)
-                        .status(status.clone()),
-                ),
+            crate::SizedBox::new().size(Size::new(220.0, 160.0)).child(
+                TextSurface::new("Editor")
+                    .value(text.clone())
+                    .wrap(TextWrap::Word)
+                    .status(status.clone()),
+            ),
         );
         (runtime, window_id, text)
     }
@@ -3460,7 +3448,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
                 .size(Size::new(320.0, 120.0))
-                .with_child(surface),
+                .child(surface),
         );
         runtime
             .render(window_id)
@@ -3536,14 +3524,12 @@ mod tests {
         text_style.line_height = 12.0;
 
         let (mut runtime, window_id) = build_runtime(
-            crate::SizedBox::new()
-                .size(Size::new(280.0, 96.0))
-                .with_child(
-                    TextSurface::new("Editor")
-                        .theme(theme)
-                        .text_style(text_style.clone())
-                        .placeholder("Write notes"),
-                ),
+            crate::SizedBox::new().size(Size::new(280.0, 96.0)).child(
+                TextSurface::new("Editor")
+                    .theme(theme)
+                    .text_style(text_style.clone())
+                    .placeholder("Write notes"),
+            ),
         );
         let output = runtime.render(window_id).expect("render should succeed");
         let registry = output.frame.text_layout_registry.as_ref();
@@ -3575,16 +3561,14 @@ mod tests {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let on_change = Rc::clone(&changes);
         let (mut runtime, window_id) = build_runtime(
-            crate::SizedBox::new()
-                .size(Size::new(280.0, 96.0))
-                .with_child(
-                    TextSurface::new("Editor")
-                        .theme(theme)
-                        .text_style(text_style.clone())
-                        .value("Pinned")
-                        .read_only(true)
-                        .on_change(move |value| on_change.borrow_mut().push(value)),
-                ),
+            crate::SizedBox::new().size(Size::new(280.0, 96.0)).child(
+                TextSurface::new("Editor")
+                    .theme(theme)
+                    .text_style(text_style.clone())
+                    .value("Pinned")
+                    .read_only(true)
+                    .on_change(move |value| on_change.borrow_mut().push(value)),
+            ),
         );
 
         runtime
@@ -3711,7 +3695,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
                 .size(Size::new(320.0, 80.0))
-                .with_child(TextSurface::new("Editor").value("a🇯🇵e\u{301}z")),
+                .child(TextSurface::new("Editor").value("a🇯🇵e\u{301}z")),
         );
 
         runtime
@@ -3745,7 +3729,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             crate::SizedBox::new()
                 .size(Size::new(320.0, 80.0))
-                .with_child(TextSurface::new("Editor").value("hello ")),
+                .child(TextSurface::new("Editor").value("hello ")),
         );
 
         runtime

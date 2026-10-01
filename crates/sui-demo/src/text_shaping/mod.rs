@@ -40,7 +40,7 @@ const BREAKING_WIDTHS: (f64, f64) = (140.0, 620.0);
 pub fn build_text_shaping_surface_with_theme(theme_reader: DevThemeReader) -> impl Widget {
     let passed = Rc::new(Cell::new((0, SCRIPTS.len())));
     let content = Stack::vertical()
-        .spacing(18.0)
+        .gap(18.0)
         .alignment(Alignment::Stretch)
         .with_child(scripts_section(&theme_reader, passed))
         .with_child(bidi_section(&theme_reader))
@@ -77,9 +77,7 @@ where
 }
 
 fn body() -> Stack {
-    Stack::vertical()
-        .spacing(12.0)
-        .alignment(Alignment::Stretch)
+    Stack::vertical().gap(12.0).alignment(Alignment::Stretch)
 }
 
 fn note(theme_reader: &DevThemeReader, text: &'static str) -> impl Widget + use<> {

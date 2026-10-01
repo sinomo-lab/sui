@@ -554,9 +554,14 @@ impl ActionTilePaint {
         self
     }
 
-    pub const fn radius(mut self, radius: f32) -> Self {
-        self.radius = Some(radius);
+    pub const fn corner_radius(mut self, corner_radius: f32) -> Self {
+        self.radius = Some(corner_radius);
         self
+    }
+
+    #[deprecated(note = "use `corner_radius`")]
+    pub const fn radius(self, radius: f32) -> Self {
+        self.corner_radius(radius)
     }
 
     pub const fn padding_x(mut self, padding_x: f32) -> Self {
@@ -652,9 +657,14 @@ impl CalloutPaint {
         self
     }
 
-    pub const fn radius(mut self, radius: f32) -> Self {
-        self.radius = Some(radius);
+    pub const fn corner_radius(mut self, corner_radius: f32) -> Self {
+        self.radius = Some(corner_radius);
         self
+    }
+
+    #[deprecated(note = "use `corner_radius`")]
+    pub const fn radius(self, radius: f32) -> Self {
+        self.corner_radius(radius)
     }
 
     pub const fn padding(mut self, padding: Insets) -> Self {
@@ -1039,9 +1049,14 @@ impl CodePanelPaint {
         self
     }
 
-    pub const fn radius(mut self, radius: f32) -> Self {
-        self.radius = Some(radius);
+    pub const fn corner_radius(mut self, corner_radius: f32) -> Self {
+        self.radius = Some(corner_radius);
         self
+    }
+
+    #[deprecated(note = "use `corner_radius`")]
+    pub const fn radius(self, radius: f32) -> Self {
+        self.corner_radius(radius)
     }
 
     pub const fn header_height(mut self, header_height: f32) -> Self {
@@ -1364,9 +1379,14 @@ impl SectionPanelPaint {
         self
     }
 
-    pub const fn radius(mut self, radius: f32) -> Self {
-        self.radius = Some(radius);
+    pub const fn corner_radius(mut self, corner_radius: f32) -> Self {
+        self.radius = Some(corner_radius);
         self
+    }
+
+    #[deprecated(note = "use `corner_radius`")]
+    pub const fn radius(self, radius: f32) -> Self {
+        self.corner_radius(radius)
     }
 
     pub const fn header_height(mut self, header_height: f32) -> Self {

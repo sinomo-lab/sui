@@ -66,14 +66,14 @@ pub fn build_text_editor_surface_with_theme(theme_reader: DevThemeReader) -> imp
     Padding::all(
         24.0,
         Stack::vertical()
-            .spacing(16.0)
+            .gap(16.0)
             .alignment(Alignment::Stretch)
             .with_child(toolbar(&theme_reader, &choices))
-            .with_child(
-                SizedBox::new()
-                    .height(EDITOR_HEIGHT)
-                    .with_child(EditorHost::new(&theme_reader, choices, status.clone())),
-            )
+            .with_child(SizedBox::new().height(EDITOR_HEIGHT).child(EditorHost::new(
+                &theme_reader,
+                choices,
+                status.clone(),
+            )))
             .with_child(Inspector::new(&theme_reader, status)),
     )
 }
@@ -126,7 +126,7 @@ fn toolbar(theme_reader: &DevThemeReader, choices: &Choices) -> impl Widget + us
             })
     };
     Stack::horizontal()
-        .spacing(24.0)
+        .gap(24.0)
         .alignment(Alignment::End)
         .with_child(labeled_control(
             theme_reader,

@@ -194,7 +194,7 @@ fn popover(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let content = |title: &str, detail: &str| {
         Stack::vertical()
-            .spacing(6.0)
+            .gap(6.0)
             .alignment(Alignment::Start)
             .with_child(ctx.text(title))
             .with_child(ctx.muted(detail))
@@ -235,7 +235,7 @@ fn popover(ctx: &StoryCtx) -> Vec<Section> {
 fn dialog(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let settings = Stack::vertical()
-        .spacing(10.0)
+        .gap(10.0)
         .alignment(Alignment::Stretch)
         .with_child(ctx.text("Autosave every 90 seconds"))
         .with_child(ctx.text("Export color profile: Display P3"));
@@ -286,7 +286,7 @@ fn notification(ctx: &StoryCtx) -> Vec<Section> {
         SizedBox::new()
             .width(340.0)
             .height(96.0)
-            .with_child(NotificationHost::new(center).theme(theme).width(320.0))
+            .child(NotificationHost::new(center).theme(theme).width(320.0))
     };
     vec![strip(
         theme,

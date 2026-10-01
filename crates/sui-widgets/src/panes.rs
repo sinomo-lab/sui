@@ -158,6 +158,12 @@ pub struct FloatingViewConfig {
     pub closable: bool,
 }
 
+impl Default for FloatingViewConfig {
+    fn default() -> Self {
+        Self::new("", Rect::ZERO)
+    }
+}
+
 impl FloatingViewConfig {
     pub fn new(title: impl Into<String>, bounds: Rect) -> Self {
         Self {
@@ -176,8 +182,10 @@ impl FloatingViewConfig {
         self
     }
 
+    /// The smallest the view can be resized to; the workspace keeps it at
+    /// least 120 by 120.
     pub fn min_size(mut self, min_size: Size) -> Self {
-        self.min_size = Size::new(min_size.width.max(120.0), min_size.height.max(120.0));
+        self.min_size = min_size;
         self
     }
 
@@ -498,8 +506,13 @@ impl FloatingWorkspace {
         self
     }
 
-    pub fn state(&self) -> FloatingWorkspaceState {
+    pub fn shared_state(&self) -> FloatingWorkspaceState {
         self.state.clone()
+    }
+
+    #[deprecated(note = "use `shared_state`")]
+    pub fn state(&self) -> FloatingWorkspaceState {
+        self.shared_state()
     }
 
     pub fn with_view<W>(mut self, config: FloatingViewConfig, child: W) -> Self
@@ -2610,7 +2623,7 @@ mod tests {
     fn split_view_restores_focus_after_collapsed_pane_expands() -> Result<()> {
         let state = SplitState::fraction(0.5);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(420.0).height(180.0).with_child(
+            SizedBox::new().width(420.0).height(180.0).child(
                 SplitView::horizontal(
                     crate::Button::new("First action"),
                     crate::Button::new("Second action"),
@@ -3139,7 +3152,7 @@ mod tests {
         let first_constraints = Rc::new(RefCell::new(Vec::new()));
         let second_constraints = Rc::new(RefCell::new(Vec::new()));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(240.0).height(100.0).with_child(
+            SizedBox::new().width(240.0).height(100.0).child(
                 SplitView::new(
                     Axis::Horizontal,
                     ConstraintProbe::new(
@@ -3248,7 +3261,7 @@ mod tests {
         let first_constraints = Rc::new(RefCell::new(Vec::new()));
         let second_constraints = Rc::new(RefCell::new(Vec::new()));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(240.0).height(100.0).with_child(
+            SizedBox::new().width(240.0).height(100.0).child(
                 SplitView::new(
                     Axis::Horizontal,
                     ConstraintProbe::new(
@@ -3438,16 +3451,13 @@ mod tests {
             SizedBox::new().width(180.0).height(140.0),
         );
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(420.0)
-                .height(260.0)
-                .with_child(Layered {
-                    back: SingleChild::new(
-                        crate::Button::new("Behind")
-                            .on_press(move || behind_presses.set(behind_presses.get() + 1)),
-                    ),
-                    front: SingleChild::new(workspace),
-                }),
+            SizedBox::new().width(420.0).height(260.0).child(Layered {
+                back: SingleChild::new(
+                    crate::Button::new("Behind")
+                        .on_press(move || behind_presses.set(behind_presses.get() + 1)),
+                ),
+                front: SingleChild::new(workspace),
+            }),
         );
 
         let output = runtime.render(window_id)?;
@@ -3483,12 +3493,8 @@ mod tests {
             FloatingViewConfig::new("Tools", Rect::new(16.0, 16.0, 240.0, 170.0)).closable(true),
             SizedBox::new().width(240.0).height(170.0),
         );
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(420.0)
-                .height(260.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(420.0).height(260.0).child(workspace));
         assert!(has_window_named(&mut runtime, window_id, "Tools"));
 
         let close = runtime
@@ -3553,12 +3559,8 @@ mod tests {
             SizedBox::new().width(180.0).height(140.0),
         );
 
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(520.0)
-                .height(360.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(520.0).height(360.0).child(workspace));
 
         let _ = runtime.render(window_id)?;
         runtime.handle_event(
@@ -3595,12 +3597,8 @@ mod tests {
             ),
         );
 
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(520.0)
-                .height(360.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(520.0).height(360.0).child(workspace));
         let _ = runtime.render(window_id)?;
         let initial_count = seen_constraints.borrow().len();
         let initial_constraints = *seen_constraints
@@ -3651,12 +3649,8 @@ mod tests {
             crate::Button::new("Second action"),
         );
 
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(420.0)
-                .height(260.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(420.0).height(260.0).child(workspace));
 
         let _ = runtime.render(window_id)?;
         let first_surface = state
@@ -3716,12 +3710,8 @@ mod tests {
             ),
         );
 
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(520.0)
-                .height(360.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(520.0).height(360.0).child(workspace));
         let output = runtime.render(window_id)?;
         let snapshot = state.snapshot(view_id).expect("view state present");
         let content = super::floating_view_content_rect(
@@ -3787,12 +3777,8 @@ mod tests {
         );
         state.set_active_resize_view(Some(view_id));
 
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(520.0)
-                .height(360.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(520.0).height(360.0).child(workspace));
         let output = runtime.render(window_id)?;
 
         assert!(output.semantics.iter().any(|node| {
@@ -3824,12 +3810,8 @@ mod tests {
             ),
         );
 
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(520.0)
-                .height(360.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(520.0).height(360.0).child(workspace));
         let before = runtime.render(window_id)?;
         let before_content_id = before
             .semantics
@@ -3886,12 +3868,8 @@ mod tests {
             ColorFill::new(Color::rgba(0.22, 0.48, 0.72, 1.0)),
         );
 
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(520.0)
-                .height(360.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(520.0).height(360.0).child(workspace));
         let output = runtime.render(window_id)?;
         let text = text_run_for(&output, "Inspector");
         let layout = text_run_layout(&text);
@@ -3947,12 +3925,8 @@ mod tests {
             ColorFill::new(Color::rgba(0.22, 0.48, 0.72, 1.0)),
         );
 
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(520.0)
-                .height(360.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(520.0).height(360.0).child(workspace));
         let output = runtime.render(window_id)?;
         let text = text_run_for(&output, "Inspector");
         let layout = text_run_layout(&text);
@@ -3996,12 +3970,8 @@ mod tests {
             ColorFill::new(second_color),
         );
 
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(420.0)
-                .height(260.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(420.0).height(260.0).child(workspace));
         let mut renderer = WgpuRenderer::default();
 
         let (_, initial_image) = render_rgba(&mut runtime, &mut renderer, window_id)?;
@@ -4056,12 +4026,8 @@ mod tests {
             ColorFill::new(second_color),
         );
 
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(420.0)
-                .height(260.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(420.0).height(260.0).child(workspace));
         let mut renderer = WgpuRenderer::default();
 
         let (_, initial_image) = render_rgba(&mut runtime, &mut renderer, window_id)?;
@@ -4105,7 +4071,7 @@ mod tests {
     fn floating_workspace_popover_resolves_to_nearest_view_host() -> Result<()> {
         let state = FloatingWorkspaceState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().width(520.0).height(360.0).with_child(
+            SizedBox::new().width(520.0).height(360.0).child(
                 FloatingWorkspace::new(state)
                     .with_view(
                         FloatingViewConfig::new(
@@ -4166,12 +4132,8 @@ mod tests {
         );
         state.set_view_maximized(second_id, true);
 
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .width(520.0)
-                .height(360.0)
-                .with_child(workspace),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().width(520.0).height(360.0).child(workspace));
 
         let _ = runtime.render(window_id)?;
         let graph = runtime.widget_graph(window_id)?;

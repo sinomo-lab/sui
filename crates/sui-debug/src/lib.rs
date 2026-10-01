@@ -258,7 +258,7 @@ where
         Padding::all(
             14.0,
             Stack::vertical()
-                .spacing(8.0)
+                .gap(8.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
                     Label::new(title)
@@ -283,19 +283,15 @@ where
     I: IntoIterator<Item = DebugMetric>,
 {
     let metrics: Vec<_> = metrics.into_iter().collect();
-    let mut column = Stack::vertical()
-        .spacing(10.0)
-        .alignment(Alignment::Stretch);
+    let mut column = Stack::vertical().gap(10.0).alignment(Alignment::Stretch);
 
     for chunk in metrics.chunks(4) {
-        let mut row = Stack::horizontal()
-            .spacing(10.0)
-            .alignment(Alignment::Stretch);
+        let mut row = Stack::horizontal().gap(10.0).alignment(Alignment::Stretch);
         for metric in chunk {
             row = row.with_child(
                 SizedBox::new()
                     .width(156.0)
-                    .with_child(metric_card(metric.clone())),
+                    .child(metric_card(metric.clone())),
             );
         }
         column = column.with_child(row);
@@ -308,7 +304,7 @@ pub fn debug_key_values<I>(entries: I) -> impl Widget
 where
     I: IntoIterator<Item = DebugKeyValue>,
 {
-    let mut column = Stack::vertical().spacing(6.0).alignment(Alignment::Stretch);
+    let mut column = Stack::vertical().gap(6.0).alignment(Alignment::Stretch);
 
     for (index, entry) in entries.into_iter().enumerate() {
         let background = if index % 2 == 0 {
@@ -321,10 +317,10 @@ where
             Padding::all(
                 8.0,
                 Stack::horizontal()
-                    .spacing(10.0)
+                    .gap(10.0)
                     .alignment(Alignment::Center)
                     .with_child(
-                        SizedBox::new().width(160.0).with_child(
+                        SizedBox::new().width(160.0).child(
                             Label::new(entry.label)
                                 .font_size(11.0)
                                 .line_height(15.0)
@@ -380,14 +376,14 @@ pub fn accessibility_snapshot_view(snapshot: AccessibilitySnapshot) -> impl Widg
 
     SizedBox::new()
         .height(220.0)
-        .with_child(ListView::new("Accessibility snapshot").items(items))
+        .child(ListView::new("Accessibility snapshot").items(items))
 }
 
 pub fn widget_graph_snapshot_view(graph: WidgetGraphSnapshot) -> impl Widget {
     let items = build_graph_tree_items(&graph);
     SizedBox::new()
         .height(240.0)
-        .with_child(TreeView::new("Widget graph").items(items))
+        .child(TreeView::new("Widget graph").items(items))
 }
 
 pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
@@ -479,12 +475,12 @@ pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
     };
 
     Stack::vertical()
-        .spacing(10.0)
+        .gap(10.0)
         .alignment(Alignment::Stretch)
         .with_child(metrics)
         .with_child(debug_key_values(dirty_region_entries))
         .with_child(
-            SizedBox::new().height(140.0).with_child(
+            SizedBox::new().height(140.0).child(
                 Table::new("Scene layer update breakdown")
                     .columns([
                         TableColumn::new("Update kind").min_width(180.0),
@@ -494,7 +490,7 @@ pub fn scene_summary_view(scene: SceneDebugSummary) -> impl Widget {
             ),
         )
         .with_child(
-            SizedBox::new().height(172.0).with_child(
+            SizedBox::new().height(172.0).child(
                 Table::new("Scene command breakdown")
                     .columns([
                         TableColumn::new("Command").min_width(180.0),
@@ -568,9 +564,7 @@ pub fn window_snapshot_view(snapshot: WindowDebugSnapshot) -> impl Widget {
         ]),
     );
 
-    let mut body = Stack::vertical()
-        .spacing(12.0)
-        .alignment(Alignment::Stretch);
+    let mut body = Stack::vertical().gap(12.0).alignment(Alignment::Stretch);
     body.push(summary);
     body.push(debug_panel(
         "Focus and scheduling",
@@ -629,9 +623,7 @@ fn inspector_snapshot_body(snapshot: WindowInspectorSnapshot) -> Stack {
     let scheduler = snapshot.scheduler.clone();
     let history = snapshot.history.clone();
 
-    let mut body = Stack::vertical()
-        .spacing(12.0)
-        .alignment(Alignment::Stretch);
+    let mut body = Stack::vertical().gap(12.0).alignment(Alignment::Stretch);
     body.push(debug_panel(
         "Application inspector",
         "A renderer-neutral snapshot of retained UI structure, routing, scheduling, accessibility, and damage.",
@@ -974,7 +966,7 @@ fn short_type_name(name: &'static str) -> &'static str {
 
 fn metric_card(metric: DebugMetric) -> impl Widget {
     let (background, label_color, value_color) = tone_palette(metric.tone);
-    let mut column = Stack::vertical().spacing(6.0).alignment(Alignment::Stretch);
+    let mut column = Stack::vertical().gap(6.0).alignment(Alignment::Stretch);
     column.push(
         Label::new(metric.label)
             .font_size(11.0)
@@ -1101,7 +1093,7 @@ fn graph_tree_item(
         item = item.expanded(true);
         for child in &node.children {
             if let Some(child_node) = nodes.get(child) {
-                item = item.with_child(graph_tree_item(child_node, nodes));
+                item = item.item(graph_tree_item(child_node, nodes));
             }
         }
     }
@@ -1225,7 +1217,7 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             .unwrap_or_else(|| "-- fps".to_string());
 
         return Stack::vertical()
-            .spacing(10.0)
+            .gap(10.0)
             .alignment(Alignment::Stretch)
             .with_child(debug_metric_grid([
                 DebugMetric::new("Frame", format_duration_ms(snapshot.total_time_ms))
@@ -1446,7 +1438,7 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
         .collect::<Vec<_>>();
 
     Stack::vertical()
-        .spacing(10.0)
+        .gap(10.0)
         .alignment(Alignment::Stretch)
         .with_child(metrics)
         .with_child(debug_key_values([
@@ -1510,7 +1502,7 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             ),
         ]))
         .with_child(
-            SizedBox::new().height(156.0).with_child(
+            SizedBox::new().height(156.0).child(
                 Table::new("Frame phase timings")
                     .columns([
                         TableColumn::new("Phase").min_width(180.0),
@@ -1521,7 +1513,7 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             ),
         )
         .with_child(
-            SizedBox::new().height(command_trace_height).with_child(
+            SizedBox::new().height(command_trace_height).child(
                 Table::new("Command routing trace")
                     .columns([
                         TableColumn::new("Command").min_width(180.0),
@@ -1532,17 +1524,15 @@ pub fn performance_snapshot_view(snapshot: WindowPerformanceSnapshot) -> impl Wi
             ),
         )
         .with_child(
-            SizedBox::new()
-                .height(invalidation_trace_height)
-                .with_child(
-                    Table::new("Invalidation trace")
-                        .columns([
-                            TableColumn::new("Source").min_width(180.0),
-                            TableColumn::new("Target / kind").min_width(210.0),
-                            TableColumn::new("Reason").min_width(220.0),
-                        ])
-                        .rows(invalidation_rows),
-                ),
+            SizedBox::new().height(invalidation_trace_height).child(
+                Table::new("Invalidation trace")
+                    .columns([
+                        TableColumn::new("Source").min_width(180.0),
+                        TableColumn::new("Target / kind").min_width(210.0),
+                        TableColumn::new("Reason").min_width(220.0),
+                    ])
+                    .rows(invalidation_rows),
+            ),
         )
         .with_child(scene_summary_view(SceneDebugSummary::from(&snapshot.scene)))
 }
@@ -1679,7 +1669,7 @@ fn stack_host_snapshot_view(graph: WidgetGraphSnapshot) -> impl Widget {
         rows
     };
 
-    SizedBox::new().height(156.0).with_child(
+    SizedBox::new().height(156.0).child(
         Table::new("Stack hosts")
             .columns([
                 TableColumn::new("Host").min_width(100.0),

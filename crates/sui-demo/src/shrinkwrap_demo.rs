@@ -95,7 +95,7 @@ fn build_demo(state: Signal<Motion>, theme: DevThemeReader) -> impl Widget {
         ScrollView::vertical(Padding::all(
             24.0,
             Stack::vertical()
-                .spacing(16.0)
+                .gap(16.0)
                 .alignment(Alignment::Stretch)
                 .with_child(Label::new("Shrinkwrap conversation").text_style_when(
                     demo_text_style_when(&theme, DemoTextRole::PageTitle, |theme| {

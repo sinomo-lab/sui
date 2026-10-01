@@ -48,7 +48,7 @@ pub(super) fn section(state: MotionDemoState, theme_reader: DevThemeReader) -> i
         )
         .with_item(
             Stack::vertical()
-                .spacing(10.0)
+                .gap(10.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
                     Flex::horizontal()

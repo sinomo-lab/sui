@@ -96,7 +96,7 @@ impl MotionDemoState {
 pub(crate) fn build_animation_demo_with_theme(theme_reader: DevThemeReader) -> impl Widget {
     let state = MotionDemoState::new();
     let page = Stack::vertical()
-        .spacing(SECTION_GAP)
+        .gap(SECTION_GAP)
         .alignment(Alignment::Stretch)
         .with_child(header(state.clone(), Rc::clone(&theme_reader)))
         .with_child(section(
@@ -194,7 +194,7 @@ fn header(state: MotionDemoState, theme_reader: DevThemeReader) -> impl Widget {
         );
 
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(
             Label::new(ANIMATION_DEMO_TITLE).text_style_when(demo_text_style_when(
@@ -266,7 +266,7 @@ where
     W: Widget + 'static,
 {
     Stack::vertical()
-        .spacing(6.0)
+        .gap(6.0)
         .alignment(Alignment::Start)
         .with_child(Label::new(label).text_style_when(demo_text_style_when(
             theme_reader,
@@ -289,7 +289,7 @@ where
     NamedSection::new(
         name,
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Stretch)
             .with_child(Label::new(title).text_style_when(demo_text_style_when(
                 theme_reader,

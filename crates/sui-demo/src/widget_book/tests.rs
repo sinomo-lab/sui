@@ -76,7 +76,7 @@ where
             register_widget_book_images(resources);
             Ok(())
         })?
-        .window(Window::new(WINDOW_TITLE).root(SizedBox::new().size(size).with_child(root)))
+        .window(Window::new(WINDOW_TITLE).root(SizedBox::new().size(size).child(root)))
         .build()?;
     let window_id = runtime.window_ids()[0];
     Ok((runtime, window_id))

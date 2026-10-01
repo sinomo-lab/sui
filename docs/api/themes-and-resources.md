@@ -151,21 +151,21 @@ the common semantic theme on every paint:
 ```rust
 use sui::prelude::*;
 
-let canvas = Canvas::new("Editor canvas").appearance(CanvasAppearance {
+let canvas = Canvas::new("Editor canvas").colors(CanvasColors {
     background: Some(Color::rgba(0.08, 0.09, 0.11, 1.0)),
     grid: Some(Color::rgba(1.0, 1.0, 1.0, 0.08)),
-    ..CanvasAppearance::default()
+    ..CanvasColors::default()
 });
 
-let picker = ColorPicker::new("Paint color").appearance(ColorPickerAppearance {
+let picker = ColorPicker::new("Paint color").colors(ColorPickerColors {
     checkerboard_dark: Some(Color::rgba(0.35, 0.35, 0.35, 1.0)),
-    ..ColorPickerAppearance::default()
+    ..ColorPickerColors::default()
 });
 ```
 
-The same pattern is available through `CanvasRulerAppearance` and
-`PixelCanvasAppearance`. Applications can wrap these constructors in their own
-widget factory, use a different theme system entirely, or set every appearance
+The same pattern is available through `CanvasRulerColors` and
+`PixelCanvasColors`. Applications can wrap these constructors in their own
+widget factory, use a different theme system entirely, or set every color
 field directly. Theme values remain defaults, not a mandatory styling engine.
 
 ## Applying a Static Theme
@@ -185,7 +185,7 @@ fn dark_form() -> impl Widget {
         Padding::all(
             20.0,
             Stack::vertical()
-                .spacing(10.0)
+                .gap(10.0)
                 .with_child(Label::new("Sign in").theme(theme))
                 .with_child(TextInput::new("Email").theme(theme))
                 .with_child(PasswordInput::new("Password").theme(theme))
@@ -247,7 +247,7 @@ fn theme_switcher() -> impl Widget {
         Padding::all(
             20.0,
             Stack::vertical()
-                .spacing(10.0)
+                .gap(10.0)
                 .with_child(input)
                 .with_child(toggle),
         ),
@@ -304,10 +304,10 @@ Surfaces cast shadows by elevation or by token, and glow by tone. A
 `ShadowBox` does the same around a child that paints its own face:
 
 ```rust,ignore
-Surface::panel(content).radius(12.0).shadow(|theme| theme.shadows.box_shadow.lg);
-Surface::field(content).radius(8.0).shadow(|theme| theme.shadows.inset.sm);
-Surface::panel(content).radius(12.0).glow(GlowTone::Accent);
-ShadowBox::new(image).radius(12.0).shadow(|theme| theme.shadows.box_shadow.md);
+Surface::panel(content).corner_radius(12.0).shadow(|theme| theme.shadows.box_shadow.lg);
+Surface::field(content).corner_radius(8.0).shadow(|theme| theme.shadows.inset.sm);
+Surface::panel(content).corner_radius(12.0).glow(GlowTone::Accent);
+ShadowBox::new(image).corner_radius(12.0).shadow(|theme| theme.shadows.box_shadow.md);
 ```
 
 Custom widgets paint them with `paint_theme_shadow` before their fill,
@@ -385,7 +385,7 @@ fn main() -> Result<()> {
     };
 
     let root = Stack::vertical()
-        .spacing(12.0)
+        .gap(12.0)
         .with_child(Image::new(logo).label("Company logo"))
         .with_child(Label::new("Dashboard").text_style(heading_style));
 

@@ -105,7 +105,7 @@ pub(crate) fn build_layout_demo_with_theme(theme_reader: DevThemeReader) -> impl
         ScrollView::vertical(Padding::all(
             24.0,
             Stack::vertical()
-                .spacing(32.0)
+                .gap(32.0)
                 .alignment(Alignment::Stretch)
                 .with_child(header(&theme_reader))
                 .with_child(frame_bar(&theme_reader, &page))
@@ -136,7 +136,7 @@ pub(crate) fn build_layout_application() -> Application {
 
 fn header(theme_reader: &DevThemeReader) -> impl Widget + use<> {
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(demo_label(
             theme_reader,
@@ -202,7 +202,7 @@ fn frame_bar(theme_reader: &DevThemeReader, page: &PageState) -> impl Widget + u
         .join(" · ");
 
     Stack::vertical()
-        .spacing(10.0)
+        .gap(10.0)
         .alignment(Alignment::Stretch)
         .with_child(
             Flex::horizontal()
@@ -214,7 +214,7 @@ fn frame_bar(theme_reader: &DevThemeReader, page: &PageState) -> impl Widget + u
                     FRAME_WIDTH_NAME,
                     SLIDER_WIDTH,
                     Stack::vertical()
-                        .spacing(2.0)
+                        .gap(2.0)
                         .alignment(Alignment::Stretch)
                         .with_child(slider)
                         .with_child(BreakpointTicks::new(
@@ -252,7 +252,7 @@ where
     NamedSection::new(
         title,
         Stack::vertical()
-            .spacing(12.0)
+            .gap(12.0)
             .alignment(Alignment::Stretch)
             .with_child(demo_label(
                 theme_reader,
@@ -374,7 +374,7 @@ fn flex_section(theme_reader: &DevThemeReader, page: &PageState) -> impl Widget 
         "Flex",
         "Lay items along a row or column. Press a tile to switch it between a fixed size, growing into free space, and growing up to a cap.",
         Stack::vertical()
-            .spacing(14.0)
+            .gap(14.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 control_row()
@@ -532,7 +532,7 @@ fn grid_section(theme_reader: &DevThemeReader, page: &PageState) -> impl Widget 
         "Grid",
         "Choose how each column is sized. The top row reads each track's resolved width; the media cell keeps a 16:9 ratio at any width.",
         Stack::vertical()
-            .spacing(14.0)
+            .gap(14.0)
             .alignment(Alignment::Stretch)
             .with_child(controls)
             .with_child(DeviceFrame::new(
@@ -614,7 +614,7 @@ fn responsive_section(theme_reader: &DevThemeReader, page: &PageState) -> impl W
             Padding::all(
                 12.0,
                 Stack::vertical()
-                    .spacing(20.0)
+                    .gap(20.0)
                     .alignment(Alignment::Stretch)
                     .with_child(example(
                         theme_reader,
@@ -646,7 +646,7 @@ where
     W: Widget + 'static,
 {
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(demo_label(
             theme_reader,
@@ -670,7 +670,7 @@ fn rule_label(theme_reader: &DevThemeReader, rule: &str) -> Label {
 fn container_query_example(theme_reader: &DevThemeReader) -> impl Widget + use<> {
     ConstraintView::new(
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Stretch)
             .with_child(rule_label(
                 theme_reader,
@@ -682,7 +682,7 @@ fn container_query_example(theme_reader: &DevThemeReader) -> impl Widget + use<>
     .when(
         ConstraintQuery::new().min_width(QUERY_WIDE_AT),
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Stretch)
             .with_child(rule_label(theme_reader, "min_width(680): side by side"))
             .with_child(
@@ -715,17 +715,17 @@ fn sidebar_example(theme_reader: &DevThemeReader) -> impl Widget + use<> {
     let record = mode.clone();
 
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(
             Stack::horizontal()
-                .spacing(12.0)
+                .gap(12.0)
                 .alignment(Alignment::Center)
                 .with_child(toggle)
                 .with_child(badge),
         )
         .with_child(
-            SizedBox::new().height(168.0).with_child(
+            SizedBox::new().height(168.0).child(
                 ResponsiveSidebar::new(
                     live_fill(
                         theme_reader,
@@ -733,7 +733,7 @@ fn sidebar_example(theme_reader: &DevThemeReader) -> impl Widget + use<> {
                         Padding::all(
                             12.0,
                             Stack::vertical()
-                                .spacing(8.0)
+                                .gap(8.0)
                                 .alignment(Alignment::Stretch)
                                 .with_child(live_label(theme_reader, "Files"))
                                 .with_child(live_button(theme_reader, "src"))
@@ -783,7 +783,7 @@ fn master_detail_example(theme_reader: &DevThemeReader) -> impl Widget + use<> {
         move |width| {
             record.set(breakpoints.classify(width) == AdaptiveClass::Compact);
         },
-        SizedBox::new().height(176.0).with_child(
+        SizedBox::new().height(176.0).child(
             MasterDetail::new(
                 live_fill(
                     theme_reader,
@@ -791,7 +791,7 @@ fn master_detail_example(theme_reader: &DevThemeReader) -> impl Widget + use<> {
                     Padding::all(
                         12.0,
                         Stack::vertical()
-                            .spacing(8.0)
+                            .gap(8.0)
                             .alignment(Alignment::Stretch)
                             .with_child(live_label(theme_reader, "Documents"))
                             .with_child(live_button(theme_reader, OPEN_DETAIL_LABEL).on_press(
@@ -807,7 +807,7 @@ fn master_detail_example(theme_reader: &DevThemeReader) -> impl Widget + use<> {
                     Padding::all(
                         12.0,
                         Stack::vertical()
-                            .spacing(8.0)
+                            .gap(8.0)
                             .alignment(Alignment::Stretch)
                             .with_child(live_label(theme_reader, "Release notes"))
                             .with_child(back),
@@ -825,7 +825,7 @@ fn toolbar_example(theme_reader: &DevThemeReader) -> impl Widget + use<> {
     let mut toolbar = Toolbar::horizontal()
         .theme_when(clone_dev_theme_reader(theme_reader))
         .wrapping()
-        .line_spacing(8.0)
+        .cross_gap(8.0)
         .divider(false)
         .with_child(Button::primary("Run").theme_when(clone_dev_theme_reader(theme_reader)));
     for action in [
@@ -853,7 +853,7 @@ fn panes_section(theme_reader: &DevThemeReader, page: &PageState) -> impl Widget
         "Panes",
         "Drag the divider. Each pane keeps its minimum, 160 px and 240 px, and the split state outlives the widget.",
         Stack::vertical()
-            .spacing(14.0)
+            .gap(14.0)
             .alignment(Alignment::Stretch)
             .with_child(control_row().with_child(
                 live_button(theme_reader, RESET_SPLIT_LABEL).on_press(move || {
@@ -863,7 +863,7 @@ fn panes_section(theme_reader: &DevThemeReader, page: &PageState) -> impl Widget
             .with_child(DeviceFrame::new(
                 theme_reader,
                 &page.frame,
-                SizedBox::new().height(180.0).with_child(
+                SizedBox::new().height(180.0).child(
                     SplitView::horizontal(
                         SizeTag::new(
                             theme_reader,
@@ -933,7 +933,7 @@ fn safe_area_section(theme_reader: &DevThemeReader, page: &PageState) -> impl Wi
             .with_child(PhoneMock::new(theme_reader, &page.keyboard, screen))
             .with_child(
                 Stack::vertical()
-                    .spacing(12.0)
+                    .gap(12.0)
                     .alignment(Alignment::Start)
                     .with_child(keyboard)
                     .with_child(insets)

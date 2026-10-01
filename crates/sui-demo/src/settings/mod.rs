@@ -59,7 +59,7 @@ pub(crate) fn settings_view(
     let content = Padding::all(
         PADDING,
         Stack::vertical()
-            .spacing(SECTION_GAP)
+            .gap(SECTION_GAP)
             .alignment(Alignment::Stretch)
             .with_child(display_section(theme_reader, &options, &host))
             .with_child(text_section(theme_reader, &options))
@@ -231,9 +231,7 @@ fn section(theme_reader: &DevThemeReader, title: &'static str, rows: Stack) -> P
 }
 
 fn rows() -> Stack {
-    Stack::vertical()
-        .spacing(ROW_GAP)
-        .alignment(Alignment::Stretch)
+    Stack::vertical().gap(ROW_GAP).alignment(Alignment::Stretch)
 }
 
 /// `control` beside its `label`.

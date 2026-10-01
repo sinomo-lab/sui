@@ -103,7 +103,7 @@ fn tabs(ctx: &StoryCtx) -> Vec<Section> {
         Padding::all(
             4.0,
             Stack::vertical()
-                .spacing(6.0)
+                .gap(6.0)
                 .alignment(Alignment::Stretch)
                 .with_child(ctx.text(title))
                 .with_child(ctx.muted(detail)),
@@ -111,7 +111,7 @@ fn tabs(ctx: &StoryCtx) -> Vec<Section> {
     };
     vec![example(
         "",
-        SizedBox::new().width(460.0).height(150.0).with_child(
+        SizedBox::new().width(460.0).height(150.0).child(
             Tabs::new("Inspector tabs")
                 .selected(1)
                 .theme(theme)

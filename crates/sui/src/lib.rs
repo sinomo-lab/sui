@@ -163,25 +163,25 @@ pub use sui_widgets::animation::{
 pub use sui_widgets::{
     ActionCard, AdaptiveBreakpoints, AdaptiveClass, AdaptiveView, AspectRatio, AspectRatioFit,
     BasicSyntaxHighlighter, Breadcrumb, BreadcrumbItem, BrushPreview, BrushPreviewShape,
-    BrushPreviewSpec, Canvas, CanvasAppearance, CanvasGridStyle, CanvasRuler,
-    CanvasRulerAppearance, CanvasRulerAxis, CanvasShape, CanvasStroke, CanvasSurface,
-    CanvasViewport, CanvasZoomBehavior, CanvasZoomContext, CollectionAnchor,
-    CollectionAnchorGravity, CollectionChange, CollectionDelta, CollectionExtentIndex,
-    CollectionModelError, CollectionSync, CollectionWindow, ColorPalette, ColorPaletteSwatch,
-    ColorPicker, ColorPickerAppearance, ColorSwatch, ConstraintOrientation, ConstraintQuery,
-    ConstraintView, ControlMetrics, ControlPalette, ControlSize, ControlTypography, CoverageDots,
-    CoverageDotsConfig, DecorativeColors, DecorativeHue, DecorativePalette, DefaultTheme,
-    DetailRow, DockFloatingGroup, DockLayoutError, DockNode, DockPanelId, DockWorkspace,
-    DockWorkspaceSnapshot, DockWorkspaceState, DockZone, DragDropHost, Draggable, DropHover,
-    DropTarget, EffectToken, FloatingStack, FloatingViewConfig, FloatingViewSnapshot,
-    FloatingWorkspace, FloatingWorkspaceState, GlowTone, Grid, GridCell, HdrColorRoles,
-    HdrEffectTokens, HdrLuminanceTokens, HdrMaterialTokens, HdrPolicyTokens, HdrThemeMode,
-    HdrThemeTokens, Image, ImageFit, LayerList, LayerListItem, LayerListReorderChange,
-    LayoutTransition, LeadingLabelCellPaint, ListItem, ListView, MasterDetail, MasterDetailRoute,
-    MasterDetailState, MaterialToken, NeutralRamp, NotificationCenter, NotificationHost,
-    NotificationId, NotificationUrgency, OverlayAlignment, OverlayCollisionPolicy, OverlayHost,
-    OverlayPlacement, OverlayPlacementRequest, OverlayPlacementResult, OverlaySide, PixelCanvas,
-    PixelCanvasAppearance, PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasExportSnapshot,
+    BrushPreviewSpec, Canvas, CanvasColors, CanvasGridStyle, CanvasRuler, CanvasRulerAxis,
+    CanvasRulerColors, CanvasShape, CanvasStroke, CanvasSurface, CanvasViewport,
+    CanvasZoomBehavior, CanvasZoomContext, CollectionAnchor, CollectionAnchorGravity,
+    CollectionChange, CollectionDelta, CollectionExtentIndex, CollectionModelError, CollectionSync,
+    CollectionWindow, ColorPalette, ColorPaletteSwatch, ColorPicker, ColorPickerColors,
+    ColorSwatch, ConstraintOrientation, ConstraintQuery, ConstraintView, ControlMetrics,
+    ControlPalette, ControlSize, ControlTypography, CoverageDots, CoverageDotsConfig,
+    DecorativeColors, DecorativeHue, DecorativePalette, DefaultTheme, DetailRow, DockFloatingGroup,
+    DockLayoutError, DockNode, DockPanelId, DockWorkspace, DockWorkspaceSnapshot,
+    DockWorkspaceState, DockZone, DragDropHost, Draggable, DropHover, DropTarget, EffectToken,
+    FloatingStack, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,
+    FloatingWorkspaceState, GlowTone, Grid, GridCell, HdrColorRoles, HdrEffectTokens,
+    HdrLuminanceTokens, HdrMaterialTokens, HdrPolicyTokens, HdrThemeMode, HdrThemeTokens, Image,
+    ImageFit, LayerList, LayerListItem, LayerListReorderChange, LayoutTransition,
+    LeadingLabelCellPaint, ListItem, ListView, MasterDetail, MasterDetailRoute, MasterDetailState,
+    MaterialToken, NeutralRamp, NotificationCenter, NotificationHost, NotificationId,
+    NotificationUrgency, OverlayAlignment, OverlayCollisionPolicy, OverlayHost, OverlayPlacement,
+    OverlayPlacementRequest, OverlayPlacementResult, OverlaySide, PixelCanvas,
+    PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasColors, PixelCanvasExportSnapshot,
     PixelCanvasState, PixelCanvasTool, PlacementBadge, PlacementBadgePaint, ReorderableList,
     ReorderableListChange, ResolvedEffectStyle, ResolvedHdrStyle, ResolvedMaterialStyle,
     ResponsiveSidebar, ResponsiveSidebarMode, ResponsiveSidebarSnapshot, ResponsiveSidebarState,
@@ -216,7 +216,10 @@ pub use sui_widgets::{
 };
 // Former names, kept so existing code keeps building; naming one warns.
 #[allow(deprecated)]
-pub use sui_widgets::{DataGrid, PathBar, ResizablePane};
+pub use sui_widgets::{
+    CanvasAppearance, CanvasRulerAppearance, ColorPickerAppearance, DataGrid, PathBar,
+    PixelCanvasAppearance, ResizablePane,
+};
 pub use sui_widgets::{KeyedStack, Presence, PresenceTransition};
 pub use sui_widgets::{Paragraph, TextPlacement, TextShaper, VerticalAlign};
 
@@ -742,7 +745,8 @@ pub mod prelude {
     // Former names, kept so existing code keeps building; naming one warns.
     #[allow(deprecated)]
     pub use crate::{
-        BusyIndicator, ComboBox, DataGrid, Divider, Drawer, Modal, MultilineTextInput, PathBar,
+        BusyIndicator, CanvasAppearance, CanvasRulerAppearance, ColorPickerAppearance, ComboBox,
+        DataGrid, Divider, Drawer, Modal, MultilineTextInput, PathBar, PixelCanvasAppearance,
         ResizablePane, SpinBox,
     };
 
@@ -753,14 +757,14 @@ pub mod prelude {
         AnimationTargetId, AnimationTick, AnimationValue, AnimationValueKind, App, ArrangeCtx,
         AspectRatio, AspectRatioFit, AsyncWakeToken, Axis, Background, BasicSyntaxHighlighter,
         Blink, BottomSheet, Breadcrumb, BreadcrumbItem, BrowserTabBar, Brush, BrushPreview,
-        BrushPreviewShape, BrushPreviewSpec, Button, ButtonAppearance, Canvas, CanvasAppearance,
-        CanvasGridStyle, CanvasRuler, CanvasRulerAppearance, CanvasRulerAxis, CanvasShape,
+        BrushPreviewShape, BrushPreviewSpec, Button, ButtonAppearance, Canvas, CanvasColors,
+        CanvasGridStyle, CanvasRuler, CanvasRulerAxis, CanvasRulerColors, CanvasShape,
         CanvasStroke, CanvasSurface, CanvasViewport, CanvasZoomBehavior, CanvasZoomContext,
         Checkbox, ChoiceAppearance, Clip, CollectionAnchor, CollectionAnchorGravity,
         CollectionChange, CollectionDelta, CollectionExtentIndex, CollectionModelError,
         CollectionSync, CollectionWindow, Color, ColorPalette, ColorPaletteSwatch, ColorPicker,
-        ColorPickerAppearance, ColorSwatch, Command, CommandController, CommandCtx,
-        CommandDelivery, CommandGroup, CommandKey, CommandPalette, CommandSender, CommandTarget,
+        ColorPickerColors, ColorSwatch, Command, CommandController, CommandCtx, CommandDelivery,
+        CommandGroup, CommandKey, CommandPalette, CommandSender, CommandTarget,
         ConstraintOrientation, ConstraintQuery, ConstraintView, Constraints, ContentExtent,
         ContextMenu, ContextMenuHandle, ControlMetrics, ControlPalette, ControlSize,
         ControlTypography, CoverageDots, CoverageDotsConfig, CursorGrabMode, DateTimeInput,
@@ -785,7 +789,7 @@ pub mod prelude {
         OverlayDismissPolicy, OverlayDismissReason, OverlayFocusBehavior, OverlayHost, OverlayKind,
         OverlayOptions, OverlayPlacement, OverlayPlacementRequest, OverlayPlacementResult,
         OverlaySide, Padding, PaintCtx, PanelSection, PasswordInput, Path, PathBuilder,
-        PixelCanvas, PixelCanvasAppearance, PixelCanvasBlendMode, PixelCanvasBrushShape,
+        PixelCanvas, PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasColors,
         PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool, PlacementBadge,
         PlaybackState, Point, PointerButton, PointerEvent, Popover, Presence, PresenceTransition,
         PresetStrip, Progress, ProgressBar, PropertyRow, PropertyRowLayout, Pulse, RadioButton,

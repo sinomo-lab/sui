@@ -80,7 +80,7 @@ pub(crate) fn build_page(
         .state(scroll_state)
         .padding(PAGE_PADDING)
         // Items own their trailing gaps so filtered items collapse completely.
-        .spacing(0.0)
+        .gap(0.0)
         .theme_when({
             let theme_reader = Rc::clone(&theme_reader);
             move || theme_reader()
@@ -150,7 +150,7 @@ fn intro(theme_reader: DevThemeReader) -> impl Widget {
     let components = stories().len();
     let categories = Category::ALL.len();
     Stack::vertical()
-        .spacing(6.0)
+        .gap(6.0)
         .alignment(Alignment::Start)
         .with_child(demo_label(
             &theme_reader,
@@ -177,7 +177,7 @@ fn intro(theme_reader: DevThemeReader) -> impl Widget {
 
 fn no_results(theme_reader: DevThemeReader) -> impl Widget {
     Stack::vertical()
-        .spacing(6.0)
+        .gap(6.0)
         .alignment(Alignment::Start)
         .with_child(demo_label(
             &theme_reader,
@@ -208,11 +208,11 @@ fn category_header(category: Category, theme: DefaultTheme) -> impl Widget {
     NamedSection::new(
         category_region_name(category),
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 Stack::horizontal()
-                    .spacing(10.0)
+                    .gap(10.0)
                     .alignment(Alignment::Center)
                     .with_child(ColorDot::new(10.0, move || hue))
                     .with_child(Label::new(category.title()).text_style(demo_text_style(
@@ -240,7 +240,7 @@ pub(crate) fn story_block(story: &'static Story, theme: DefaultTheme) -> impl Wi
     NamedSection::new(
         story.region_name(),
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 Flex::horizontal()
@@ -273,9 +273,9 @@ pub(crate) fn story_block(story: &'static Story, theme: DefaultTheme) -> impl Wi
 
 fn section_stack(sections: Vec<Section>, theme: DefaultTheme) -> Stack {
     sections.into_iter().fold(
-        Stack::vertical().spacing(24.0).alignment(Alignment::Start),
+        Stack::vertical().gap(24.0).alignment(Alignment::Start),
         |stack, section| {
-            let mut column = Stack::vertical().spacing(12.0).alignment(Alignment::Start);
+            let mut column = Stack::vertical().gap(12.0).alignment(Alignment::Start);
             if let Some(caption) = section.caption {
                 column = column.with_child(Label::new(caption).text_style(demo_text_style(
                     theme,

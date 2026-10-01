@@ -44,8 +44,13 @@ impl OverlayHost {
         }
     }
 
-    pub fn child(&self) -> &WidgetPod {
+    pub fn child_pod(&self) -> &WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -380,6 +385,13 @@ pub struct TransientNotification {
     pub urgency: NotificationUrgency,
 }
 
+impl Default for TransientNotification {
+    /// An empty notification with a fresh identifier.
+    fn default() -> Self {
+        Self::new("", "")
+    }
+}
+
 impl TransientNotification {
     pub fn new(title: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
@@ -391,8 +403,10 @@ impl TransientNotification {
         }
     }
 
+    /// Expire the notification after `seconds`; the host treats a negative
+    /// or non-finite time as zero.
     pub fn duration(mut self, seconds: f64) -> Self {
-        self.duration = Some(seconds.max(0.0));
+        self.duration = Some(seconds);
         self
     }
 
@@ -617,6 +631,11 @@ impl NotificationHost {
             if self.scheduled.contains_key(&notification.id) {
                 continue;
             }
+            let duration = if duration.is_finite() {
+                duration.max(0.0)
+            } else {
+                0.0
+            };
             let token = ctx.schedule_timer_after(duration);
             self.scheduled.insert(notification.id, token);
             self.timers.insert(token, notification.id);

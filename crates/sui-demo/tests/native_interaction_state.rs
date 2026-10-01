@@ -26,10 +26,10 @@ fn interaction_fixture() -> Application {
                     .with_child(Padding::all(
                         24.0,
                         sui::Stack::vertical()
-                            .spacing(16.0)
+                            .gap(16.0)
                             .alignment(Alignment::Start)
                             .with_child(Button::new(BUTTON_LABEL).min_width(170.0))
-                            .with_child(SizedBox::new().width(240.0).with_child(
+                            .with_child(SizedBox::new().width(240.0).child(
                                 TextInput::new(TEXT_INPUT_LABEL).placeholder("Search layers"),
                             ))
                             .with_child(Checkbox::new(CHECKBOX_LABEL)),

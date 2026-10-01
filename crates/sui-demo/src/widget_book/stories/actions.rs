@@ -229,9 +229,7 @@ fn icon_button(ctx: &StoryCtx) -> Vec<Section> {
         example(
             "Glyphs",
             glyphs.iter().fold(
-                Stack::horizontal()
-                    .spacing(8.0)
-                    .alignment(Alignment::Center),
+                Stack::horizontal().gap(8.0).alignment(Alignment::Center),
                 |row, glyph| {
                     row.with_child(IconButton::new(*glyph, format!("{glyph:?}")).theme(theme))
                 },
@@ -329,7 +327,7 @@ fn toolbar(ctx: &StoryCtx) -> Vec<Section> {
     vec![
         example(
             "Horizontal toolbar",
-            SizedBox::new().width(520.0).with_child(document_toolbar),
+            SizedBox::new().width(520.0).child(document_toolbar),
         ),
         strip(
             theme,
@@ -358,7 +356,7 @@ fn toolbar(ctx: &StoryCtx) -> Vec<Section> {
                 (
                     "Vertical toolbar",
                     boxed(
-                        SizedBox::new().height(150.0).with_child(
+                        SizedBox::new().height(150.0).child(
                             Toolbar::vertical()
                                 .name("Side toolbar")
                                 .theme(theme)

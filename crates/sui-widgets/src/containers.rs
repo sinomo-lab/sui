@@ -117,8 +117,13 @@ impl Padding {
         self
     }
 
-    pub fn child(&self) -> &WidgetPod {
+    pub fn child_pod(&self) -> &WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -227,8 +232,13 @@ impl Align {
         Self::new(Alignment::Center, Alignment::Center, child)
     }
 
-    pub fn child(&self) -> &WidgetPod {
+    pub fn child_pod(&self) -> &WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -341,8 +351,13 @@ impl Background {
         self
     }
 
-    pub fn child(&self) -> &WidgetPod {
+    pub fn child_pod(&self) -> &WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -444,8 +459,13 @@ impl SemanticRegion {
         self
     }
 
-    pub fn child(&self) -> &WidgetPod {
+    pub fn child_pod(&self) -> &WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -539,7 +559,7 @@ impl SizedBox {
         self
     }
 
-    pub fn with_child<W>(mut self, child: W) -> Self
+    pub fn child<W>(mut self, child: W) -> Self
     where
         W: Widget + 'static,
     {
@@ -547,7 +567,15 @@ impl SizedBox {
         self
     }
 
-    pub fn child(&self) -> Option<&WidgetPod> {
+    #[deprecated(note = "use `child`")]
+    pub fn with_child<W>(self, child: W) -> Self
+    where
+        W: Widget + 'static,
+    {
+        self.child(child)
+    }
+
+    pub fn child_pod(&self) -> Option<&WidgetPod> {
         self.child.as_ref().map(SingleChild::child)
     }
 
@@ -675,9 +703,14 @@ impl Stack {
         Self::new(Axis::Vertical)
     }
 
-    pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = spacing.max(0.0);
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.spacing = gap.max(0.0);
         self
+    }
+
+    #[deprecated(note = "use `gap`")]
+    pub fn spacing(self, spacing: f32) -> Self {
+        self.gap(spacing)
     }
 
     pub fn alignment(mut self, alignment: Alignment) -> Self {
@@ -1926,8 +1959,13 @@ impl<K: PartialEq + Clone> RebuildOnChange<K> {
         }
     }
 
-    pub fn child(&self) -> &WidgetPod {
+    pub fn child_pod(&self) -> &WidgetPod {
         &self.child
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -2043,8 +2081,13 @@ impl<K: PartialEq + Clone> RebuildOnConstraints<K> {
         }
     }
 
-    pub fn child(&self) -> &WidgetPod {
+    pub fn child_pod(&self) -> &WidgetPod {
         &self.child
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -3688,8 +3731,13 @@ impl ScrollView {
         self.offset = self.state.current_offset();
     }
 
-    pub fn child(&self) -> &WidgetPod {
+    pub fn child_pod(&self) -> &WidgetPod {
         self.child.child()
+    }
+
+    #[deprecated(note = "use `child_pod`")]
+    pub fn child(&self) -> &WidgetPod {
+        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -4011,9 +4059,14 @@ impl VirtualScrollView {
         self
     }
 
-    pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = spacing.max(0.0);
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.spacing = gap.max(0.0);
         self
+    }
+
+    #[deprecated(note = "use `gap`")]
+    pub fn spacing(self, spacing: f32) -> Self {
+        self.gap(spacing)
     }
 
     pub fn state(mut self, state: ScrollState) -> Self {
@@ -6365,12 +6418,12 @@ mod tests {
                 .with_child(
                     SizedBox::new()
                         .size(Size::new(80.0, 24.0))
-                        .with_child(crate::Label::new("Brush options")),
+                        .child(crate::Label::new("Brush options")),
                 )
                 .with_child(
                     SizedBox::new()
                         .size(Size::new(120.0, 36.0))
-                        .with_child(crate::Label::new("Fill options")),
+                        .child(crate::Label::new("Fill options")),
                 ),
         );
 
@@ -6406,12 +6459,12 @@ mod tests {
                 .with_child(
                     SizedBox::new()
                         .size(Size::new(80.0, 24.0))
-                        .with_child(crate::Label::new("Brush options")),
+                        .child(crate::Label::new("Brush options")),
                 )
                 .with_child(
                     SizedBox::new()
                         .size(Size::new(120.0, 36.0))
-                        .with_child(crate::Label::new("Fill options")),
+                        .child(crate::Label::new("Fill options")),
                 ),
         );
 
@@ -6464,7 +6517,7 @@ mod tests {
     #[test]
     fn padding_can_stretch_child_to_arranged_content_height() {
         let (_output, graph) = render_root(
-            SizedBox::new().size(Size::new(100.0, 80.0)).with_child(
+            SizedBox::new().size(Size::new(100.0, 80.0)).child(
                 Padding::new(
                     Insets {
                         left: 8.0,
@@ -6483,7 +6536,7 @@ mod tests {
 
     #[test]
     fn align_centers_child_within_available_space() {
-        let (output, graph) = render_root(SizedBox::new().size(Size::new(100.0, 60.0)).with_child(
+        let (output, graph) = render_root(SizedBox::new().size(Size::new(100.0, 60.0)).child(
             Align::center(FixedBox::new(
                 Size::new(20.0, 10.0),
                 Color::rgba(0.4, 0.3, 0.2, 1.0),
@@ -6496,7 +6549,7 @@ mod tests {
 
     #[test]
     fn sized_box_applies_explicit_dimensions_to_child() {
-        let (output, graph) = render_root(SizedBox::new().width(40.0).height(24.0).with_child(
+        let (output, graph) = render_root(SizedBox::new().width(40.0).height(24.0).child(
             FixedBox::new(Size::new(12.0, 8.0), Color::rgba(0.1, 0.7, 0.2, 1.0)),
         ));
 
@@ -6507,7 +6560,7 @@ mod tests {
     #[test]
     fn trailing_slot_row_places_fixed_trailing_slot() {
         let (output, graph) = render_root(
-            SizedBox::new().size(Size::new(200.0, 80.0)).with_child(
+            SizedBox::new().size(Size::new(200.0, 80.0)).child(
                 TrailingSlotRow::new(
                     FixedBox::new(Size::new(120.0, 64.0), Color::rgba(0.1, 0.7, 0.2, 1.0)),
                     FixedBox::new(Size::new(40.0, 40.0), Color::rgba(0.7, 0.2, 0.2, 1.0)),
@@ -6526,7 +6579,7 @@ mod tests {
     #[test]
     fn dock_places_fixed_top_bottom_and_fills_body() {
         let (output, graph) = render_root(
-            SizedBox::new().size(Size::new(200.0, 120.0)).with_child(
+            SizedBox::new().size(Size::new(200.0, 120.0)).child(
                 Dock::new(FixedBox::new(
                     Size::new(50.0, 50.0),
                     Color::rgba(0.1, 0.7, 0.2, 1.0),
@@ -6550,13 +6603,12 @@ mod tests {
 
     #[test]
     fn measured_bottom_dock_places_natural_bottom_at_bottom_edge() {
-        let (output, graph) =
-            render_root(SizedBox::new().size(Size::new(200.0, 120.0)).with_child(
-                MeasuredBottomDock::new(
-                    FixedBox::new(Size::new(50.0, 50.0), Color::rgba(0.1, 0.7, 0.2, 1.0)),
-                    FixedBox::new(Size::new(60.0, 26.0), Color::rgba(0.8, 0.2, 0.2, 1.0)),
-                ),
-            ));
+        let (output, graph) = render_root(SizedBox::new().size(Size::new(200.0, 120.0)).child(
+            MeasuredBottomDock::new(
+                FixedBox::new(Size::new(50.0, 50.0), Color::rgba(0.1, 0.7, 0.2, 1.0)),
+                FixedBox::new(Size::new(60.0, 26.0), Color::rgba(0.8, 0.2, 0.2, 1.0)),
+            ),
+        ));
 
         assert_eq!(output.frame.viewport, Size::new(200.0, 120.0));
         assert_eq!(graph.nodes[2].bounds, Rect::new(0.0, 0.0, 200.0, 94.0));
@@ -6566,7 +6618,7 @@ mod tests {
     #[test]
     fn fixed_pane_split_preserves_fixed_first_and_stretches_cross_axis() {
         let (output, graph) = render_root(
-            SizedBox::new().size(Size::new(200.0, 80.0)).with_child(
+            SizedBox::new().size(Size::new(200.0, 80.0)).child(
                 FixedPaneSplit::horizontal(
                     FixedBox::new(Size::new(80.0, 12.0), Color::rgba(0.1, 0.7, 0.2, 1.0)),
                     FixedBox::new(Size::new(1.0, 80.0), Color::rgba(0.7, 0.7, 0.7, 1.0)),
@@ -6586,7 +6638,7 @@ mod tests {
     #[test]
     fn fixed_pane_split_preserves_fixed_second_and_shrinks_to_fit() {
         let (output, graph) = render_root(
-            SizedBox::new().size(Size::new(90.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(90.0, 40.0)).child(
                 FixedPaneSplit::horizontal(
                     FixedBox::new(Size::new(80.0, 12.0), Color::rgba(0.1, 0.7, 0.2, 1.0)),
                     FixedBox::new(Size::new(1.0, 40.0), Color::rgba(0.7, 0.7, 0.7, 1.0)),
@@ -6606,9 +6658,9 @@ mod tests {
     #[test]
     fn stack_positions_children_with_spacing_and_alignment() {
         let (output, graph) = render_root(
-            SizedBox::new().size(Size::new(100.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(100.0, 40.0)).child(
                 Stack::horizontal()
-                    .spacing(5.0)
+                    .gap(5.0)
                     .alignment(Alignment::Center)
                     .with_child(FixedBox::new(
                         Size::new(30.0, 10.0),
@@ -6629,7 +6681,7 @@ mod tests {
     #[test]
     fn flex_grows_child_to_fill_available_main_axis_space() {
         let (output, graph) = render_root(
-            SizedBox::new().size(Size::new(100.0, 20.0)).with_child(
+            SizedBox::new().size(Size::new(100.0, 20.0)).child(
                 Flex::horizontal()
                     .with_child(FixedBox::new(
                         Size::new(20.0, 10.0),
@@ -6651,9 +6703,11 @@ mod tests {
     fn flex_remeasures_wrapping_label_at_resolved_width() {
         const TEXT: &str =
             "Provider verification status and usage limits are shared across the cluster.";
-        let (output, _) = render_root(SizedBox::new().width(240.0).with_child(
-            Flex::horizontal().with_item(crate::Label::new(TEXT), FlexItem::flex(1.0)),
-        ));
+        let (output, _) = render_root(
+            SizedBox::new()
+                .width(240.0)
+                .child(Flex::horizontal().with_item(crate::Label::new(TEXT), FlexItem::flex(1.0))),
+        );
 
         let label = output
             .semantics
@@ -6682,7 +6736,7 @@ mod tests {
     #[test]
     fn flex_spacer_pushes_following_children_to_remaining_edge() {
         let (_, graph) = render_root(
-            SizedBox::new().size(Size::new(100.0, 10.0)).with_child(
+            SizedBox::new().size(Size::new(100.0, 10.0)).child(
                 Flex::horizontal()
                     .with_child(FixedBox::new(
                         Size::new(10.0, 10.0),
@@ -6703,7 +6757,7 @@ mod tests {
     #[test]
     fn flex_wraps_children_and_applies_cross_gap() {
         let (output, graph) = render_root(
-            SizedBox::new().size(Size::new(70.0, 25.0)).with_child(
+            SizedBox::new().size(Size::new(70.0, 25.0)).child(
                 Flex::horizontal()
                     .wrap(FlexWrap::Wrap)
                     .main_gap(5.0)
@@ -6732,7 +6786,7 @@ mod tests {
     #[test]
     fn flex_stretches_children_on_cross_axis() {
         let (_, graph) = render_root(
-            SizedBox::new().size(Size::new(60.0, 20.0)).with_child(
+            SizedBox::new().size(Size::new(60.0, 20.0)).child(
                 Flex::horizontal()
                     .align_items(Alignment::Stretch)
                     .with_child(FixedBox::new(
@@ -6798,7 +6852,7 @@ mod tests {
     fn stack_vertical_axis_is_available() {
         let (output, graph) = render_root(
             Stack::new(Axis::Vertical)
-                .spacing(4.0)
+                .gap(4.0)
                 .with_child(FixedBox::new(
                     Size::new(18.0, 10.0),
                     Color::rgba(0.5, 0.5, 0.1, 1.0),
@@ -6823,7 +6877,7 @@ mod tests {
                 Padding::all(
                     18.0,
                     Stack::vertical()
-                        .spacing(10.0)
+                        .gap(10.0)
                         .with_child(FixedBox::new(
                             Size::new(50.0, 12.0),
                             Color::rgba(0.7, 0.2, 0.2, 1.0),
@@ -6846,13 +6900,14 @@ mod tests {
 
     #[test]
     fn scroll_view_updates_child_bounds_after_scroll_input() {
-        let (mut runtime, window_id) =
-            build_runtime(SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
-                ScrollView::vertical(FixedBox::new(
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(80.0, 40.0))
+                .child(ScrollView::vertical(FixedBox::new(
                     Size::new(80.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
-                )),
-            ));
+                ))),
+        );
 
         let _ = runtime.render(window_id).unwrap();
         let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
@@ -6908,7 +6963,7 @@ mod tests {
     fn scroll_view_translates_retained_content_without_repainting() {
         let counts = Rc::new(RefCell::new(vec![0usize; 2]));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 60.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 60.0)).child(
                 ScrollView::vertical(
                     Stack::vertical()
                         .with_child(PaintCounterBox::new(
@@ -6955,7 +7010,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new()
                 .size(Size::new(80.0, 60.0))
-                .with_child(ScrollView::vertical(
+                .child(ScrollView::vertical(
                     Stack::vertical()
                         .with_child(PaintCounterBox::new(
                             Size::new(80.0, 60.0),
@@ -6995,7 +7050,7 @@ mod tests {
         let nested_paints = Rc::new(RefCell::new(0usize));
         let sibling_paints = Rc::new(RefCell::new(vec![0usize]));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 60.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 60.0)).child(
                 ScrollView::vertical(
                     Stack::vertical()
                         .with_child(LayeredScrollPaintBox {
@@ -7050,7 +7105,7 @@ mod tests {
     fn scroll_view_hit_testing_tracks_retained_content_translation() {
         let presses = Rc::new(RefCell::new(vec![0usize; 2]));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 ScrollView::vertical(
                     Stack::vertical()
                         .with_child(HitTestBox::new(
@@ -7086,7 +7141,7 @@ mod tests {
 
     #[test]
     fn scroll_view_uses_scroll_layer_metadata() {
-        let (output, _) = render_root(SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+        let (output, _) = render_root(SizedBox::new().size(Size::new(80.0, 40.0)).child(
             ScrollView::vertical(FixedBox::new(
                 Size::new(80.0, 120.0),
                 Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -7112,7 +7167,7 @@ mod tests {
             let state = ScrollState::new();
             let presses = Rc::new(RefCell::new(vec![0]));
             let (mut runtime, window_id) = build_runtime(
-                SizedBox::new().size(Size::new(100.0, 100.0)).with_child(
+                SizedBox::new().size(Size::new(100.0, 100.0)).child(
                     ScrollView::both(HitTestBox::new(content, Rc::clone(&presses), 0))
                         .state(state.clone())
                         .name("Canvas"),
@@ -7179,7 +7234,7 @@ mod tests {
         let short = Signal::new(false);
         let state = ScrollState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(100.0, 80.0)).with_child(
+            SizedBox::new().size(Size::new(100.0, 80.0)).child(
                 ScrollView::vertical(ResponsiveContent {
                     short: short.clone(),
                 })
@@ -7213,7 +7268,7 @@ mod tests {
     fn hidden_scrollbars_keep_the_full_scroll_viewport() {
         let state = ScrollState::new();
         let (output, _) = render_root(
-            SizedBox::new().size(Size::new(100.0, 80.0)).with_child(
+            SizedBox::new().size(Size::new(100.0, 80.0)).child(
                 ScrollView::both(FixedBox::new(Size::new(240.0, 240.0), Color::WHITE))
                     .state(state.clone())
                     .scroll_bars(false),
@@ -7233,7 +7288,7 @@ mod tests {
     fn scroll_view_reserves_scroll_bar_space_only_when_content_overflows() {
         let theme = DefaultTheme::default();
         let (overflowing, graph) = render_root(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 ScrollView::vertical(OverflowingBox::new(
                     Size::new(80.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -7280,7 +7335,7 @@ mod tests {
         );
 
         let (fitting, _) = render_root(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 ScrollView::vertical(FixedBox::new(
                     Size::new(80.0, 40.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -7301,7 +7356,7 @@ mod tests {
     fn embedded_overlay_scroll_bar_drags_the_shared_view_state() {
         let state = ScrollState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 60.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 60.0)).child(
                 ScrollView::vertical(OverflowingBox::new(
                     Size::new(80.0, 180.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -7350,7 +7405,7 @@ mod tests {
         let state = ScrollState::new();
         let counts = Rc::new(RefCell::new(vec![0usize]));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 60.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 60.0)).child(
                 ScrollView::vertical(PaintCounterBox::new(
                     Size::new(80.0, 180.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -7385,7 +7440,7 @@ mod tests {
         let state = ScrollState::new();
         let counts = Rc::new(RefCell::new(vec![0usize]));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 60.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 60.0)).child(
                 ScrollView::vertical(PaintCounterBox::new(
                     Size::new(80.0, 180.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -7446,11 +7501,8 @@ mod tests {
                 index,
             ));
         }
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(80.0, 80.0))
-                .with_child(scroll),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(80.0, 80.0)).child(scroll));
         let output = runtime.render(window_id).unwrap();
         assert_eq!(*counts.borrow(), vec![1, 1, 1, 1]);
         let scroll_bar = output
@@ -7473,7 +7525,7 @@ mod tests {
     #[test]
     fn both_axis_scroll_bars_reserve_space_and_share_the_corner() {
         let (output, graph) = render_root(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 ScrollView::both(OverflowingBox::new(
                     Size::new(160.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -7507,7 +7559,7 @@ mod tests {
     fn virtual_scroll_view_overlays_a_synchronized_vertical_scroll_bar() {
         let state = ScrollState::new();
         let (output, _) = render_root(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 VirtualScrollView::new()
                     .name("Timeline")
                     .state(state.clone())
@@ -7542,7 +7594,7 @@ mod tests {
     fn scroll_view_auto_overflow_uses_finite_width_and_natural_height() {
         let seen = Rc::new(RefCell::new(Vec::new()));
         let (output, _) = render_root(
-            SizedBox::new().size(Size::new(120.0, 60.0)).with_child(
+            SizedBox::new().size(Size::new(120.0, 60.0)).child(
                 ScrollView::both(ConstraintProbe::new(
                     Size::new(90.0, 180.0),
                     Rc::clone(&seen),
@@ -7569,7 +7621,7 @@ mod tests {
     fn scroll_view_content_extent_can_require_at_least_the_viewport() {
         let seen = Rc::new(RefCell::new(Vec::new()));
         let (_, _) = render_root(
-            SizedBox::new().size(Size::new(120.0, 60.0)).with_child(
+            SizedBox::new().size(Size::new(120.0, 60.0)).child(
                 ScrollView::both(ConstraintProbe::new(
                     Size::new(40.0, 20.0),
                     Rc::clone(&seen),
@@ -7607,7 +7659,7 @@ mod tests {
     #[test]
     fn vertical_scroll_view_clamps_cross_axis_after_split_arrange() {
         let (_, graph) = render_root(
-            SizedBox::new().size(Size::new(240.0, 80.0)).with_child(
+            SizedBox::new().size(Size::new(240.0, 80.0)).child(
                 SplitView::horizontal(
                     FixedBox::new(Size::new(40.0, 80.0), Color::rgba(0.1, 0.2, 0.3, 1.0)),
                     ScrollView::vertical(Padding::all(
@@ -7642,7 +7694,7 @@ mod tests {
     #[test]
     fn scroll_view_visible_overflow_does_not_scroll_or_use_scroll_layer() {
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 ScrollView::vertical(OverflowingBox::new(
                     Size::new(80.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -7680,7 +7732,7 @@ mod tests {
     #[test]
     fn virtual_scroll_view_uses_scroll_layer_metadata() {
         let (output, _) = render_root(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 VirtualScrollView::new()
                     .with_child(FixedBox::new(
                         Size::new(80.0, 40.0),
@@ -7711,7 +7763,7 @@ mod tests {
         assert!(state.scroll_to_item(2));
 
         let (output, _) = render_root(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 VirtualScrollView::new()
                     .state(state.clone())
                     .with_child(SemanticRegion::new(
@@ -7751,10 +7803,10 @@ mod tests {
         assert!(state.scroll_to_item(1));
 
         let _ = render_root(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 VirtualScrollView::new()
                     .state(state.clone())
-                    .spacing(4.0)
+                    .gap(4.0)
                     .with_child(FixedBox::new(
                         Size::new(80.0, 20.0),
                         Color::rgba(0.8, 0.2, 0.2, 1.0),
@@ -7785,7 +7837,7 @@ mod tests {
     fn virtual_scroll_view_paints_only_visible_children() {
         let counts = Rc::new(RefCell::new(vec![0usize; 4]));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 VirtualScrollView::new()
                     .with_child(PaintCounterBox::new(
                         Size::new(80.0, 30.0),
@@ -7835,7 +7887,7 @@ mod tests {
     fn scroll_view_emits_transform_updates_after_scroll_offset_changes() {
         let counts = Rc::new(RefCell::new(vec![0usize; 1]));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 ScrollView::vertical(PaintCounterBox::new(
                     Size::new(80.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -7869,7 +7921,7 @@ mod tests {
     #[test]
     fn split_view_scroll_without_paint_still_updates_runtime_scene() {
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(360.0, 220.0)).with_child(
+            SizedBox::new().size(Size::new(360.0, 220.0)).child(
                 SplitView::horizontal(
                     ScrollViewNoPaint::vertical(
                         Stack::vertical()
@@ -7916,7 +7968,7 @@ mod tests {
         // into the visible range.
         let counts = Rc::new(RefCell::new(vec![0usize; 4]));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 80.0)).child(
                 VirtualScrollView::new()
                     .with_child(PaintCounterBox::new(
                         Size::new(80.0, 30.0),
@@ -7976,7 +8028,7 @@ mod tests {
     fn virtual_scroll_view_repaints_when_a_visible_layered_child_changes_height() {
         let counts = Rc::new(RefCell::new(vec![0usize; 2]));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 80.0)).child(
                 VirtualScrollView::new()
                     .with_child(ExpandingLayerBox::new(
                         Size::new(80.0, 30.0),
@@ -8008,29 +8060,25 @@ mod tests {
 
     #[test]
     fn nested_scroll_views_scroll_the_inner_region_first() {
-        let (mut runtime, window_id) =
-            build_runtime(
-                SizedBox::new()
-                    .size(Size::new(80.0, 80.0))
-                    .with_child(ScrollView::vertical(
-                        Stack::vertical()
-                            .spacing(8.0)
-                            .with_child(FixedBox::new(
-                                Size::new(80.0, 32.0),
-                                Color::rgba(0.8, 0.2, 0.2, 1.0),
-                            ))
-                            .with_child(SizedBox::new().height(40.0).with_child(
-                                ScrollView::vertical(FixedBox::new(
-                                    Size::new(80.0, 120.0),
-                                    Color::rgba(0.2, 0.7, 0.3, 1.0),
-                                )),
-                            ))
-                            .with_child(FixedBox::new(
-                                Size::new(80.0, 140.0),
-                                Color::rgba(0.2, 0.3, 0.8, 1.0),
-                            )),
-                    )),
-            );
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(80.0, 80.0))
+                .child(ScrollView::vertical(
+                    Stack::vertical()
+                        .gap(8.0)
+                        .with_child(FixedBox::new(
+                            Size::new(80.0, 32.0),
+                            Color::rgba(0.8, 0.2, 0.2, 1.0),
+                        ))
+                        .with_child(SizedBox::new().height(40.0).child(ScrollView::vertical(
+                            FixedBox::new(Size::new(80.0, 120.0), Color::rgba(0.2, 0.7, 0.3, 1.0)),
+                        )))
+                        .with_child(FixedBox::new(
+                            Size::new(80.0, 140.0),
+                            Color::rgba(0.2, 0.3, 0.8, 1.0),
+                        )),
+                )),
+        );
 
         let _ = runtime.render(window_id).unwrap();
         let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 52.0));
@@ -8066,29 +8114,25 @@ mod tests {
 
     #[test]
     fn nested_scroll_views_fall_back_to_parent_at_inner_limit() {
-        let (mut runtime, window_id) =
-            build_runtime(
-                SizedBox::new()
-                    .size(Size::new(80.0, 80.0))
-                    .with_child(ScrollView::vertical(
-                        Stack::vertical()
-                            .spacing(8.0)
-                            .with_child(FixedBox::new(
-                                Size::new(80.0, 32.0),
-                                Color::rgba(0.8, 0.2, 0.2, 1.0),
-                            ))
-                            .with_child(SizedBox::new().height(40.0).with_child(
-                                ScrollView::vertical(FixedBox::new(
-                                    Size::new(80.0, 120.0),
-                                    Color::rgba(0.2, 0.7, 0.3, 1.0),
-                                )),
-                            ))
-                            .with_child(FixedBox::new(
-                                Size::new(80.0, 140.0),
-                                Color::rgba(0.2, 0.3, 0.8, 1.0),
-                            )),
-                    )),
-            );
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(80.0, 80.0))
+                .child(ScrollView::vertical(
+                    Stack::vertical()
+                        .gap(8.0)
+                        .with_child(FixedBox::new(
+                            Size::new(80.0, 32.0),
+                            Color::rgba(0.8, 0.2, 0.2, 1.0),
+                        ))
+                        .with_child(SizedBox::new().height(40.0).child(ScrollView::vertical(
+                            FixedBox::new(Size::new(80.0, 120.0), Color::rgba(0.2, 0.7, 0.3, 1.0)),
+                        )))
+                        .with_child(FixedBox::new(
+                            Size::new(80.0, 140.0),
+                            Color::rgba(0.2, 0.3, 0.8, 1.0),
+                        )),
+                )),
+        );
 
         let _ = runtime.render(window_id).unwrap();
 
@@ -8133,7 +8177,7 @@ mod tests {
     fn scroll_view_touch_drag_scrolls_content_after_drag_threshold() {
         let state = ScrollState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 ScrollView::vertical(OverflowingBox::new(
                     Size::new(80.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -8184,7 +8228,7 @@ mod tests {
     fn touch_move_below_threshold_or_from_another_pointer_does_not_scroll() {
         let state = ScrollState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 ScrollView::vertical(OverflowingBox::new(
                     Size::new(80.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -8235,7 +8279,7 @@ mod tests {
     fn virtual_scroll_view_supports_touch_drag_and_cancelled_gesture_recovery() {
         let state = ScrollState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 VirtualScrollView::new()
                     .state(state.clone())
                     .with_child(FixedBox::new(
@@ -8298,7 +8342,7 @@ mod tests {
     fn boundary_touch_gestures_keep_capture_for_reversal_and_accept_fresh_down() {
         let state = ScrollState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 ScrollView::vertical(OverflowingBox::new(
                     Size::new(80.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -8378,7 +8422,7 @@ mod tests {
 
         let virtual_state = ScrollState::new();
         let (mut virtual_runtime, virtual_window) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 VirtualScrollView::new()
                     .state(virtual_state.clone())
                     .with_child(FixedBox::new(
@@ -8467,16 +8511,16 @@ mod tests {
         let outer_state = ScrollState::new();
         let inner_state = ScrollState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 80.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 80.0)).child(
                 ScrollView::vertical(
                     Stack::vertical()
-                        .spacing(8.0)
+                        .gap(8.0)
                         .with_child(FixedBox::new(
                             Size::new(80.0, 32.0),
                             Color::rgba(0.8, 0.2, 0.2, 1.0),
                         ))
                         .with_child(
-                            SizedBox::new().height(40.0).with_child(
+                            SizedBox::new().height(40.0).child(
                                 ScrollView::vertical(FixedBox::new(
                                     Size::new(80.0, 120.0),
                                     Color::rgba(0.2, 0.7, 0.3, 1.0),
@@ -8542,7 +8586,7 @@ mod tests {
         let pan_count = Rc::clone(&pans);
         let pan_state = ScrollState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(100.0, 48.0)).with_child(
+            SizedBox::new().size(Size::new(100.0, 48.0)).child(
                 ScrollView::vertical(
                     Stack::vertical()
                         .with_child(crate::Button::new("Open").on_press(move || {
@@ -8590,7 +8634,7 @@ mod tests {
         let (mut tap_runtime, tap_window) = build_runtime(
             SizedBox::new()
                 .size(Size::new(100.0, 48.0))
-                .with_child(ScrollView::vertical(
+                .child(ScrollView::vertical(
                     Stack::vertical()
                         .with_child(crate::Button::new("Open").on_press(move || {
                             tap_count.set(tap_count.get() + 1);
@@ -8630,7 +8674,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new()
                 .size(Size::new(100.0, 48.0))
-                .with_child(ScrollView::vertical(
+                .child(ScrollView::vertical(
                     Stack::vertical()
                         .with_child(FixedBox::new(
                             Size::new(100.0, 120.0),
@@ -8706,7 +8750,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new()
                 .size(Size::new(92.0, 40.0))
-                .with_child(ScrollBarHost::new(
+                .child(ScrollBarHost::new(
                     ScrollView::vertical(FixedBox::new(
                         Size::new(80.0, 120.0),
                         Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -8756,7 +8800,7 @@ mod tests {
     fn embedded_overlay_scroll_bar_applies_semantic_actions() {
         let state = ScrollState::new();
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 ScrollView::vertical(FixedBox::new(
                     Size::new(80.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -9073,7 +9117,7 @@ mod tests {
         let theme = DefaultTheme::default();
         let point = Point::new(20.0, 20.0);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 ScrollView::vertical(FixedBox::new(
                     Size::new(80.0, 120.0),
                     Color::rgba(0.2, 0.3, 0.7, 1.0),
@@ -9104,7 +9148,7 @@ mod tests {
         let theme = DefaultTheme::default();
         let point = Point::new(20.0, 20.0);
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(80.0, 40.0)).with_child(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
                 VirtualScrollView::new()
                     .theme(theme)
                     .with_child(FixedBox::new(
@@ -9145,7 +9189,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             SizedBox::new()
                 .size(Size::new(92.0, 40.0))
-                .with_child(ScrollBarHost::new(
+                .child(ScrollBarHost::new(
                     ScrollView::vertical(FixedBox::new(
                         Size::new(80.0, 120.0),
                         Color::rgba(0.2, 0.3, 0.7, 1.0),

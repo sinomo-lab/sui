@@ -1752,10 +1752,10 @@ fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
     let choices_panel = SizedBox::new()
         .width(420.0)
         .height(240.0)
-        .with_child(Background::new(
+        .child(Background::new(
             Color::rgba(0.97, 0.97, 0.98, 1.0),
             Stack::vertical()
-                .spacing(14.0)
+                .gap(14.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
                     Label::new("Choices and ranges")
@@ -1765,14 +1765,14 @@ fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
                 .with_child(Switch::new("Enable snapping").checked(true))
                 .with_child(RadioButton::new("Standalone radio sample").checked(false))
                 .with_child(
-                    SizedBox::new().width(280.0).with_child(
+                    SizedBox::new().width(280.0).child(
                         RadioGroup::new("Quality")
                             .options(RADIO_OPTIONS)
                             .selected(0),
                     ),
                 )
                 .with_child(
-                    SizedBox::new().width(320.0).with_child(
+                    SizedBox::new().width(320.0).child(
                         Slider::new("Blend strength")
                             .range(0.0, 100.0)
                             .step(1.0)
@@ -1780,7 +1780,7 @@ fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
                     ),
                 )
                 .with_child(
-                    SizedBox::new().width(220.0).with_child(
+                    SizedBox::new().width(220.0).child(
                         NumberInput::new("Sample count")
                             .range(1.0, 256.0)
                             .step(1.0)
@@ -1791,18 +1791,18 @@ fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
                 .with_child(
                     SizedBox::new()
                         .width(260.0)
-                        .with_child(Select::new("Blend mode").options(BLEND_MODES).selected(0)),
+                        .child(Select::new("Blend mode").options(BLEND_MODES).selected(0)),
                 ),
         ));
-    let notes_panel = SizedBox::new().width(420.0).height(280.0).with_child(
+    let notes_panel = SizedBox::new().width(420.0).height(280.0).child(
         Background::new(
             Color::rgba(0.99, 0.99, 1.0, 1.0),
             Stack::vertical()
-                .spacing(14.0)
+                .gap(14.0)
                 .alignment(Alignment::Stretch)
                 .with_child(Label::new("Multiline and scroll").font_size(26.0).line_height(30.0))
                 .with_child(
-                    SizedBox::new().width(420.0).with_child(
+                    SizedBox::new().width(420.0).child(
                         TextArea::new("Notes")
                             .min_height(160.0)
                             .value(
@@ -1812,11 +1812,11 @@ fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
                 ),
         ),
     );
-    let summary_panel = SizedBox::new().width(420.0).height(220.0).with_child(
+    let summary_panel = SizedBox::new().width(420.0).height(220.0).child(
         Background::new(
             Color::rgba(0.96, 0.97, 0.99, 1.0),
             Stack::vertical()
-                .spacing(12.0)
+                .gap(12.0)
                 .alignment(Alignment::Stretch)
                 .with_child(Label::new("Summary").font_size(26.0).line_height(30.0))
                 .with_child(Label::new(
@@ -1828,15 +1828,15 @@ fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
     VirtualScrollView::new()
         .name(name)
         .padding(Insets::all(24.0))
-        .spacing(18.0)
+        .gap(18.0)
         .with_child(choices_panel)
         .with_child(notes_panel)
         .with_child(summary_panel)
-        .with_child(SizedBox::new().width(420.0).height(220.0).with_child(
+        .with_child(SizedBox::new().width(420.0).height(220.0).child(
             Background::new(
                 Color::rgba(0.95, 0.96, 0.98, 1.0),
                 Stack::vertical()
-                    .spacing(12.0)
+                    .gap(12.0)
                     .alignment(Alignment::Stretch)
                     .with_child(Label::new("Lower content").font_size(26.0).line_height(30.0))
                     .with_child(Label::new(
@@ -1851,7 +1851,7 @@ fn build_scroll_history_repro_application() -> Application {
         WindowBuilder::new().title("Scroll history repro").root(
             SizedBox::new()
                 .size(Size::new(540.0, 360.0))
-                .with_child(build_scroll_history_repro_scroll("History repro scroll")),
+                .child(build_scroll_history_repro_scroll("History repro scroll")),
         ),
     )
 }
@@ -3693,7 +3693,7 @@ fn desktop_split_view_table_scroll_repaints_frame() -> Result<()> {
         Application::new()
             .window(
                 WindowBuilder::new().title("Split scroll repro").root(
-                    SizedBox::new().size(Size::new(360.0, 220.0)).with_child(
+                    SizedBox::new().size(Size::new(360.0, 220.0)).child(
                         SplitView::horizontal(table, SizedBox::new().size(Size::new(120.0, 220.0)))
                             .ratio(0.68),
                     ),
@@ -3743,15 +3743,15 @@ fn desktop_split_view_scroll_view_scroll_repaints_frame() -> Result<()> {
     let harness = DesktopHarness::launch(|| {
         let scroll = ScrollView::vertical(
             Stack::vertical()
-                .with_child(SizedBox::new().height(120.0).with_child(Background::new(
+                .with_child(SizedBox::new().height(120.0).child(Background::new(
                     Color::rgba(0.82, 0.36, 0.18, 1.0),
                     SizedBox::new().size(Size::new(220.0, 120.0)),
                 )))
-                .with_child(SizedBox::new().height(120.0).with_child(Background::new(
+                .with_child(SizedBox::new().height(120.0).child(Background::new(
                     Color::rgba(0.18, 0.54, 0.82, 1.0),
                     SizedBox::new().size(Size::new(220.0, 120.0)),
                 )))
-                .with_child(SizedBox::new().height(120.0).with_child(Background::new(
+                .with_child(SizedBox::new().height(120.0).child(Background::new(
                     Color::rgba(0.24, 0.72, 0.36, 1.0),
                     SizedBox::new().size(Size::new(220.0, 120.0)),
                 ))),
@@ -3761,7 +3761,7 @@ fn desktop_split_view_scroll_view_scroll_repaints_frame() -> Result<()> {
         Application::new()
             .window(
                 WindowBuilder::new().title("Split scroll repro").root(
-                    SizedBox::new().size(Size::new(360.0, 220.0)).with_child(
+                    SizedBox::new().size(Size::new(360.0, 220.0)).child(
                         SplitView::horizontal(
                             scroll,
                             SizedBox::new().size(Size::new(120.0, 220.0)),

@@ -118,7 +118,7 @@ fn main() -> Result<()> {
         });
 
     let form = Stack::vertical()
-        .spacing(12.0)
+        .gap(12.0)
         .alignment(Alignment::Start)
         .with_child(
             Label::new("Create a profile")

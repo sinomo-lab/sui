@@ -180,9 +180,14 @@ impl ReorderableList {
         self
     }
 
-    pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = spacing.max(0.0);
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.spacing = gap.max(0.0);
         self
+    }
+
+    #[deprecated(note = "use `gap`")]
+    pub fn spacing(self, spacing: f32) -> Self {
+        self.gap(spacing)
     }
 
     pub fn drag_threshold(mut self, threshold: f32) -> Self {
@@ -897,7 +902,7 @@ mod tests {
     fn reorderable_list_reports_reorder_after_pointer_drag() -> Result<()> {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let list = ReorderableList::new("Tasks")
-            .spacing(0.0)
+            .gap(0.0)
             .item(SizedBox::new().width(120.0).height(30.0))
             .item(SizedBox::new().width(120.0).height(30.0))
             .item(SizedBox::new().width(120.0).height(30.0))
@@ -957,7 +962,7 @@ mod tests {
     fn alt_arrows_move_the_row_the_keyboard_is_on() -> Result<()> {
         let changes = Rc::new(RefCell::new(Vec::new()));
         let list = ReorderableList::new("Tasks")
-            .spacing(0.0)
+            .gap(0.0)
             .item(SizedBox::new().width(120.0).height(30.0))
             .item(SizedBox::new().width(120.0).height(30.0))
             .item(SizedBox::new().width(120.0).height(30.0))

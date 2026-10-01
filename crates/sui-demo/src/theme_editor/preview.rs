@@ -117,7 +117,7 @@ pub(super) fn build_preview(state: ThemeEditorState) -> impl Widget {
                 right: PAGE_PADDING,
                 bottom: 0.0,
             })
-            .spacing(SECTION_GAP)
+            .gap(SECTION_GAP)
             .theme_when(move || scroll_theme.get()),
         |page, (index, item)| {
             // Edge gaps live in the first and last items; scroll view padding
@@ -138,7 +138,7 @@ pub(super) fn build_preview(state: ThemeEditorState) -> impl Widget {
 
 fn header(theme: DefaultTheme) -> impl Widget {
     Stack::vertical()
-        .spacing(6.0)
+        .gap(6.0)
         .alignment(Alignment::Stretch)
         .with_child(Label::new("Preview").text_style(demo_text_style(
             theme,
@@ -167,7 +167,7 @@ where
     W: Widget + 'static,
 {
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(Label::new(title).text_style(demo_text_style(
             theme,
@@ -205,7 +205,7 @@ fn contrast_report(theme: DefaultTheme) -> impl Widget {
     NamedSection::new(
         CONTRAST_REPORT_NAME,
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Stretch)
             .with_child(Label::new("Contrast").text_style(demo_text_style(
                 theme,
@@ -239,7 +239,7 @@ fn contrast_cell(theme: DefaultTheme, check: ContrastCheck) -> impl Widget {
         6.0,
         SizedBox::new()
             .size(Size::new(44.0, 32.0))
-            .with_child(Align::new(
+            .child(Align::new(
                 Alignment::Center,
                 Alignment::Center,
                 Label::new("Aa").text_style(demo_text_style(
@@ -273,7 +273,7 @@ fn contrast_cell(theme: DefaultTheme, check: ContrastCheck) -> impl Widget {
         .with_child(sample)
         .with_item(
             Stack::vertical()
-                .spacing(3.0)
+                .gap(3.0)
                 .alignment(Alignment::Start)
                 .with_child(Label::new(check.label.clone()).text_style(demo_text_style(
                     theme,
@@ -329,7 +329,7 @@ fn surface_tile(theme: DefaultTheme, name: &'static str, fill: Color) -> impl Wi
         Padding::all(
             14.0,
             Stack::vertical()
-                .spacing(4.0)
+                .gap(4.0)
                 .alignment(Alignment::Stretch)
                 .with_child(line(name, DemoTextRole::CardTitle, neutrals.text))
                 .with_child(line(
@@ -401,7 +401,7 @@ fn decorative(theme: DefaultTheme) -> impl Widget {
                 10.0,
                 SizedBox::new()
                     .size(Size::new(44.0, 44.0))
-                    .with_child(Align::new(
+                    .child(Align::new(
                         Alignment::Center,
                         Alignment::Center,
                         Label::new(format!("{}", index + 1)).text_style(demo_text_style(
@@ -416,7 +416,7 @@ fn decorative(theme: DefaultTheme) -> impl Widget {
     NamedSection::new(
         DECORATIVE_SPECIMEN_NAME,
         Stack::vertical()
-            .spacing(12.0)
+            .gap(12.0)
             .alignment(Alignment::Stretch)
             .with_child(tags)
             .with_child(solids),

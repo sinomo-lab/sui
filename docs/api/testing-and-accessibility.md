@@ -55,7 +55,7 @@ fn form(state: Arc<Mutex<FormState>>) -> impl Widget {
     });
 
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .with_child(input)
         .with_child(save)
 }

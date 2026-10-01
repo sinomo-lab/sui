@@ -764,7 +764,7 @@ fn vector_command_group(name: &'static str, theme_reader: &DevThemeReader) -> Co
     CommandGroup::horizontal(name)
         .theme_when(clone_dev_theme_reader(theme_reader))
         .padding(Insets::all(2.0))
-        .spacing(2.0)
+        .gap(2.0)
         .corner_radius(6.0)
 }
 
@@ -888,7 +888,7 @@ fn build_vector_document_bar(
         .theme_when(clone_dev_theme_reader(&theme_reader))
         .extent(34.0)
         .padding(Insets::all(6.0))
-        .spacing(8.0)
+        .gap(8.0)
         .with_child(
             Label::new(VECTOR_DOCUMENT_NAME).text_style_when(demo_text_style_when(
                 &theme_reader,
@@ -972,7 +972,7 @@ fn build_vector_document_bar(
                         }),
                 )
                 .with_child(
-                    SizedBox::new().width(78.0).with_child(
+                    SizedBox::new().width(78.0).child(
                         Label::new("Zoom --")
                             .text_when(move || vector_zoom_status_text(&zoom_reader_state))
                             .semantic_name(VECTOR_ZOOM_READOUT_NAME)
@@ -1015,7 +1015,7 @@ fn build_vector_properties_panel(
         ScrollView::vertical(Padding::all(
             8.0,
             Stack::vertical()
-                .spacing(8.0)
+                .gap(8.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
                     PanelSection::new(
@@ -1064,7 +1064,7 @@ fn build_vector_objects_panel(state: VectorDemoState, theme_reader: DevThemeRead
         .map(|index| vector_object_layer_item(&state, index))
         .collect::<Vec<_>>();
 
-    SizedBox::new().width(284.0).height(204.0).with_child(
+    SizedBox::new().width(284.0).height(204.0).child(
         LayerList::new(VECTOR_OBJECTS_NAME)
             .theme_when(clone_dev_theme_reader(&theme_reader))
             .layers(layers)
@@ -1125,7 +1125,7 @@ fn build_vector_transform_panel(
     let reset_state = state;
 
     Stack::vertical()
-        .spacing(6.0)
+        .gap(6.0)
         .alignment(Alignment::Stretch)
         .with_child(vector_property_slider_row(
             &theme_reader,
@@ -1240,7 +1240,7 @@ fn build_vector_appearance_panel(
     let fill_change_state = state;
 
     Stack::vertical()
-        .spacing(6.0)
+        .gap(6.0)
         .alignment(Alignment::Stretch)
         .with_child(vector_property_row_with_width(
             &theme_reader,
@@ -1324,7 +1324,7 @@ fn build_vector_alignment_panel(
     let bottom_state = state;
 
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(
             vector_command_group("Horizontal align", &theme_reader)
@@ -1433,11 +1433,11 @@ where
     PropertyRow::new(
         label,
         Stack::horizontal()
-            .spacing(6.0)
+            .gap(6.0)
             .alignment(Alignment::Center)
             .with_child(control)
             .with_child(
-                SizedBox::new().width(44.0).height(28.0).with_child(
+                SizedBox::new().width(44.0).height(28.0).child(
                     Label::new("")
                         .text_when(value_reader)
                         .text_style_when(demo_text_style_when(

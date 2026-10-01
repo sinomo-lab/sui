@@ -70,7 +70,7 @@ fn build_retained_text_benchmark_runtime() -> Result<sui::Runtime> {
                 .root(
                     SizedBox::new()
                         .size(Size::new(520.0, 360.0))
-                        .with_child(super::build_retained_text_benchmark()),
+                        .child(super::build_retained_text_benchmark()),
                 ),
         )
         .build()

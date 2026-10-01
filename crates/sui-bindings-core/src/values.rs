@@ -362,7 +362,7 @@ impl BindingTreeItem {
         if self.disabled {
             item = item.enabled(false);
         }
-        item.children(self.children.iter().map(BindingTreeItem::into_sui))
+        item.items(self.children.iter().map(BindingTreeItem::into_sui))
     }
 }
 

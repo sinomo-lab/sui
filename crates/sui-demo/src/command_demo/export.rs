@@ -218,7 +218,7 @@ pub(super) fn section(
         "Background work",
         "The export runs on a worker thread with a clone of the command sender. It reports each thumbnail to the progress bar's command() with send_widget, and tells the window's listeners it finished with send_window: the status handler takes it from there.",
         Stack::vertical()
-            .spacing(12.0)
+            .gap(12.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 Flex::horizontal()

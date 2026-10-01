@@ -2217,16 +2217,16 @@ mod tests {
         let gallery = ScrollView::vertical(Padding::all(
             24.0,
             Stack::vertical()
-                .spacing(18.0)
+                .gap(18.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
                     SizedBox::new()
                         .height(580.0)
-                        .with_child(Label::new("Color imagery scroll spacer")),
+                        .child(Label::new("Color imagery scroll spacer")),
                 )
                 .with_child(
                     Stack::vertical()
-                        .spacing(16.0)
+                        .gap(16.0)
                         .alignment(Alignment::Start)
                         .with_child(
                             ColorSwatch::new(
@@ -2236,7 +2236,7 @@ mod tests {
                             .size(Size::new(64.0, 36.0)),
                         )
                         .with_child(
-                            SizedBox::new().width(220.0).height(220.0).with_child(
+                            SizedBox::new().width(220.0).height(220.0).child(
                                 Image::new(WIDGET_BOOK_TEST_IMAGE_HANDLE)
                                     .label(crate::widget_book::DEMO_IMAGE_LABEL)
                                     .fit(ImageFit::Contain)
@@ -2248,7 +2248,7 @@ mod tests {
                 .with_child(
                     SizedBox::new()
                         .height(520.0)
-                        .with_child(Label::new("Color imagery trailing spacer")),
+                        .child(Label::new("Color imagery trailing spacer")),
                 ),
         ))
         .name(crate::widget_book::GALLERY_SCROLL_NAME);

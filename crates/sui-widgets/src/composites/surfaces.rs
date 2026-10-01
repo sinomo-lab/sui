@@ -137,7 +137,7 @@ impl Surface {
     {
         Self::new(SurfaceRole::Panel, child)
             .border(SurfaceBorder::All)
-            .radius(8.0)
+            .corner_radius(8.0)
     }
 
     pub fn titlebar<W>(child: W) -> Self
@@ -153,7 +153,7 @@ impl Surface {
     {
         Self::new(SurfaceRole::Field, child)
             .border(SurfaceBorder::All)
-            .radius(6.0)
+            .corner_radius(6.0)
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -217,9 +217,14 @@ impl Surface {
         self
     }
 
-    pub fn radius(mut self, radius: f32) -> Self {
-        self.radius = radius.max(0.0);
+    pub fn corner_radius(mut self, corner_radius: f32) -> Self {
+        self.radius = corner_radius.max(0.0);
         self
+    }
+
+    #[deprecated(note = "use `corner_radius`")]
+    pub fn radius(self, radius: f32) -> Self {
+        self.corner_radius(radius)
     }
 
     pub fn padding(mut self, padding: Insets) -> Self {
@@ -479,9 +484,14 @@ impl ShadowBox {
     }
 
     /// The box's corner radius, limited to half its shorter side.
-    pub fn radius(mut self, radius: f32) -> Self {
-        self.radius = radius.max(0.0);
+    pub fn corner_radius(mut self, corner_radius: f32) -> Self {
+        self.radius = corner_radius.max(0.0);
         self
+    }
+
+    #[deprecated(note = "use `corner_radius`")]
+    pub fn radius(self, radius: f32) -> Self {
+        self.corner_radius(radius)
     }
 
     /// Casts the shadow `shadow` chooses from the theme, such as

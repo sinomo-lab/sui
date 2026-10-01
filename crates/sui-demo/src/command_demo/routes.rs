@@ -634,7 +634,7 @@ pub(super) fn section(
         "Route map",
         "Pick a route and send a ping. Each listener lights up with what it did, and the line under the map says whether the runtime delivered it at all.",
         Stack::vertical()
-            .spacing(14.0)
+            .gap(14.0)
             .alignment(Alignment::Stretch)
             .with_child(controls(theme_reader, routes))
             .with_child(
@@ -718,7 +718,7 @@ fn lane_group(
     lanes: [Lane; 2],
 ) -> impl Widget + use<> {
     let mut group = Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(demo_label(
             theme_reader,
@@ -829,7 +829,7 @@ impl LaneChip {
             );
         }
         let mut content = Stack::vertical()
-            .spacing(4.0)
+            .gap(4.0)
             .alignment(Alignment::Stretch)
             .with_child(title)
             .with_child(demo_label(

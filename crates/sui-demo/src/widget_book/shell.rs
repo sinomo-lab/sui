@@ -297,7 +297,7 @@ fn rail(theme_reader: DevThemeReader, nav: Rc<NavShared>) -> impl Widget {
             bottom: 12.0,
         },
         Stack::vertical()
-            .spacing(2.0)
+            .gap(2.0)
             .alignment(Alignment::Start)
             .with_child(demo_label(
                 &theme_reader,

@@ -45,11 +45,10 @@ pub use animation::{
     Transition, invalidation_for_animation_property,
 };
 pub use canvas::{
-    Canvas, CanvasAppearance, CanvasGridStyle, CanvasRuler, CanvasRulerAppearance, CanvasRulerAxis,
+    Canvas, CanvasColors, CanvasGridStyle, CanvasRuler, CanvasRulerAxis, CanvasRulerColors,
     CanvasShape, CanvasStroke, CanvasSurface, CanvasViewport, CanvasZoomBehavior,
-    CanvasZoomContext, PixelCanvas, PixelCanvasAppearance, PixelCanvasBlendMode,
-    PixelCanvasBrushShape, PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool,
-    paint_canvas_grid,
+    CanvasZoomContext, PixelCanvas, PixelCanvasBlendMode, PixelCanvasBrushShape, PixelCanvasColors,
+    PixelCanvasExportSnapshot, PixelCanvasState, PixelCanvasTool, paint_canvas_grid,
 };
 pub use collection::{
     CollectionAnchor, CollectionAnchorGravity, CollectionChange, CollectionDelta,
@@ -123,8 +122,8 @@ pub use layout_policy::{
 };
 pub use media::{
     BrushPreview, BrushPreviewShape, BrushPreviewSpec, ColorPalette, ColorPaletteSwatch,
-    ColorPicker, ColorPickerAppearance, ColorSwatch, Image, ImageFit, SignalMeter,
-    SimpleColorPicker, SimpleColorPickerMode,
+    ColorPicker, ColorPickerColors, ColorSwatch, Image, ImageFit, SignalMeter, SimpleColorPicker,
+    SimpleColorPickerMode,
 };
 pub use overlay::{
     NotificationCenter, NotificationHost, NotificationId, NotificationUrgency, OverlayAlignment,
@@ -136,6 +135,10 @@ pub use panes::{
     FloatingWorkspaceState, SplitExtent, SplitPaneSide, SplitState, SplitStateSnapshot, SplitView,
 };
 // Former names, kept so existing code keeps building; naming one warns.
+#[allow(deprecated)]
+pub use canvas::{CanvasAppearance, CanvasRulerAppearance, PixelCanvasAppearance};
+#[allow(deprecated)]
+pub use media::ColorPickerAppearance;
 #[allow(deprecated)]
 pub use panes::ResizablePane;
 pub use presence::{KeyedStack, Presence, PresenceTransition};

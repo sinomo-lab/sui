@@ -34,11 +34,11 @@ fn build_elevation_scene(theme: DefaultTheme) -> Application {
     };
 
     // A PanelSection card, themed. The PanelSection renders its own elevated surface.
-    let panel_card = SizedBox::new().width(320.0).with_child(
+    let panel_card = SizedBox::new().width(320.0).child(
         PanelSection::new(
             "Layers",
             Stack::vertical()
-                .spacing(6.0)
+                .gap(6.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
                     Label::new("Background")
@@ -63,7 +63,7 @@ fn build_elevation_scene(theme: DefaultTheme) -> Application {
     );
 
     // A command Menu, themed and rendered with its items inline (an elevated surface).
-    let menu = SizedBox::new().width(280.0).with_child(
+    let menu = SizedBox::new().width(280.0).child(
         Menu::new("Command menu")
             .theme(theme)
             .item(MenuItem::new("New tab").shortcut("Ctrl+T"))
@@ -77,14 +77,14 @@ fn build_elevation_scene(theme: DefaultTheme) -> Application {
     );
 
     // A Popover, forced open so its floating/elevated surface is captured.
-    let popover = SizedBox::new().width(360.0).with_child(
+    let popover = SizedBox::new().width(360.0).child(
         Popover::new(
             "Inspector popover",
             sui::Button::new("Open inspector")
                 .min_width(190.0)
                 .theme(theme),
             Stack::vertical()
-                .spacing(8.0)
+                .gap(8.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
                     Label::new("Inline inspector content stays lightweight.")
@@ -104,7 +104,7 @@ fn build_elevation_scene(theme: DefaultTheme) -> Application {
     );
 
     let column = Stack::vertical()
-        .spacing(24.0)
+        .gap(24.0)
         .alignment(Alignment::Start)
         .with_child(panel_card)
         .with_child(menu)
@@ -115,7 +115,7 @@ fn build_elevation_scene(theme: DefaultTheme) -> Application {
     let dialog = Dialog::new(
         "Project settings",
         Stack::vertical()
-            .spacing(10.0)
+            .gap(10.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 Label::new("Autosave every 90 seconds")

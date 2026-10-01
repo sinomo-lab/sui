@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     let root = Padding::all(
         24.0,
         Stack::vertical()
-            .spacing(12.0)
+            .gap(12.0)
             .alignment(Alignment::Start)
             .with_child(Label::new("Hello, SUI!").font_size(24.0))
             .with_child(Button::primary("Continue")),

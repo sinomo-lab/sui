@@ -986,7 +986,7 @@ fn selectable_label_can_opt_into_widget_managed_copy() -> Result<()> {
 fn selectable_labels_sharing_scope_replace_previous_selection() -> Result<()> {
     let selection = SelectionScope::new();
     let root = Stack::vertical()
-        .spacing(4.0)
+        .gap(4.0)
         .with_child(Label::new("First").selectable(selection.clone()))
         .with_child(Label::new("Second").selectable(selection.clone()));
     let (mut runtime, window_id) = build_runtime(root);
@@ -1135,12 +1135,39 @@ fn link_exposes_link_semantics_and_activates_on_click() -> Result<()> {
 }
 
 #[test]
+fn radio_buttons_and_links_name_themselves_the_conventional_way() -> Result<()> {
+    let (mut runtime, window_id) = build_runtime(
+        Stack::vertical()
+            .with_child(RadioButton::new("Small").semantic_name("Small size"))
+            .with_child(Link::from_url("https://example.test/a").url("https://example.test/b")),
+    );
+    let output = runtime.render(window_id)?;
+    let radio = output
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::RadioButton)
+        .expect("radio semantics present");
+    assert_eq!(radio.name.as_deref(), Some("Small size"));
+    let link = output
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::Link)
+        .expect("link semantics present");
+    assert_eq!(link.name.as_deref(), Some("https://example.test/a"));
+    assert_eq!(
+        link.value,
+        Some(SemanticsValue::Text("https://example.test/b".to_string()))
+    );
+    Ok(())
+}
+
+#[test]
 fn link_with_empty_url_collapses_out_of_semantics() {
     let output = render(
         SizedBox::new()
             .width(160.0)
             .height(24.0)
-            .with_child(Link::new("Open login", "")),
+            .child(Link::new("Open login", "")),
     );
 
     assert!(
@@ -1153,7 +1180,7 @@ fn link_with_empty_url_collapses_out_of_semantics() {
 
 #[test]
 fn label_measures_wrapped_height_when_width_is_constrained() {
-    let output = render(SizedBox::new().width(96.0).with_child(Label::new(
+    let output = render(SizedBox::new().width(96.0).child(Label::new(
         "This label should wrap onto multiple lines when its layout width is constrained.",
     )));
 
@@ -1166,7 +1193,7 @@ fn wrapped_label_materializes_only_its_final_layout_and_keeps_selection_geometry
     let (mut runtime, window_id) = build_runtime(
         SizedBox::new()
             .width(96.0)
-            .with_child(Label::new(text).selectable(SelectionScope::new())),
+            .child(Label::new(text).selectable(SelectionScope::new())),
     );
     sui_runtime::set_window_scene_statistics_detail_mode(
         window_id,
@@ -1197,7 +1224,7 @@ fn single_line_label_keeps_long_titles_and_line_breaks_within_one_row() {
     let output = render(
         SizedBox::new()
             .width(96.0)
-            .with_child(Label::new(text).single_line()),
+            .child(Label::new(text).single_line()),
     );
     let layout = shaped_text_layout_for(&output, &text.replace('\n', " "));
     assert_eq!(layout.lines().len(), 1);
@@ -1246,7 +1273,7 @@ fn label_centers_explicit_multiline_text_as_a_block() {
         SizedBox::new()
             .width(180.0)
             .height(96.0)
-            .with_child(Label::new(text)),
+            .child(Label::new(text)),
     );
     let shaped = first_shaped_text(&output);
     let layout = shaped_text_layout_for(&output, text);
@@ -1267,7 +1294,7 @@ fn label_visual_center_matches_tall_allocation_center() {
         SizedBox::new()
             .width(160.0)
             .height(48.0)
-            .with_child(Label::new("Body")),
+            .child(Label::new("Body")),
     );
     let text = text_run_for(&output, "Body");
     let layout = TextSystem::new()
@@ -1294,7 +1321,7 @@ fn label_preserves_tall_measurement_in_compact_line_box() {
         SizedBox::new()
             .width(160.0)
             .height(48.0)
-            .with_child(Label::new("Body").text_style(style.clone())),
+            .child(Label::new("Body").text_style(style.clone())),
     );
     let text = text_run_for(&output, "Body");
     let layout = shaped_text_layout_for(&output, "Body");
@@ -1313,7 +1340,7 @@ fn label_window_option_keeps_geometric_label_centered() {
         SizedBox::new()
             .width(160.0)
             .height(48.0)
-            .with_child(Label::new("Body")),
+            .child(Label::new("Body")),
     );
     set_window_render_options(
         window_id,
@@ -1400,7 +1427,7 @@ fn editor_and_button(
 )> {
     let (mut runtime, window_id) = build_runtime(
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .with_child(TextInput::new("Notes").value("draft"))
             .with_child(button),
     );
@@ -1532,7 +1559,7 @@ fn assistive_technology_can_focus_and_activate_a_button_that_does_not_focus_on_p
 fn an_icon_button_that_does_not_focus_on_press_leaves_the_editor_focused() -> Result<()> {
     let (mut runtime, window_id) = build_runtime(
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .with_child(TextInput::new("Notes"))
             .with_child(IconButton::new(IconGlyph::Undo, "Undo").focus_on_press(false)),
     );
@@ -2576,7 +2603,7 @@ fn number_input_stepper_press_animation_uses_theme_motion() -> Result<()> {
     let (mut runtime, window_id) = build_runtime(
         SizedBox::new()
             .width(180.0)
-            .with_child(NumberInput::new("Gamma").value(1.0)),
+            .child(NumberInput::new("Gamma").value(1.0)),
     );
 
     let initial = runtime.render(window_id)?;
@@ -4252,7 +4279,7 @@ fn text_area_read_only_value_preserves_tall_measurement_and_muted_text() {
 fn text_area_shapes_multiline_value_with_finite_positions() {
     let notes = "Pinned notes for inspector workflows.\nSupports multiline editing.";
     let output = render(
-        SizedBox::new().width(420.0).with_child(
+        SizedBox::new().width(420.0).child(
             TextArea::new("Notes")
                 .min_height(150.0)
                 .value(notes)
@@ -4790,7 +4817,7 @@ fn button_constrained_label_clips_around_the_control_center() {
     let output = render(
         SizedBox::new()
             .size(CONTROL_SIZE)
-            .with_child(Button::new("Centered").theme(theme).text_style(style)),
+            .child(Button::new("Centered").theme(theme).text_style(style)),
     );
     let text = first_shaped_text(&output);
     let layout = text
@@ -5423,7 +5450,7 @@ fn slider_value_when_updates_on_repaint_without_slider_event() -> Result<()> {
     let value_reader = Rc::clone(&value);
     let theme = DefaultTheme::default();
     let (mut runtime, window_id) = build_runtime(ExternalValueInvalidationHost::new(
-        SizedBox::new().width(200.0).height(32.0).with_child(
+        SizedBox::new().width(200.0).height(32.0).child(
             Slider::new("Opacity")
                 .range(0.0, 1.0)
                 .step(0.01)
@@ -5467,7 +5494,7 @@ fn slider_on_change_with_ctx_receives_value() -> Result<()> {
     let changes = Rc::new(RefCell::new(Vec::new()));
     let on_change = Rc::clone(&changes);
     let (mut runtime, window_id) = build_runtime(
-        SizedBox::new().width(200.0).height(32.0).with_child(
+        SizedBox::new().width(200.0).height(32.0).child(
             Slider::new("Opacity")
                 .range(0.0, 1.0)
                 .step(0.01)
@@ -5788,7 +5815,7 @@ fn number_input_value_uses_tabular_figures_and_end_alignment() {
     let output = render(
         SizedBox::new()
             .width(180.0)
-            .with_child(NumberInput::new("Count").precision(0).value(12.0)),
+            .child(NumberInput::new("Count").precision(0).value(12.0)),
     );
     let text = text_run_for(&output, "12");
     let spinbox = output
@@ -5817,7 +5844,7 @@ fn number_input_value_preserves_tall_measurement_and_end_alignment() {
     theme.metrics.min_height = 64.0;
     let metrics = theme.metrics;
     let output = render_isolated(
-        SizedBox::new().width(220.0).height(64.0).with_child(
+        SizedBox::new().width(220.0).height(64.0).child(
             NumberInput::new("Count")
                 .theme(theme)
                 .precision(0)
@@ -6806,7 +6833,7 @@ fn expanded_select_does_not_reflow_following_widgets() -> Result<()> {
     let (mut runtime, window_id) = build_runtime(crate::Padding::all(
         12.0,
         crate::Stack::vertical()
-            .spacing(10.0)
+            .gap(10.0)
             .with_child(Select::new("Mode").placeholder("Choose mode").options([
                 "Automatic",
                 "Linear",
@@ -6858,7 +6885,7 @@ fn expanded_select_accepts_pointer_selection_in_floating_menu() -> Result<()> {
     let (mut runtime, window_id) = build_runtime(crate::Padding::all(
         12.0,
         crate::Stack::vertical()
-            .spacing(10.0)
+            .gap(10.0)
             .with_child(
                 Select::new("Mode")
                     .placeholder("Choose mode")
@@ -6919,7 +6946,7 @@ fn expanded_select_flips_above_when_below_space_is_constrained() -> Result<()> {
     let changes = Rc::new(RefCell::new(Vec::new()));
     let on_change = Rc::clone(&changes);
     let (mut runtime, window_id) = build_runtime(
-        SizedBox::new().size(Size::new(220.0, 180.0)).with_child(
+        SizedBox::new().size(Size::new(220.0, 180.0)).child(
             crate::Stack::vertical()
                 .with_child(SizedBox::new().height(128.0))
                 .with_child(
@@ -6985,7 +7012,7 @@ fn expanded_select_flips_above_when_below_space_is_constrained() -> Result<()> {
 fn expanded_select_popover_paints_outside_layout_bounds() -> Result<()> {
     let root = crate::Background::new(
         Brush::Solid(Color::srgba(0.04, 0.045, 0.055, 1.0)),
-        SizedBox::new().size(Size::new(220.0, 180.0)).with_child(
+        SizedBox::new().size(Size::new(220.0, 180.0)).child(
             crate::Stack::vertical()
                 .with_child(SizedBox::new().height(128.0))
                 .with_child(Select::new("Mode").placeholder("Choose mode").options([
@@ -7086,7 +7113,7 @@ fn expanded_select_in_modal_dialog_paints_and_hits_above_later_body_content() ->
     let (mut runtime, window_id) = build_runtime(
         SizedBox::new()
             .size(Size::new(640.0, 420.0))
-            .with_child(crate::Dialog::new("Choose mode", body).max_width(420.0)),
+            .child(crate::Dialog::new("Choose mode", body).max_width(420.0)),
     );
 
     let _ = runtime.render(window_id)?;
@@ -7173,7 +7200,7 @@ fn select_header_text_visual_center_matches_control_center() {
 #[test]
 fn select_chevron_icon_centers_in_reserved_slot() {
     let output = render(
-        SizedBox::new().width(220.0).with_child(
+        SizedBox::new().width(220.0).child(
             Select::new("Mode")
                 .options(["Automatic", "Linear"])
                 .selected(0),
@@ -7215,11 +7242,13 @@ fn select_header_placeholder_clips_before_chevron_slot() {
     let theme = DefaultTheme::default();
     let placeholder = "Choose an extremely detailed rendering pipeline preset";
     let output = render(
-        SizedBox::new().width(180.0).with_child(
-            Select::new("Mode")
-                .placeholder(placeholder)
-                .options(["Automatic", "Linear", "Gamma"]),
-        ),
+        SizedBox::new()
+            .width(180.0)
+            .child(Select::new("Mode").placeholder(placeholder).options([
+                "Automatic",
+                "Linear",
+                "Gamma",
+            ])),
     );
     let select = output
         .semantics
@@ -7373,7 +7402,7 @@ fn closed_select_does_not_block_immediate_clicks_before_next_render() -> Result<
     let (mut runtime, window_id) = build_runtime(crate::Padding::all(
         12.0,
         crate::Stack::vertical()
-            .spacing(4.0)
+            .gap(4.0)
             .with_child(Select::new("Mode").placeholder("Choose mode").options([
                 "Automatic",
                 "Linear",
@@ -7441,7 +7470,7 @@ fn outside_click_closes_select_without_blocking_following_interactions() -> Resu
     let (mut runtime, window_id) = build_runtime(crate::Padding::all(
         12.0,
         crate::Stack::vertical()
-            .spacing(4.0)
+            .gap(4.0)
             .with_child(Select::new("Mode").placeholder("Choose mode").options([
                 "Automatic",
                 "Linear",
@@ -7584,7 +7613,7 @@ fn interaction_previews_pin_control_visuals_without_input() {
         .interaction_preview(preview));
     assert_previews_change_paint!("RadioButton", |preview| RadioButton::new("Fast")
         .interaction_preview(preview));
-    assert_previews_change_paint!("Slider", |preview| SizedBox::new().width(160.0).with_child(
+    assert_previews_change_paint!("Slider", |preview| SizedBox::new().width(160.0).child(
         Slider::new("Opacity")
             .value(40.0)
             .interaction_preview(preview)
@@ -7655,7 +7684,7 @@ fn inline_select_lays_out_its_option_list_in_flow() {
     let theme = DefaultTheme::default();
     let output = render(
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Start)
             .with_child(
                 Select::new("Blend mode")

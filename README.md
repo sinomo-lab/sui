@@ -41,7 +41,7 @@ use sui::prelude::*;
 
 fn main() -> Result<()> {
     let content = Stack::vertical()
-        .spacing(12.0)
+        .gap(12.0)
         .alignment(Alignment::Start)
         .with_child(Label::new("Your first SUI window").font_size(24.0))
         .with_child(

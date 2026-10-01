@@ -93,11 +93,11 @@ fn page(
         ScrollView::vertical(Padding::all(
             24.0,
             Stack::vertical()
-                .spacing(32.0)
+                .gap(32.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
                     Stack::vertical()
-                        .spacing(16.0)
+                        .gap(16.0)
                         .alignment(Alignment::Stretch)
                         .with_child(header(theme_reader))
                         .with_child(trace(theme_reader, &history)),
@@ -114,7 +114,7 @@ fn page(
 
 fn header(theme_reader: &DevThemeReader) -> impl Widget + use<> {
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(demo_label(
             theme_reader,
@@ -137,7 +137,7 @@ fn trace(
 ) -> impl Widget + use<> {
     Surface::field(
         Stack::vertical()
-            .spacing(6.0)
+            .gap(6.0)
             .alignment(Alignment::Stretch)
             .with_child(demo_label(
                 theme_reader,
@@ -263,7 +263,7 @@ where
     NamedSection::new(
         title,
         Stack::vertical()
-            .spacing(12.0)
+            .gap(12.0)
             .alignment(Alignment::Stretch)
             .with_child(demo_label(
                 theme_reader,

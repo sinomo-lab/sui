@@ -658,14 +658,10 @@ mod tests {
 
     #[test]
     fn rich_text_wraps_to_parent_constraints() {
-        let output = render(
-            SizedBox::new()
-                .width(96.0)
-                .with_child(RichText::from_plain_text(
-                    "alpha beta gamma delta epsilon",
-                    TextStyle::new(Color::WHITE),
-                )),
-        );
+        let output = render(SizedBox::new().width(96.0).child(RichText::from_plain_text(
+            "alpha beta gamma delta epsilon",
+            TextStyle::new(Color::WHITE),
+        )));
         let mut line_count = 0;
         output.frame.scene.visit_commands(&mut |command| {
             if let SceneCommand::DrawShapedText(text) = command

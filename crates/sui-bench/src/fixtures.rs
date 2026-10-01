@@ -201,7 +201,7 @@ fn controls_grid(labels: &[Signal<String>], style: &TextStyle) -> Grid {
     for (i, text) in labels.iter().enumerate() {
         grid.push(
             Stack::horizontal()
-                .spacing(4.0)
+                .gap(4.0)
                 .with_child(
                     Label::new("")
                         .text_from(text.clone())
@@ -276,7 +276,7 @@ pub fn build(config: &Config, input: Input) -> Result<(AppBuilder, Fixture), Str
             child
         }
         "scrollbar-thresholds" => {
-            let mut stack = Stack::vertical().spacing(1.0);
+            let mut stack = Stack::vertical().gap(1.0);
             for text in &labels {
                 stack.push(
                     Label::new("")
@@ -285,7 +285,7 @@ pub fn build(config: &Config, input: Input) -> Result<(AppBuilder, Fixture), Str
                 );
             }
             boxed(ScrollView::both(
-                SizedBox::new().width(config.width - 8.0).with_child(stack),
+                SizedBox::new().width(config.width - 8.0).child(stack),
             ))
         }
         "keyed-collection" | "virtual-collection" => boxed(
@@ -313,7 +313,7 @@ pub fn build(config: &Config, input: Input) -> Result<(AppBuilder, Fixture), Str
         "application-shell" => boxed(
             SplitView::horizontal(
                 Stack::vertical()
-                    .spacing(4.0)
+                    .gap(4.0)
                     .with_child(Label::new("Workspace"))
                     .with_child(TextInput::new("Search"))
                     .with_child(Button::new("Open")),

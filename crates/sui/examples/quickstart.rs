@@ -4,7 +4,7 @@ fn main() -> Result<()> {
     let theme = DefaultTheme::light();
 
     let content = Stack::vertical()
-        .spacing(12.0)
+        .gap(12.0)
         .alignment(Alignment::Start)
         .with_child(
             Label::new("Your first SUI window")

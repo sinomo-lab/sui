@@ -221,7 +221,7 @@ impl CapturePanel {
             panel: Cell::new(None),
         });
         let buttons = Stack::horizontal()
-            .spacing(10.0)
+            .gap(10.0)
             .alignment(Alignment::Center)
             .with_child({
                 let state = Rc::clone(&state);

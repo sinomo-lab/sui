@@ -1497,8 +1497,13 @@ impl Button {
         Self::new(label).danger_action()
     }
 
-    pub fn label(&self) -> &str {
+    pub fn current_label(&self) -> &str {
         &self.label
+    }
+
+    #[deprecated(note = "use `current_label`")]
+    pub fn label(&self) -> &str {
+        self.current_label()
     }
 
     pub fn set_label(&mut self, label: impl Into<String>) {
@@ -3498,6 +3503,7 @@ pub struct RadioButton {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    semantic_name: Option<String>,
     enabled: Binding<bool>,
     checked: bool,
     checked_reader: Option<Box<dyn Fn() -> bool>>,
@@ -3526,6 +3532,7 @@ impl RadioButton {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            semantic_name: None,
             enabled: Binding::new(true),
             checked: false,
             checked_reader: None,
@@ -3547,6 +3554,13 @@ impl RadioButton {
             on_change: None,
             on_change_with_ctx: None,
         }
+    }
+
+    /// Name the control for accessibility and automation instead of its
+    /// label, which still shows. The name should contain the label.
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.semantic_name = Some(name.into());
+        self
     }
 
     pub fn checked(mut self, checked: bool) -> Self {
@@ -4045,7 +4059,11 @@ impl Widget for RadioButton {
         });
         let mut node =
             SemanticsNode::new(ctx.widget_id(), SemanticsRole::RadioButton, ctx.bounds());
-        node.name = Some(self.label.clone());
+        node.name = Some(
+            self.semantic_name
+                .clone()
+                .unwrap_or_else(|| self.label.clone()),
+        );
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
         node.state.selected = self.current_checked();
@@ -7890,8 +7908,13 @@ impl TextInput {
         }
     }
 
-    pub fn name(&self) -> &str {
+    pub fn accessible_name(&self) -> &str {
         &self.name
+    }
+
+    #[deprecated(note = "use `accessible_name`")]
+    pub fn name(&self) -> &str {
+        self.accessible_name()
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {

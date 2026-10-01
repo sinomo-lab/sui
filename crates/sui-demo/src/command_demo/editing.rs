@@ -78,13 +78,13 @@ pub(super) fn section(theme_reader: &DevThemeReader) -> impl Widget + use<> {
         "Edit commands",
         "The toolbar acts on the editor you used last. Clicking a button leaves focus in the editor, so a selection survives Copy. From the keyboard, Tab reaches the buttons as usual, and the editor takes focus back when the command arrives.",
         Stack::vertical()
-            .spacing(12.0)
+            .gap(12.0)
             .alignment(Alignment::Stretch)
             .with_child(toolbar)
             .with_child(
                 FocusScope::new(
                     Stack::vertical()
-                        .spacing(10.0)
+                        .gap(10.0)
                         .alignment(Alignment::Stretch)
                         .with_child(title)
                         .with_child(body),

@@ -163,6 +163,8 @@ accents. A custom widget can paint its disabled state the same way.
 - `with_child(widget)` appends a child to a widget that holds several.
 - `item(...)` and `items(...)` add data entries, such as list items, menu
   items, or tree nodes, rather than child widgets.
+- A container reads its child back with `child_pod()`, which returns the
+  retained `WidgetPod`.
 
 ## Value Types
 

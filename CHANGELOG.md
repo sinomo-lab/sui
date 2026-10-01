@@ -128,6 +128,38 @@ Versioning, with the usual expectation that the API may change during the
   `StatusBarSegment::dynamic`, `StatusBar::dynamic_segment`, and
   `RichText::dynamic` are deprecated, as are `RebuildOnChange::new` and
   `new_observable`, in favor of `RebuildOnChange::key_when` and `key_from`.
+- Getters no longer share builder names: `Button::current_label`,
+  `TextInput::accessible_name`, `ColorPicker::current_color`,
+  `SimpleColorPicker::current_color`, and `FloatingWorkspace` and
+  `DockWorkspace::shared_state` replace `label`, `name`, `color`, and
+  `state`, which are deprecated.
+- Layout words: `spacing` is deprecated in favor of `gap` on `Stack`,
+  `KeyedStack`, `VirtualList`, `VirtualScrollView`, `ReorderableList`,
+  `FieldGroup`, `Toolbar`, `CommandGroup`, and `ToolPalette`, and
+  `Toolbar::line_spacing` in favor of `cross_gap`. `radius` is deprecated in
+  favor of `corner_radius` on `Surface`, `ShadowBox`, `FormSection`, and the
+  `ActionTilePaint`, `CalloutPaint`, `CodePanelPaint`, and
+  `SectionPanelPaint` helpers.
+- Color overrides are `colors(...)`: `CanvasAppearance`,
+  `CanvasRulerAppearance`, `PixelCanvasAppearance`, and
+  `ColorPickerAppearance` are now `CanvasColors`, `CanvasRulerColors`,
+  `PixelCanvasColors`, and `ColorPickerColors`, and the `appearance`
+  builders that took them are deprecated.
+- Children: `SizedBox` and `ListItem` take `child(widget)`, `Canvas::content`
+  becomes `child`, and `TreeItem` adds nodes with `item` and `items` and
+  custom content with `child`. `with_child` on those, `with_content`,
+  `ListItem::subtitle`, `activate_with_content`, and `TreeItem::children`
+  are deprecated. Breaking: `SizedBox::child()` no longer reads the child;
+  every container reads it with `child_pod()`, and the other containers'
+  `child()` getters are deprecated.
+- Breaking: `Link::url(url)` is a builder that sets the URL; build a link
+  labeled with its URL with `Link::from_url`.
+- `RadioButton` takes `semantic_name`.
+- `CanvasViewport`, `CanvasSurface`, `FloatingViewConfig`,
+  `TransientNotification`, `BrushPreviewSpec`, and `CoverageDotsConfig` are
+  plain data: each implements `Default`, and their builders and constructors
+  store values as given. The widgets clamp zoom, grid spacing, minimum view
+  size, notification duration, and brush size and opacity when they use them.
 
 ### Breaking: a clearer `sui` facade
 

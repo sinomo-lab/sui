@@ -70,7 +70,7 @@ fn profile_form() -> impl Widget {
     });
 
     Stack::vertical()
-        .spacing(10.0)
+        .gap(10.0)
         .alignment(Alignment::Stretch)
         .with_child(name)
         .with_child(password)
@@ -147,7 +147,7 @@ fn selectable_document() -> impl Widget {
     let selection = SelectionScope::new();
 
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .with_child(Label::new("Selectable heading").selectable(selection.clone()))
         .with_child(
             TextArea::new("Document body")

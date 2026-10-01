@@ -1252,9 +1252,14 @@ where
         self
     }
 
-    pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = spacing.max(0.0);
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.spacing = gap.max(0.0);
         self
+    }
+
+    #[deprecated(note = "use `gap`")]
+    pub fn spacing(self, spacing: f32) -> Self {
+        self.gap(spacing)
     }
 
     pub fn padding(mut self, padding: Insets) -> Self {
@@ -3007,7 +3012,7 @@ mod tests {
         let state = VirtualListState::new();
         state.select(Some(1));
         let (mut runtime, window_id) = build_runtime(
-            SizedBox::new().size(Size::new(120.0, 80.0)).with_child(
+            SizedBox::new().size(Size::new(120.0, 80.0)).child(
                 VirtualList::new("Rows", model.clone(), |_key, value| RowBox { value })
                     .padding(sui_layout::Padding::ZERO)
                     .row_padding(sui_layout::Padding::ZERO)
@@ -3060,11 +3065,8 @@ mod tests {
         })
         .estimated_row_height(20.0)
         .overscan_viewports(0.5);
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(240.0, 100.0))
-                .with_child(list),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(240.0, 100.0)).child(list));
 
         runtime.render(window_id).unwrap();
         assert!(
@@ -3100,11 +3102,8 @@ mod tests {
         let model = VirtualCollectionModel::from_items("rows", [(0_u64, (0_u64, 20.0))]).unwrap();
         let list = VirtualList::new("Rows", model, |_key, value| RowBox { value })
             .estimated_row_height(20.0);
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(240.0, 100.0))
-                .with_child(list),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(240.0, 100.0)).child(list));
 
         let output = runtime.render(window_id).unwrap();
         let row = output
@@ -3139,11 +3138,8 @@ mod tests {
             .state(state.clone())
             .estimated_row_height(20.0)
             .overscan_viewports(0.0);
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(240.0, 100.0))
-                .with_child(list),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(240.0, 100.0)).child(list));
         runtime.render(window_id).unwrap();
         let before = state.scroll_state().current_offset().y;
         assert_eq!(before, 100.0);
@@ -3168,11 +3164,8 @@ mod tests {
             .state(state.clone())
             .stick_to_end(true)
             .estimated_row_height(20.0);
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(240.0, 100.0))
-                .with_child(list),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(240.0, 100.0)).child(list));
         runtime.render(window_id)?;
         assert_eq!(
             state.scroll_state().current_offset().y,
@@ -3211,11 +3204,8 @@ mod tests {
             .state(state.clone())
             .estimated_row_height(20.0)
             .row_name(|key, _| format!("Row {key}"));
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(240.0, 100.0))
-                .with_child(list),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(240.0, 100.0)).child(list));
         let output = runtime.render(window_id)?;
         let list_id = output
             .semantics
@@ -3264,11 +3254,8 @@ mod tests {
             .state(state.clone())
             .estimated_row_height(20.0)
             .overscan_viewports(0.0);
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(240.0, 100.0))
-                .with_child(list),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(240.0, 100.0)).child(list));
 
         let output = runtime.render(window_id)?;
         let viewport = state.viewport();
@@ -3309,11 +3296,8 @@ mod tests {
             .selection_mode(VirtualListSelectionMode::None)
             .chrome(VirtualListChrome::Transparent)
             .estimated_row_height(20.0);
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(240.0, 100.0))
-                .with_child(list),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(240.0, 100.0)).child(list));
 
         let output = runtime.render(window_id)?;
         let first_item = output
@@ -3347,11 +3331,8 @@ mod tests {
                 selected_key.set(Some(key));
                 ctx.request_semantics();
             });
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(240.0, 100.0))
-                .with_child(list),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(240.0, 100.0)).child(list));
 
         let output = runtime.render(window_id)?;
         let item_id = output
@@ -3374,11 +3355,8 @@ mod tests {
         let model = VirtualCollectionModel::from_items("rows", [(1_u64, (1_u64, 20.0))]).unwrap();
         let list = VirtualList::new("Rows", model.clone(), |_key, value| RowBox { value })
             .estimated_row_height(20.0);
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(240.0, 100.0))
-                .with_child(list),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(240.0, 100.0)).child(list));
         let before_output = runtime.render(window_id).unwrap();
         let before = before_output
             .semantics
@@ -3411,11 +3389,8 @@ mod tests {
             .state(state.clone())
             .estimated_row_height(20.0)
             .cache_capacity(0);
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(240.0, 100.0))
-                .with_child(list),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(240.0, 100.0)).child(list));
         let before = runtime.render(window_id).unwrap();
         let before_id = before
             .semantics
@@ -3446,11 +3421,8 @@ mod tests {
         let list = VirtualList::new("Rows", model, |_key, value| RowBox { value })
             .estimated_row_height(24.0)
             .overscan_viewports(2.0);
-        let (mut runtime, window_id) = build_runtime(
-            SizedBox::new()
-                .size(Size::new(240.0, 100.0))
-                .with_child(list),
-        );
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(240.0, 100.0)).child(list));
         runtime.render(window_id).unwrap();
         let mut rows = runtime
             .render(window_id)

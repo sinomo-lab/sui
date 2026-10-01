@@ -621,9 +621,14 @@ where
         Self::new(Axis::Horizontal, items, key_for, build)
     }
 
-    pub fn spacing(mut self, spacing: f32) -> Self {
-        self.spacing = spacing.max(0.0);
+    pub fn gap(mut self, gap: f32) -> Self {
+        self.spacing = gap.max(0.0);
         self
+    }
+
+    #[deprecated(note = "use `gap`")]
+    pub fn spacing(self, spacing: f32) -> Self {
+        self.gap(spacing)
     }
 
     /// How items line up across the stack. `Stretch`, the default, makes
@@ -993,7 +998,7 @@ mod tests {
 
     fn items_stack(items: &Signal<Vec<u32>>) -> KeyedStack<u32, u32> {
         KeyedStack::vertical(items.clone(), |item| *item, |_, _| Block(20.0))
-            .spacing(10.0)
+            .gap(10.0)
             .stagger(Stagger::NONE)
     }
 

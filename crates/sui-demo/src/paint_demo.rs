@@ -337,7 +337,7 @@ fn build_paint_toolbar(paint_state: PixelCanvasState, theme_reader: DevThemeRead
         .theme_when(clone_dev_theme_reader(&theme_reader))
         .extent(44.0)
         .padding(Insets::all(6.0))
-        .spacing(8.0)
+        .gap(8.0)
         .with_child(
             Label::new("SUI Paint").text_style_when(demo_text_style_when(
                 &theme_reader,
@@ -423,7 +423,7 @@ fn paint_command_group(name: &'static str, theme_reader: &DevThemeReader) -> Com
     CommandGroup::horizontal(name)
         .theme_when(clone_dev_theme_reader(theme_reader))
         .padding(Insets::all(2.0))
-        .spacing(2.0)
+        .gap(2.0)
         .corner_radius(6.0)
 }
 
@@ -436,7 +436,7 @@ fn build_paint_tool_rail(
         .theme_when(clone_dev_theme_reader(&theme_reader))
         .extent(52.0)
         .padding(Insets::all(6.0))
-        .spacing(6.0)
+        .gap(6.0)
         .items(paint_tool_palette_items())
         .selected(paint_tool_selected_index(paint_state.tool()))
         .selected_when(move || Some(paint_tool_selected_index(selected_state.tool())))
@@ -655,7 +655,7 @@ fn build_paint_document_bar(
         .theme_when(clone_dev_theme_reader(&theme_reader))
         .extent(34.0)
         .padding(Insets::all(6.0))
-        .spacing(8.0)
+        .gap(8.0)
         .with_child(
             Label::new(PAINT_DOCUMENT_NAME).text_style_when(demo_text_style_when(
                 &theme_reader,
@@ -694,7 +694,7 @@ fn build_paint_document_bar(
         .with_child(
             paint_command_group(PAINT_DOCUMENT_VIEW_COMMANDS_NAME, &theme_reader)
                 .padding(Insets::all(2.0))
-                .spacing(3.0)
+                .gap(3.0)
                 .with_child(
                     IconButton::new(IconGlyph::Remove, PAINT_ZOOM_OUT_NAME)
                         .theme_when(clone_dev_theme_reader(&theme_reader))
@@ -706,7 +706,7 @@ fn build_paint_document_bar(
                         }),
                 )
                 .with_child(
-                    SizedBox::new().width(78.0).with_child(
+                    SizedBox::new().width(78.0).child(
                         Label::new("Zoom --")
                             .text_when(move || paint_zoom_status_text(&zoom_state))
                             .semantic_name(PAINT_ZOOM_READOUT_NAME)
@@ -743,7 +743,7 @@ fn build_paint_properties_panel(
         ScrollView::vertical(Padding::all(
             8.0,
             Stack::vertical()
-                .spacing(8.0)
+                .gap(8.0)
                 .alignment(Alignment::Stretch)
                 .with_child(
                     PanelSection::new(
@@ -781,7 +781,7 @@ fn build_paint_properties_panel(
                 .with_child(
                     PanelSection::new(
                         PAINT_COLOR_EDITOR_NAME,
-                        SizedBox::new().width(284.0).height(336.0).with_child(
+                        SizedBox::new().width(284.0).height(336.0).child(
                             ColorPicker::from_color(
                                 PAINT_BRUSH_COLOR_NAME,
                                 paint_state.brush_color(),
@@ -816,7 +816,7 @@ fn build_paint_color_panel(
     let palette_change_state = paint_state;
 
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(paint_property_row_with_width(
             &theme_reader,
@@ -882,7 +882,7 @@ fn build_paint_brush_options(
     let blend_mode_state = paint_state.clone();
 
     Stack::vertical()
-        .spacing(6.0)
+        .gap(6.0)
         .alignment(Alignment::Stretch)
         .with_child(
             BrushPreview::new(PAINT_BRUSH_PREVIEW_NAME)
@@ -948,7 +948,7 @@ fn build_paint_eraser_options(
     let shape_state = paint_state.clone();
 
     Stack::vertical()
-        .spacing(6.0)
+        .gap(6.0)
         .alignment(Alignment::Stretch)
         .with_child(
             BrushPreview::new(PAINT_ERASER_PREVIEW_NAME)
@@ -1004,7 +1004,7 @@ fn build_paint_fill_options(
     let blend_mode_state = paint_state.clone();
 
     Stack::vertical()
-        .spacing(6.0)
+        .gap(6.0)
         .alignment(Alignment::Stretch)
         .with_child(paint_property_row(
             &theme_reader,
@@ -1036,7 +1036,7 @@ fn build_paint_pan_options(
     let actual_size_state = paint_state;
 
     Stack::horizontal()
-        .spacing(6.0)
+        .gap(6.0)
         .alignment(Alignment::Start)
         .with_child(
             IconButton::new(IconGlyph::FitView, PAINT_FIT_VIEW_NAME)
@@ -1216,10 +1216,10 @@ fn build_paint_layers_panel(
     let blend_change_state = state;
 
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(
-            SizedBox::new().width(284.0).height(112.0).with_child(
+            SizedBox::new().width(284.0).height(112.0).child(
                 LayerList::new(PAINT_LAYERS_NAME)
                     .theme_when(clone_dev_theme_reader(&theme_reader))
                     .layers([
@@ -1317,7 +1317,7 @@ fn build_paint_layer_actions(
     let below_state = state;
     let below_paint_state = paint_state;
     Stack::horizontal()
-        .spacing(4.0)
+        .gap(4.0)
         .with_child(
             IconButton::new(IconGlyph::ChevronUp, PAINT_SELECT_LAYER_ABOVE_NAME)
                 .theme_when(clone_dev_theme_reader(&theme_reader))

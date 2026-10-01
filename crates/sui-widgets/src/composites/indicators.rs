@@ -46,6 +46,12 @@ pub struct CoverageDotsConfig {
     pub show_label: bool,
 }
 
+impl Default for CoverageDotsConfig {
+    fn default() -> Self {
+        Self::new(0, 0)
+    }
+}
+
 impl CoverageDotsConfig {
     pub fn new(current: usize, target: usize) -> Self {
         Self {

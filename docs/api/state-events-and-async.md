@@ -50,7 +50,7 @@ fn counter() -> impl Widget {
     });
 
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .with_child(label)
         .with_child(increment)
 }

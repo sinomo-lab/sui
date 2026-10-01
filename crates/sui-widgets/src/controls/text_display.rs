@@ -680,9 +680,17 @@ impl Link {
         }
     }
 
-    pub fn url(url: impl Into<String>) -> Self {
+    /// A link labeled with its own URL.
+    pub fn from_url(url: impl Into<String>) -> Self {
         let url = url.into();
         Self::new(url.clone(), url)
+    }
+
+    /// The URL the link opens.
+    pub fn url(mut self, url: impl Into<String>) -> Self {
+        self.url = url.into();
+        self.url_reader = None;
+        self
     }
 
     pub fn label_when<F>(mut self, reader: F) -> Self

@@ -25,7 +25,7 @@ fn mode_card(mode: HdrThemeMode) -> impl Widget {
     ThemedCardFrame::new(
         theme,
         Stack::vertical()
-            .spacing(10.0)
+            .gap(10.0)
             .alignment(Alignment::Start)
             .with_child(Label::new(title).text_style(demo_text_style(
                 theme,
@@ -62,7 +62,7 @@ fn mode_card(mode: HdrThemeMode) -> impl Widget {
             )
             .with_child(
                 Stack::horizontal()
-                    .spacing(10.0)
+                    .gap(10.0)
                     .alignment(Alignment::Center)
                     .with_child(EmissiveIndicator::new(
                         format!("{title} emissive indicator"),
@@ -85,7 +85,7 @@ fn mode_card(mode: HdrThemeMode) -> impl Widget {
                         theme.palette.text,
                     )),
                 ))
-                .radius(14.0)
+                .corner_radius(14.0)
                 .glow(GlowTone::Accent)
                 .theme(theme),
             ),

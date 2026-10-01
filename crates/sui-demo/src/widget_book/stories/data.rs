@@ -87,7 +87,7 @@ fn list_view(ctx: &StoryCtx) -> Vec<Section> {
     vec![
         example(
             "",
-            SizedBox::new().width(360.0).height(236.0).with_child(
+            SizedBox::new().width(360.0).height(236.0).child(
                 ListView::new("Assets list")
                     .padding(Insets::all(8.0))
                     .items([
@@ -95,9 +95,9 @@ fn list_view(ctx: &StoryCtx) -> Vec<Section> {
                             .detail("2048 x 2048 RGBA")
                             .accent(accent),
                         ListItem::new("Normals atlas").detail("Streaming mip chain"),
-                        ListItem::new("Glass material").with_content(
+                        ListItem::new("Glass material").child(
                             Stack::horizontal()
-                                .spacing(10.0)
+                                .gap(10.0)
                                 .alignment(Alignment::Center)
                                 .with_child(ctx.text("Glass material"))
                                 .with_child(
@@ -120,7 +120,7 @@ fn list_view(ctx: &StoryCtx) -> Vec<Section> {
         ),
         example(
             "Disabled",
-            SizedBox::new().width(360.0).height(96.0).with_child(
+            SizedBox::new().width(360.0).height(96.0).child(
                 ListView::new("Disabled assets list")
                     .padding(Insets::all(8.0))
                     .items([
@@ -139,24 +139,24 @@ fn tree_view(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     vec![example(
         "",
-        SizedBox::new().width(380.0).height(236.0).with_child(
+        SizedBox::new().width(380.0).height(236.0).child(
             TreeView::new("Scene tree")
                 .padding(Insets::all(8.0))
                 .items([TreeItem::new("Scene")
                     .expanded(true)
-                    .with_child(
+                    .item(
                         TreeItem::new("Environment")
                             .expanded(true)
-                            .with_child(TreeItem::new("Sky dome").detail("Visible"))
-                            .with_child(TreeItem::new("Fog volume").detail("Animated")),
+                            .item(TreeItem::new("Sky dome").detail("Visible"))
+                            .item(TreeItem::new("Fog volume").detail("Animated")),
                     )
-                    .with_child(
+                    .item(
                         TreeItem::new("Characters")
                             .expanded(true)
-                            .with_child(
-                                TreeItem::new("Pilot").with_content(
+                            .item(
+                                TreeItem::new("Pilot").child(
                                     Stack::horizontal()
-                                        .spacing(10.0)
+                                        .gap(10.0)
                                         .alignment(Alignment::Center)
                                         .with_child(ctx.text("Pilot"))
                                         .with_child(
@@ -166,9 +166,9 @@ fn tree_view(ctx: &StoryCtx) -> Vec<Section> {
                                         ),
                                 ),
                             )
-                            .with_child(TreeItem::new("Companion drone")),
+                            .item(TreeItem::new("Companion drone")),
                     )
-                    .with_child(TreeItem::new("FX").detail("Collapsed group"))])
+                    .item(TreeItem::new("FX").detail("Collapsed group"))])
                 .theme(theme),
         ),
     )]
@@ -179,7 +179,7 @@ fn table(ctx: &StoryCtx) -> Vec<Section> {
     vec![
         example(
             "Table",
-            SizedBox::new().width(620.0).height(230.0).with_child(
+            SizedBox::new().width(620.0).height(230.0).child(
                 Table::new("Material table")
                     .columns([
                         TableColumn::new("Material"),
@@ -221,7 +221,7 @@ fn table(ctx: &StoryCtx) -> Vec<Section> {
         ),
         example(
             "Data grid",
-            SizedBox::new().width(420.0).height(190.0).with_child(
+            SizedBox::new().width(420.0).height(190.0).child(
                 Table::new("Asset grid")
                     .columns([
                         TableColumn::new("Asset"),
@@ -280,7 +280,7 @@ fn virtual_table(ctx: &StoryCtx) -> Vec<Section> {
         .theme(theme);
     vec![example(
         "10,000 rows",
-        SizedBox::new().width(400.0).height(190.0).with_child(table),
+        SizedBox::new().width(400.0).height(190.0).child(table),
     )]
 }
 
@@ -293,7 +293,7 @@ fn virtual_list(ctx: &StoryCtx) -> Vec<Section> {
     .expect("widget-book row keys are unique");
     vec![example(
         "2,000 keyed rows",
-        SizedBox::new().width(360.0).height(150.0).with_child(
+        SizedBox::new().width(360.0).height(150.0).child(
             VirtualList::new("Virtual retained rows", rows, move |_key, text| {
                 Surface::field(Label::new("").text_from(text))
                     .padding(Insets {
@@ -315,7 +315,7 @@ fn layer_list(ctx: &StoryCtx) -> Vec<Section> {
     let decorative = |hue| theme.decorative.get(hue).solid;
     vec![example(
         "",
-        SizedBox::new().width(340.0).height(170.0).with_child(
+        SizedBox::new().width(340.0).height(170.0).child(
             LayerList::new("Layer stack")
                 .layers([
                     LayerListItem::new("Highlights")
@@ -348,7 +348,7 @@ fn reorderable_list(ctx: &StoryCtx) -> Vec<Section> {
     };
     vec![example(
         "",
-        SizedBox::new().width(320.0).with_child(
+        SizedBox::new().width(320.0).child(
             ReorderableList::new("Reorderable task list")
                 .item(row("Capture screenshots"))
                 .item(row("Review contrast"))
@@ -366,7 +366,7 @@ fn drag_and_drop(ctx: &StoryCtx) -> Vec<Section> {
         DragDropHost::new(
             scope.clone(),
             Stack::horizontal()
-                .spacing(16.0)
+                .gap(16.0)
                 .alignment(Alignment::Center)
                 .with_child(
                     Draggable::new(

@@ -148,7 +148,7 @@ fn task_list_card(theme_reader: &DevThemeReader) -> impl Widget + use<> {
         |task: &Task| task.id,
         move |id, task| task_row(*id, task, row_list.clone(), Rc::clone(&row_theme)),
     )
-    .spacing(6.0);
+    .gap(6.0);
     let (add, add_three, remove, shuffle) = (list.clone(), list.clone(), list.clone(), list);
 
     card(
@@ -163,7 +163,7 @@ fn task_list_card(theme_reader: &DevThemeReader) -> impl Widget + use<> {
             )
         },
         Stack::vertical()
-            .spacing(10.0)
+            .gap(10.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 Flex::horizontal()
@@ -179,7 +179,7 @@ fn task_list_card(theme_reader: &DevThemeReader) -> impl Widget + use<> {
             .with_child(
                 SizedBox::new()
                     .width(300.0)
-                    .with_child(SemanticRegion::new(KEYED_LIST_NAME, tasks)),
+                    .child(SemanticRegion::new(KEYED_LIST_NAME, tasks)),
             ),
     )
 }
@@ -245,7 +245,7 @@ fn stagger_card(theme_reader: &DevThemeReader) -> impl Widget + use<> {
             )
         },
         Stack::vertical()
-            .spacing(10.0)
+            .gap(10.0)
             .alignment(Alignment::Stretch)
             .with_child(
                 SegmentedControl::new(STAGGER_ORIGIN_NAME)
@@ -262,7 +262,7 @@ fn stagger_card(theme_reader: &DevThemeReader) -> impl Widget + use<> {
                         refresh_page(ctx);
                     }),
             )
-            .with_child(SizedBox::new().width(300.0).with_child(StaggerBars::new(
+            .with_child(SizedBox::new().width(300.0).child(StaggerBars::new(
                 origin,
                 replays,
                 Rc::clone(theme_reader),
@@ -382,7 +382,7 @@ fn presence_card(theme_reader: &DevThemeReader) -> impl Widget + use<> {
             )
         },
         Stack::vertical()
-            .spacing(8.0)
+            .gap(8.0)
             .alignment(Alignment::Start)
             .with_child(
                 Switch::new(DETAILS_TOGGLE_LABEL)
@@ -395,7 +395,7 @@ fn presence_card(theme_reader: &DevThemeReader) -> impl Widget + use<> {
                 Presence::new(
                     Surface::panel(
                         Stack::vertical()
-                            .spacing(4.0)
+                            .gap(4.0)
                             .alignment(Alignment::Start)
                             .with_child(text("Details stay retained while hidden."))
                             .with_child(text("Leaving content ignores clicks and focus."))
@@ -429,10 +429,10 @@ fn tabs_and_notifications_card(theme_reader: &DevThemeReader) -> impl Widget + u
             )
         },
         Stack::vertical()
-            .spacing(10.0)
+            .gap(10.0)
             .alignment(Alignment::Stretch)
             .with_child(
-                SizedBox::new().width(460.0).with_child(
+                SizedBox::new().width(460.0).child(
                     BrowserTabBar::new(TABS_NAME)
                         .tabs_when(move || read.borrow().clone())
                         .theme_when(theme())
@@ -469,7 +469,7 @@ fn tabs_and_notifications_card(theme_reader: &DevThemeReader) -> impl Widget + u
             .with_child(
                 SizedBox::new()
                     .height(176.0)
-                    .with_child(NotificationHost::new(center).width(280.0)),
+                    .child(NotificationHost::new(center).width(280.0)),
             ),
     )
 }

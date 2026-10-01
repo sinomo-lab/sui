@@ -1049,8 +1049,13 @@ impl DockWorkspace {
         Ok(())
     }
 
-    pub fn state(&self) -> DockWorkspaceState {
+    pub fn shared_state(&self) -> DockWorkspaceState {
         self.state.clone()
+    }
+
+    #[deprecated(note = "use `shared_state`")]
+    pub fn state(&self) -> DockWorkspaceState {
+        self.shared_state()
     }
 
     pub fn panel_widget_id(&self, panel: DockPanelId) -> Option<WidgetId> {
@@ -2355,7 +2360,7 @@ mod tests {
         SizedBox::new()
             .width(200.0)
             .height(160.0)
-            .with_child(Label::new(title))
+            .child(Label::new(title))
     }
 
     fn build_runtime(root: impl Widget + 'static) -> (Runtime, sui_core::WindowId) {

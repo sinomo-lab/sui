@@ -84,7 +84,7 @@ pub(crate) fn build_hdr_validation_surface(
         Padding::all(
             24.0,
             Stack::vertical()
-                .spacing(18.0)
+                .gap(18.0)
                 .alignment(Alignment::Stretch)
                 .with_child(output_section(&theme_reader, &options))
                 .with_child(headroom_section(&theme_reader))
@@ -132,7 +132,7 @@ where
 }
 
 fn body() -> Stack {
-    Stack::vertical().spacing(14.0).alignment(Alignment::Start)
+    Stack::vertical().gap(14.0).alignment(Alignment::Start)
 }
 
 fn expectation(
@@ -308,7 +308,7 @@ fn gamut_section(theme_reader: &DevThemeReader) -> impl Widget + use<> {
         "Wide gamut",
         "Display P3 colors outside sRGB. Each tile's left half is the color clipped to sRGB and its right half is the color itself, so the two only differ where the output reaches past sRGB.",
         Stack::horizontal()
-            .spacing(24.0)
+            .gap(24.0)
             .alignment(Alignment::Start)
             .with_child(probes::ChromaticityDiagram::new(theme_reader))
             .with_child(

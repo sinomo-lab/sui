@@ -642,7 +642,7 @@ impl StudioState {
 pub(super) fn section(theme_reader: DevThemeReader) -> impl Widget {
     let state = StudioState::new();
     Stack::vertical()
-        .spacing(12.0)
+        .gap(12.0)
         .alignment(Alignment::Stretch)
         .with_child(toolbar(state.clone(), Rc::clone(&theme_reader)))
         .with_child(StudioEditor::new(state, theme_reader))
@@ -679,7 +679,7 @@ fn toolbar(state: StudioState, theme_reader: DevThemeReader) -> impl Widget {
         .chain([CUSTOM_EASING]);
 
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(
             Flex::horizontal()

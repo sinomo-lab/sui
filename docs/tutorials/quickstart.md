@@ -58,7 +58,7 @@ fn main() -> Result<()> {
     let theme = DefaultTheme::light();
 
     let content = Stack::vertical()
-        .spacing(12.0)
+        .gap(12.0)
         .alignment(Alignment::Start)
         .with_child(
             Label::new("Your first SUI window")
@@ -158,7 +158,7 @@ Use `Stack` for a fixed row or column:
 
 ```rust,ignore
 let actions = Stack::horizontal()
-    .spacing(8.0)
+    .gap(8.0)
     .with_child(Button::new("Cancel"))
     .with_child(Button::primary("Save"));
 ```

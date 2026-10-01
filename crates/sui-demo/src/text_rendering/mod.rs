@@ -185,7 +185,7 @@ pub(crate) fn build_text_rendering_page(
     options: RenderOptions,
 ) -> impl Widget {
     let content = Stack::vertical()
-        .spacing(18.0)
+        .gap(18.0)
         .alignment(Alignment::Stretch)
         .with_child(settings_section(&theme_reader, &options))
         .with_child(sizes_section(&theme_reader))
@@ -216,9 +216,7 @@ where
 }
 
 fn body() -> Stack {
-    Stack::vertical()
-        .spacing(12.0)
-        .alignment(Alignment::Stretch)
+    Stack::vertical().gap(12.0).alignment(Alignment::Stretch)
 }
 
 fn note(theme_reader: &DevThemeReader, text: &'static str) -> impl Widget + use<> {
@@ -301,7 +299,7 @@ fn comparison_side(
         },
     );
     Stack::vertical()
-        .spacing(10.0)
+        .gap(10.0)
         .alignment(Alignment::Stretch)
         .with_child(labeled_control(
             theme_reader,
@@ -397,7 +395,7 @@ where
     W: Widget + 'static,
 {
     Stack::vertical()
-        .spacing(8.0)
+        .gap(8.0)
         .alignment(Alignment::Stretch)
         .with_child(demo_label(
             theme_reader,
@@ -418,7 +416,7 @@ fn probes_section(theme_reader: &DevThemeReader) -> impl Widget + use<> {
         PROBES_SECTION_NAME,
         "Each probe isolates one setting, draws it both ways, and says what should differ.",
         body()
-            .spacing(22.0)
+            .gap(22.0)
             .with_child(probe(
                 theme_reader,
                 "Stem darkening thickens small text only",
@@ -474,13 +472,11 @@ fn probes_section(theme_reader: &DevThemeReader) -> impl Widget + use<> {
 }
 
 fn policies_section(theme_reader: &DevThemeReader) -> impl Widget + use<> {
-    let mut rows = Stack::vertical()
-        .spacing(14.0)
-        .alignment(Alignment::Stretch);
+    let mut rows = Stack::vertical().gap(14.0).alignment(Alignment::Stretch);
     for policy in POLICIES.iter().filter(|policy| policy.policy.is_some()) {
         rows = rows.with_child(
             Stack::vertical()
-                .spacing(4.0)
+                .gap(4.0)
                 .alignment(Alignment::Stretch)
                 .with_child(demo_label(
                     theme_reader,

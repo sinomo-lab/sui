@@ -410,7 +410,7 @@ fn build_narrow_color_validation_runtime() -> Result<sui::Runtime> {
                 .root(
                     SizedBox::new()
                         .size(Size::new(430.0, 320.0))
-                        .with_child(build_color_validation_surface()),
+                        .child(build_color_validation_surface()),
                 ),
         )
         .build()
