@@ -207,9 +207,13 @@ impl TestApp {
         Ok(Self { harness })
     }
 
+    /// How many seconds waits such as [`Self::run_until_idle`] allow before
+    /// failing. Infinity waits without a deadline.
     pub fn set_default_timeout(&self, timeout: f64) -> Result<()> {
-        if timeout.is_sign_negative() {
-            return Err(Error::new("default timeout must be >= 0"));
+        if timeout.is_nan() || timeout < 0.0 {
+            return Err(Error::new(format!(
+                "default timeout must be a number of seconds >= 0, not {timeout}"
+            )));
         }
 
         self.harness.borrow_mut().set_default_timeout(timeout);
@@ -291,6 +295,11 @@ impl TestApp {
     ) -> Result<Vec<(f64, T)>> {
         if step <= 0.0 || !step.is_finite() {
             return Err(Error::new("motion sampling step must be > 0"));
+        }
+        if !(duration.is_finite() && duration >= 0.0) {
+            return Err(Error::new(format!(
+                "motion sampling duration must be a finite number of seconds >= 0, not {duration}"
+            )));
         }
         let mut samples = vec![(0.0, probe()?)];
         let mut elapsed = 0.0;

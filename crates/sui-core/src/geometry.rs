@@ -102,12 +102,23 @@ impl Size {
         self.width <= 0.0 || self.height <= 0.0
     }
 
+    /// This size within `min..=max` on each axis. Bounds that cannot hold a
+    /// size don't panic, so one bad bound can't take down a whole layout: a
+    /// NaN bound is ignored, a minimum above the maximum wins, as `min-width`
+    /// does over `max-width` in CSS, and a NaN length takes the minimum.
     pub fn clamp(self, min: Size, max: Size) -> Self {
         Self::new(
-            self.width.clamp(min.width, max.width),
-            self.height.clamp(min.height, max.height),
+            clamp_length(self.width, min.width, max.width),
+            clamp_length(self.height, min.height, max.height),
         )
     }
+}
+
+/// `value` within `min..=max` as [`Size::clamp`] describes, never panicking.
+fn clamp_length(value: f32, min: f32, max: f32) -> f32 {
+    let value = if value.is_nan() { min } else { value };
+    let clamped = value.min(max).max(min);
+    if clamped.is_nan() { 0.0 } else { clamped }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -717,7 +728,31 @@ impl Default for Transform {
 
 #[cfg(test)]
 mod tests {
-    use super::{Point, Rect, Transform, Vector};
+    use super::{Point, Rect, Size, Transform, Vector};
+
+    #[test]
+    fn size_clamp_keeps_going_with_bounds_that_cannot_hold_a_size() {
+        let size = Size::new(50.0, 50.0);
+        // As before for bounds that can hold a size.
+        assert_eq!(
+            size.clamp(Size::new(10.0, 60.0), Size::new(40.0, 80.0)),
+            Size::new(40.0, 60.0)
+        );
+        // A minimum above the maximum wins, as min-width does in CSS.
+        assert_eq!(
+            size.clamp(Size::new(30.0, 30.0), Size::new(20.0, 20.0)),
+            Size::new(30.0, 30.0)
+        );
+        // A NaN bound is ignored, and a NaN size takes the minimum.
+        assert_eq!(
+            size.clamp(Size::new(f32::NAN, 10.0), Size::new(40.0, f32::NAN)),
+            Size::new(40.0, 50.0)
+        );
+        assert_eq!(
+            Size::new(f32::NAN, f32::NAN).clamp(Size::new(5.0, 0.0), Size::new(9.0, 9.0)),
+            Size::new(5.0, 0.0)
+        );
+    }
 
     #[test]
     fn point_and_vector_math_is_stable() {

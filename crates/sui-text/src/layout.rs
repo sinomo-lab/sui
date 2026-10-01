@@ -56,7 +56,7 @@ fn with_prepared_paragraph<T>(
     let mut prepared = if let Some(prepared) = font_context.preparation.paragraphs.take(&key) {
         prepared
     } else {
-        let metrics = cosmic_text::Metrics::new(primary.font_size, primary.line_height);
+        let metrics = crate::font::cosmic_metrics(primary.font_size, primary.line_height);
         let mut buffer = Buffer::new_empty(metrics);
         let prefix = direction_prefix(paragraph.style.direction);
         let suffix = if prefix.is_empty() { "" } else { "\u{202C}" };
@@ -1163,7 +1163,7 @@ fn default_attrs_for_style<'a>(
     metadata: usize,
 ) -> cosmic_text::Attrs<'a> {
     let mut attrs = cosmic_text::Attrs::new()
-        .metrics(cosmic_text::Metrics::new(
+        .metrics(crate::font::cosmic_metrics(
             style.font_size,
             style.line_height,
         ))

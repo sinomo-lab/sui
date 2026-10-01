@@ -4,7 +4,7 @@ mod grid;
 
 pub use grid::{
     GridItem, GridItemLayout, GridLayout, GridPlacement, GridStyle, GridTrack, GridTrackMax,
-    grid_layout,
+    MAX_GRID_TRACKS, grid_layout,
 };
 
 use std::sync::Arc;
@@ -501,11 +501,10 @@ impl Constraints {
         }
     }
 
+    /// `size` within these constraints, as [`Size::clamp`] describes:
+    /// constraints that cannot hold a size don't panic.
     pub fn clamp(self, size: Size) -> Size {
-        Size::new(
-            size.width.clamp(self.min.width, self.max.width),
-            size.height.clamp(self.min.height, self.max.height),
-        )
+        size.clamp(self.min, self.max)
     }
 }
 
@@ -1358,6 +1357,20 @@ mod tests {
         assert_rect_approx_eq(layout.items[0].rect, Rect::new(0.0, 0.0, 20.0, 10.0));
         assert_rect_approx_eq(layout.items[1].rect, Rect::new(20.0, 0.0, 30.0, 10.0));
         assert_rect_approx_eq(layout.items[2].rect, Rect::new(50.0, 0.0, 50.0, 10.0));
+    }
+
+    #[test]
+    fn flex_layout_keeps_going_under_constraints_that_cannot_hold_a_size() {
+        let items = [FlexItem::default(), FlexItem::fill()];
+        for constraints in [
+            Constraints::new(Size::new(80.0, 30.0), Size::new(40.0, 10.0)),
+            Constraints::new(Size::new(f32::NAN, 0.0), Size::new(100.0, f32::NAN)),
+        ] {
+            let layout = flex_layout(FlexStyle::horizontal(), &items, constraints, |_, _| {
+                Size::new(f32::NAN, 12.0)
+            });
+            assert!(!layout.size.width.is_nan() && !layout.size.height.is_nan());
+        }
     }
 
     #[test]

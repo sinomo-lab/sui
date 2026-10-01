@@ -331,7 +331,7 @@ impl FontContext {
     pub(crate) fn attrs_for_span<'a>(span: &'a ResolvedSpanInput, metadata: usize) -> Attrs<'a> {
         let text_style = &span.style;
         let mut attrs = Attrs::new()
-            .metrics(Metrics::new(text_style.font_size, text_style.line_height))
+            .metrics(cosmic_metrics(text_style.font_size, text_style.line_height))
             .metadata(metadata)
             .weight(to_cosmic_weight(text_style.weight))
             .style(to_cosmic_style(text_style.style))
@@ -708,6 +708,25 @@ fn preferred_family_from_loaded_faces(
 
     fallback
 }
+
+/// The shaping metrics for a font size and line height. The shaper can't take
+/// a size or height of zero, so a zero, negative, or non-finite value becomes
+/// [`MIN_TEXT_METRIC`]: text set that small takes no visible space, and an
+/// app with a bad style token keeps running.
+pub(crate) fn cosmic_metrics(font_size: f32, line_height: f32) -> Metrics {
+    let usable = |value: f32| {
+        if value.is_finite() && value > 0.0 {
+            value
+        } else {
+            MIN_TEXT_METRIC
+        }
+    };
+    Metrics::new(usable(font_size), usable(line_height))
+}
+
+/// The smallest font size and line height the shaper is given, a sixty-fourth
+/// of a pixel.
+pub(crate) const MIN_TEXT_METRIC: f32 = 1.0 / 64.0;
 
 #[cfg(test)]
 mod font_database_tests {

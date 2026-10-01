@@ -5037,6 +5037,36 @@ fn scheduler_wake_invokes_controllers_without_synthesizing_a_root_event() {
 }
 
 #[test]
+fn application_commands_can_ask_every_window_to_repaint() {
+    let mut runtime = Application::new()
+        .on_command(TEST_COMMAND, |ctx, _| {
+            // An application handler has no window of its own.
+            assert_eq!(ctx.window_id(), None);
+            ctx.request_paint();
+            ctx.request_window_with_reason(InvalidationKind::Measure, "settings changed");
+            ctx.request_animation_frame(WidgetId::new(u64::MAX));
+        })
+        .window(WindowBuilder::new().root(EventCommandRoot))
+        .window(WindowBuilder::new().root(EventCommandRoot))
+        .build()
+        .unwrap();
+    let windows = runtime.window_ids();
+    for window_id in &windows {
+        runtime.render(*window_id).unwrap();
+        assert!(!runtime.needs_render(*window_id).unwrap());
+    }
+
+    runtime
+        .command_sender()
+        .send(CommandTarget::Application, TEST_COMMAND, 1);
+    runtime.process_commands();
+
+    for window_id in &windows {
+        assert!(runtime.needs_render(*window_id).unwrap());
+    }
+}
+
+#[test]
 fn widget_event_context_can_enqueue_an_application_command() {
     let received = Arc::new(AtomicUsize::new(0));
     let received_by_handler = Arc::clone(&received);

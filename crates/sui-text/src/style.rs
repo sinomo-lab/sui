@@ -78,8 +78,16 @@ impl FontFeature {
     pub const FRACTIONS: [u8; 4] = *b"frac";
     pub const SLASHED_ZERO: [u8; 4] = *b"zero";
 
-    /// Stylistic set `n` (1..=20), e.g. `stylistic_set(1)` -> `ss01`.
+    /// Stylistic set `n` (1..=20), e.g. `stylistic_set(1)` -> `ss01`. OpenType
+    /// defines no others, so `n` outside that range is pulled into it.
     pub const fn stylistic_set(n: u8) -> [u8; 4] {
+        let n = if n < 1 {
+            1
+        } else if n > 20 {
+            20
+        } else {
+            n
+        };
         let tens = b'0' + (n / 10);
         let ones = b'0' + (n % 10);
         [b's', b's', tens, ones]

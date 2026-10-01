@@ -378,8 +378,10 @@ impl Harness {
     }
 
     pub(crate) fn advance_time(&mut self, delta: f64) -> Result<()> {
-        if delta.is_sign_negative() {
-            return Err(Error::new("time delta must be >= 0"));
+        if !(delta.is_finite() && delta >= 0.0) {
+            return Err(Error::new(format!(
+                "time delta must be a finite number of seconds >= 0, not {delta}"
+            )));
         }
 
         match &mut self.backend {
@@ -389,7 +391,7 @@ impl Harness {
             }
             HarnessBackend::Live(_) => {
                 if delta > 0.0 {
-                    thread::sleep(Duration::from_secs_f64(delta));
+                    thread::sleep(seconds(delta));
                 }
                 self.run_until_idle()
             }
@@ -397,7 +399,7 @@ impl Harness {
     }
 
     pub(crate) fn run_until_idle(&mut self) -> Result<()> {
-        let timeout = Duration::from_secs_f64(self.default_timeout.max(0.0));
+        let timeout = seconds(self.default_timeout);
         let deadline = Instant::now() + timeout;
         match &mut self.backend {
             HarnessBackend::Headless(harness) => {
@@ -417,7 +419,7 @@ impl Harness {
 
         match &mut self.backend {
             HarnessBackend::Headless(harness) => {
-                let timeout = Duration::from_secs_f64(self.default_timeout.max(0.0));
+                let timeout = seconds(self.default_timeout);
                 let deadline = Instant::now() + timeout;
                 for _ in 0..frames {
                     if Instant::now() >= deadline {
@@ -442,8 +444,7 @@ impl Harness {
     where
         F: FnMut(&Self) -> Result<Option<T>>,
     {
-        let timeout = timeout.max(0.0);
-        let deadline = Instant::now() + Duration::from_secs_f64(timeout);
+        let deadline = Instant::now() + seconds(timeout);
 
         loop {
             self.run_until_idle()?;
@@ -604,6 +605,19 @@ impl Harness {
             }
         }
     }
+}
+
+/// `value` seconds as a duration. A timeout of infinity, or one too long to
+/// represent, waits a year, which is as good as forever for a test; NaN and
+/// negative values are zero.
+fn seconds(value: f64) -> Duration {
+    const FOREVER: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+    if value.is_nan() || value <= 0.0 {
+        return Duration::ZERO;
+    }
+    Duration::try_from_secs_f64(value)
+        .unwrap_or(FOREVER)
+        .min(FOREVER)
 }
 
 fn timeout_error(context: &str, timeout: Duration) -> Error {
@@ -920,7 +934,7 @@ impl LiveHarnessApp {
                 event_loop.set_control_flow(ControlFlow::Poll);
             }
             Some(deadline) => {
-                let when = self.started_at + Duration::from_secs_f64(deadline.max(0.0));
+                let when = self.started_at + seconds(deadline);
                 event_loop.set_control_flow(ControlFlow::WaitUntil(when));
             }
             None => event_loop.set_control_flow(ControlFlow::Wait),

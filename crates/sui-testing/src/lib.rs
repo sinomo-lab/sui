@@ -790,6 +790,30 @@ mod tests {
         TestApp::from_runtime_with_frame_budget(runtime, 2)
     }
 
+    #[test]
+    fn unbounded_timeouts_wait_and_bad_ones_are_refused() -> Result<()> {
+        let app = build_switch_app()?;
+        let window = app.main_window()?;
+
+        // An infinite timeout means no deadline, rather than a panic.
+        app.set_default_timeout(f64::INFINITY)?;
+        window.run_until_idle()?;
+        window
+            .get_by_role(SemanticsRole::Switch)
+            .with_name("Wi-Fi")
+            .expect()
+            .with_timeout(f64::INFINITY)
+            .to_be_visible()?;
+        app.set_default_timeout(5.0)?;
+
+        // Values that mean nothing are errors, not panics or endless loops.
+        assert!(app.set_default_timeout(f64::NAN).is_err());
+        assert!(app.advance_time(f64::NAN).is_err());
+        assert!(app.advance_time(f64::INFINITY).is_err());
+        assert!(app.record_motion(f64::INFINITY, 0.1, || Ok(())).is_err());
+        Ok(())
+    }
+
     fn build_switch_app() -> Result<TestApp> {
         TestApp::new(|| {
             sui::Application::new().window(sui::WindowBuilder::new().title("Motion").root(

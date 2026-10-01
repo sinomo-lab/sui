@@ -787,16 +787,35 @@ impl Runtime {
     ) {
         let handled = ctx.is_handled();
         let invalidations = ctx.take_invalidations();
+        let every_window_invalidations = ctx.take_every_window_invalidations();
         let animations = ctx.take_animation_targets();
         for invalidation in invalidations {
             self.apply_command_invalidation(invalidation, source, delivery_window);
         }
+        for invalidation in every_window_invalidations {
+            for window_id in self.window_ids() {
+                let mut request = InvalidationRequest::new(
+                    InvalidationTarget::Window(window_id),
+                    invalidation.kind,
+                );
+                if let Some(region) = invalidation.region {
+                    request = request.with_region(region);
+                }
+                self.apply_command_invalidation(
+                    CommandInvalidation {
+                        request,
+                        reason: invalidation.reason.clone(),
+                    },
+                    source,
+                    delivery_window,
+                );
+            }
+        }
         for (window_id, widget_id) in animations {
-            if let Some(window) = self
-                .windows
-                .iter_mut()
-                .find(|window| window.id == window_id)
-            {
+            if let Some(window) = self.windows.iter_mut().find(|window| match window_id {
+                Some(window_id) => window.id == window_id,
+                None => window.root.id() == widget_id || window.graph.contains(widget_id),
+            }) {
                 window.requested_animation_frames.insert(widget_id);
             }
         }

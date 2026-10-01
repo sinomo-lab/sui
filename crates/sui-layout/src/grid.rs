@@ -162,17 +162,23 @@ pub struct GridLayout {
     pub items: Vec<GridItemLayout>,
 }
 
+/// Lay out `items` on `style`'s tracks, adding auto tracks for items placed
+/// past them, up to [`MAX_GRID_TRACKS`] rows and columns.
 pub fn grid_layout(style: &GridStyle, items: &[GridItem], constraints: Constraints) -> GridLayout {
-    let column_count = items
+    let placements = items
         .iter()
-        .map(|item| item.placement.column + item.placement.column_span.max(1))
+        .map(|item| within_track_limit(item.placement))
+        .collect::<Vec<_>>();
+    let column_count = placements
+        .iter()
+        .map(|placement| placement.column + placement.column_span)
         .max()
         .unwrap_or(0)
         .max(style.columns.len())
         .max(1);
-    let row_count = items
+    let row_count = placements
         .iter()
-        .map(|item| item.placement.row + item.placement.row_span.max(1))
+        .map(|placement| placement.row + placement.row_span)
         .max()
         .unwrap_or(0)
         .max(style.rows.len())
@@ -185,32 +191,39 @@ pub fn grid_layout(style: &GridStyle, items: &[GridItem], constraints: Constrain
         style.column_gap,
         constraints.min.width,
         constraints.max.width,
-        items.iter().map(|item| AxisItem {
-            start: item.placement.column,
-            span: item.placement.column_span.max(1),
-            minimum: item.minimum_size.width,
-            natural: item.natural_size.width,
-        }),
+        items
+            .iter()
+            .zip(&placements)
+            .map(|(item, placement)| AxisItem {
+                start: placement.column,
+                span: placement.column_span,
+                minimum: item.minimum_size.width,
+                natural: item.natural_size.width,
+            }),
     );
     let (row_heights, height) = resolve_tracks(
         &rows,
         style.row_gap,
         constraints.min.height,
         constraints.max.height,
-        items.iter().map(|item| AxisItem {
-            start: item.placement.row,
-            span: item.placement.row_span.max(1),
-            minimum: item.minimum_size.height,
-            natural: item.natural_size.height,
-        }),
+        items
+            .iter()
+            .zip(&placements)
+            .map(|(item, placement)| AxisItem {
+                start: placement.row,
+                span: placement.row_span,
+                minimum: item.minimum_size.height,
+                natural: item.natural_size.height,
+            }),
     );
     let column_offsets = track_offsets(&column_widths, style.column_gap);
     let row_offsets = track_offsets(&row_heights, style.row_gap);
     let item_layouts = items
         .iter()
-        .map(|item| {
+        .zip(&placements)
+        .map(|(item, placement)| {
             let cell = span_rect(
-                item.placement,
+                *placement,
                 &column_offsets,
                 &column_widths,
                 &row_offsets,
@@ -258,6 +271,22 @@ pub fn grid_layout(style: &GridStyle, items: &[GridItem], constraints: Constrain
         row_offsets,
         row_heights,
         items: item_layouts,
+    }
+}
+
+/// The most rows or columns [`grid_layout`] adds for placed items.
+pub const MAX_GRID_TRACKS: usize = 1 << 16;
+
+/// `placement` pulled back within [`MAX_GRID_TRACKS`], with spans of at least
+/// one track, so a stray index can't allocate tracks without end or overflow.
+fn within_track_limit(placement: GridPlacement) -> GridPlacement {
+    let row = placement.row.min(MAX_GRID_TRACKS - 1);
+    let column = placement.column.min(MAX_GRID_TRACKS - 1);
+    GridPlacement {
+        row,
+        column,
+        row_span: placement.row_span.clamp(1, MAX_GRID_TRACKS - row),
+        column_span: placement.column_span.clamp(1, MAX_GRID_TRACKS - column),
     }
 }
 
@@ -532,6 +561,26 @@ fn sanitize_size(size: Size) -> Size {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn far_out_placements_stay_within_the_track_limit() {
+        let style = GridStyle::new([GridTrack::Auto]);
+        let items = [
+            GridItem::new(GridPlacement::new(1_000_000_000, 3), Size::new(10.0, 10.0)),
+            GridItem::new(
+                GridPlacement::new(usize::MAX, usize::MAX).span(usize::MAX, usize::MAX),
+                Size::new(10.0, 10.0),
+            ),
+        ];
+        let layout = grid_layout(
+            &style,
+            &items,
+            Constraints::new(Size::ZERO, Size::new(400.0, 400.0)),
+        );
+        assert!(layout.column_widths.len() <= MAX_GRID_TRACKS);
+        assert!(layout.row_heights.len() <= MAX_GRID_TRACKS);
+        assert_eq!(layout.items.len(), 2);
+    }
 
     #[test]
     fn fraction_tracks_share_remaining_width_after_auto_content() {

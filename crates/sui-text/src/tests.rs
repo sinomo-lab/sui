@@ -1223,3 +1223,41 @@ fn selection_covers_the_selected_text_in_mixed_directions() {
     );
     assert!(rects[1].x() > hebrew.0 + 1.0, "{rects:?} vs {hebrew:?}");
 }
+
+#[test]
+fn degenerate_font_sizes_and_line_heights_measure_without_panicking() {
+    let system = TextSystem::new();
+    let fonts = FontRegistry::new();
+    for (font_size, line_height) in [
+        (14.0, 0.0),
+        (0.0, 18.0),
+        (0.0, 0.0),
+        (-4.0, -2.0),
+        (f32::NAN, f32::NAN),
+        (f32::INFINITY, f32::INFINITY),
+    ] {
+        let style = TextStyle {
+            font_size,
+            line_height,
+            ..TextStyle::default()
+        };
+        let measurement = system
+            .measure_text("Hello\nworld", style.clone(), &fonts)
+            .expect("degenerate styles still measure");
+        assert!(
+            measurement.width.is_finite() && measurement.height.is_finite(),
+            "{font_size} / {line_height}: {measurement:?}"
+        );
+        let size = system
+            .measure_text_size("Hello", style.clone(), &fonts)
+            .expect("degenerate styles still measure");
+        assert!(size.width.is_finite() && size.height.is_finite());
+        system
+            .layout_document(
+                TextLayoutRequest::new(TextDocument::from_plain_text("Hello", style))
+                    .with_box_size(Size::new(40.0, 40.0)),
+                &fonts,
+            )
+            .expect("degenerate styles still lay out");
+    }
+}

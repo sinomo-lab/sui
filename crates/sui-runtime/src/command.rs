@@ -416,13 +416,24 @@ pub(crate) struct CommandInvalidation {
     pub(crate) reason: Option<String>,
 }
 
+/// A window invalidation an application controller asked for. It has no
+/// window of its own, so every window gets it.
+pub(crate) struct EveryWindowInvalidation {
+    pub(crate) kind: InvalidationKind,
+    pub(crate) region: Option<Rect>,
+    pub(crate) reason: Option<String>,
+}
+
 /// Context supplied to window and application command controllers.
 pub struct CommandCtx {
     sender: CommandSender,
     window_id: Option<WindowId>,
     handled: bool,
     invalidations: Vec<CommandInvalidation>,
-    animation_targets: Vec<(WindowId, WidgetId)>,
+    every_window_invalidations: Vec<EveryWindowInvalidation>,
+    /// Widgets asking for animation frames, with their window when the
+    /// controller has one.
+    animation_targets: Vec<(Option<WindowId>, WidgetId)>,
 }
 
 impl CommandCtx {
@@ -432,6 +443,7 @@ impl CommandCtx {
             window_id,
             handled: false,
             invalidations: Vec::new(),
+            every_window_invalidations: Vec::new(),
             animation_targets: Vec::new(),
         }
     }
@@ -466,28 +478,42 @@ impl CommandCtx {
         });
     }
 
+    /// Invalidate this controller's window, or every window for an
+    /// application controller, which has no window of its own.
     pub fn request_window(&mut self, kind: InvalidationKind) {
-        let window_id = self
-            .window_id
-            .expect("window invalidation requires a window-scoped command controller");
-        self.request(InvalidationRequest::new(
-            InvalidationTarget::Window(window_id),
-            kind,
-        ));
+        self.request_window_region(kind, None, None);
     }
 
+    /// [`Self::request_window`], recording `reason` in the diagnostics.
     pub fn request_window_with_reason(
         &mut self,
         kind: InvalidationKind,
         reason: impl Into<String>,
     ) {
-        let window_id = self
-            .window_id
-            .expect("window invalidation requires a window-scoped command controller");
-        self.request_with_reason(
-            InvalidationRequest::new(InvalidationTarget::Window(window_id), kind),
-            reason,
-        );
+        self.request_window_region(kind, None, Some(reason.into()));
+    }
+
+    fn request_window_region(
+        &mut self,
+        kind: InvalidationKind,
+        region: Option<Rect>,
+        reason: Option<String>,
+    ) {
+        let Some(window_id) = self.window_id else {
+            self.every_window_invalidations
+                .push(EveryWindowInvalidation {
+                    kind,
+                    region,
+                    reason,
+                });
+            return;
+        };
+        let mut request = InvalidationRequest::new(InvalidationTarget::Window(window_id), kind);
+        if let Some(region) = region {
+            request = request.with_region(region);
+        }
+        self.invalidations
+            .push(CommandInvalidation { request, reason });
     }
 
     pub fn request_measure(&mut self) {
@@ -506,31 +532,27 @@ impl CommandCtx {
         self.request_window(InvalidationKind::Semantics);
     }
 
+    /// Repaint `rect` in this controller's window, or in every window for an
+    /// application controller.
     pub fn request_paint_rect(&mut self, rect: Rect) {
-        let window_id = self
-            .window_id
-            .expect("window invalidation requires a window-scoped command controller");
-        self.request(
-            InvalidationRequest::new(
-                InvalidationTarget::Window(window_id),
-                InvalidationKind::Paint,
-            )
-            .with_region(rect),
-        );
+        self.request_window_region(InvalidationKind::Paint, Some(rect), None);
     }
 
+    /// Ask `widget_id` for an animation frame. For an application controller,
+    /// whichever window shows `widget_id` gets it.
     pub fn request_animation_frame(&mut self, widget_id: WidgetId) {
-        let window_id = self
-            .window_id
-            .expect("animation requests require a window-scoped command controller");
-        self.animation_targets.push((window_id, widget_id));
+        self.animation_targets.push((self.window_id, widget_id));
     }
 
     pub(crate) fn take_invalidations(&mut self) -> Vec<CommandInvalidation> {
         std::mem::take(&mut self.invalidations)
     }
 
-    pub(crate) fn take_animation_targets(&mut self) -> Vec<(WindowId, WidgetId)> {
+    pub(crate) fn take_every_window_invalidations(&mut self) -> Vec<EveryWindowInvalidation> {
+        std::mem::take(&mut self.every_window_invalidations)
+    }
+
+    pub(crate) fn take_animation_targets(&mut self) -> Vec<(Option<WindowId>, WidgetId)> {
         std::mem::take(&mut self.animation_targets)
     }
 }
