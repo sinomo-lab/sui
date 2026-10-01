@@ -85,35 +85,39 @@ fn fs_shade(in: VsOut) -> vec4<f32> {
 
     for (var contour_index = 0u; contour_index < path_meta.contour_count; contour_index = contour_index + 1u) {
         let contour = contours[path_meta.contour_start + contour_index];
-        if contour.len < 2u {
-            continue;
-        }
-
-        let closed = (contour.flags & ANALYTIC_CONTOUR_FLAG_CLOSED) != 0u;
         let point_start = path_meta.point_start + contour.start;
-        var previous = select(
-            points[point_start].position,
-            points[point_start + contour.len - 1u].position,
-            closed,
-        );
-        var start_index = select(1u, 0u, closed);
-        for (var point_index = start_index; point_index < contour.len; point_index = point_index + 1u) {
-            let current = points[point_start + point_index].position;
-                let denom = previous.y - current.y;
-                let safe_denom = select(
-                    denom,
-                    select(-1e-5, 1e-5, denom >= 0.0),
-                    abs(denom) < 1e-5,
-                );
-            let intersects = ((current.y > point.y) != (previous.y > point.y))
-                && (point.x < (((previous.x - current.x) * (point.y - current.y))
-                / safe_denom) + current.x);
+
+        // Each segment loads both endpoints from a loop starting at zero. An earlier form
+        // carried the previous point across iterations and started open contours at index 1;
+        // some mobile Vulkan drivers then read zeros for every in-loop point of open contours.
+        var segment_count = 0u;
+        if contour.len >= 2u {
+            segment_count = contour.len - 1u;
+            if (contour.flags & ANALYTIC_CONTOUR_FLAG_CLOSED) != 0u {
+                segment_count = contour.len;
+            }
+        }
+        for (var segment = 0u; segment < segment_count; segment = segment + 1u) {
+            var end_index = segment + 1u;
+            if end_index == contour.len {
+                end_index = 0u;
+            }
+            let start = points[point_start + segment].position;
+            let end = points[point_start + end_index].position;
+            let denom = start.y - end.y;
+            let safe_denom = select(
+                denom,
+                select(-1e-5, 1e-5, denom >= 0.0),
+                abs(denom) < 1e-5,
+            );
+            let intersects = ((end.y > point.y) != (start.y > point.y))
+                && (point.x < (((start.x - end.x) * (point.y - end.y))
+                / safe_denom) + end.x);
             if intersects {
                 inside = !inside;
             }
 
-            min_distance = min(min_distance, segment_distance(point, previous, current));
-            previous = current;
+            min_distance = min(min_distance, segment_distance(point, start, end));
         }
     }
 
