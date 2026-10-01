@@ -158,7 +158,7 @@ fn icons(ctx: &StoryCtx) -> Vec<Section> {
                         Icon::new(*glyph)
                             .size(20.0)
                             .color(theme.palette.text)
-                            .label(name)
+                            .semantic_name(name)
                             .theme(theme),
                     )),
                 ),
@@ -402,7 +402,7 @@ fn image(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let framed = |label: &str, fit: ImageFit| {
         Image::new(WIDGET_BOOK_IMAGE_HANDLE)
-            .label(label)
+            .semantic_name(label)
             .fit(fit)
             .size(Size::new(120.0, 84.0))
             .background(theme.palette.control)

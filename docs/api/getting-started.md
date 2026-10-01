@@ -97,7 +97,7 @@ fn main() -> Result<()> {
         ))?
     };
 
-    app.main_window("Resources", Image::new(logo).label("Company logo"))
+    app.main_window("Resources", Image::new(logo).semantic_name("Company logo"))
         .run()
 }
 ```

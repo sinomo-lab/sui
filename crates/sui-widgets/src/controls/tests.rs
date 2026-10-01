@@ -840,7 +840,7 @@ fn icon_color_when_uses_external_color() -> Result<()> {
     let (mut runtime, window_id) = build_runtime(
         Icon::new(IconGlyph::Sparkles)
             .size(24.0)
-            .label("Agent")
+            .semantic_name("Agent")
             .color_when(move || *reader.borrow()),
     );
 
@@ -6432,13 +6432,15 @@ fn icon_resolves_a_live_theme_when_it_lays_out() -> Result<()> {
     let large = Rc::new(Cell::new(false));
     let reader = Rc::clone(&large);
     let (mut runtime, window_id) = build_runtime(
-        Stack::vertical().with_child(Icon::new(IconGlyph::Storage).label("Storage").theme_when(
-            move || {
-                let mut theme = DefaultTheme::default();
-                theme.metrics.icon_size = if reader.get() { 40.0 } else { 16.0 };
-                theme
-            },
-        )),
+        Stack::vertical().with_child(
+            Icon::new(IconGlyph::Storage)
+                .semantic_name("Storage")
+                .theme_when(move || {
+                    let mut theme = DefaultTheme::default();
+                    theme.metrics.icon_size = if reader.get() { 40.0 } else { 16.0 };
+                    theme
+                }),
+        ),
     );
     let width = |runtime: &mut Runtime| -> Result<f32> {
         Ok(runtime

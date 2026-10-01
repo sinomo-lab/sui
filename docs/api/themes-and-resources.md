@@ -386,7 +386,7 @@ fn main() -> Result<()> {
 
     let root = Stack::vertical()
         .gap(12.0)
-        .with_child(Image::new(logo).label("Company logo"))
+        .with_child(Image::new(logo).semantic_name("Company logo"))
         .with_child(Label::new("Dashboard").text_style(heading_style));
 
     app.main_window("Resources", root).run()

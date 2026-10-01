@@ -2238,7 +2238,7 @@ mod tests {
                         .with_child(
                             SizedBox::new().width(220.0).height(220.0).child(
                                 Image::new(WIDGET_BOOK_TEST_IMAGE_HANDLE)
-                                    .label(crate::widget_book::DEMO_IMAGE_LABEL)
+                                    .semantic_name(crate::widget_book::DEMO_IMAGE_LABEL)
                                     .fit(ImageFit::Contain)
                                     .background(Color::rgba(0.92, 0.95, 0.98, 1.0))
                                     .corner_radius(12.0),

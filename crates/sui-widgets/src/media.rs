@@ -84,9 +84,16 @@ impl Image {
         self
     }
 
-    pub fn label(mut self, label: impl Into<String>) -> Self {
-        self.label = Some(label.into());
+    /// Name the image for accessibility and automation, as alternative
+    /// text. An image without a name is decorative.
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.label = Some(name.into());
         self
+    }
+
+    #[deprecated(note = "use `semantic_name`")]
+    pub fn label(self, label: impl Into<String>) -> Self {
+        self.semantic_name(label)
     }
 
     pub fn fit(mut self, fit: ImageFit) -> Self {
@@ -5383,7 +5390,7 @@ mod tests {
             .window(
                 WindowBuilder::new()
                     .title("Image")
-                    .root(Image::new(handle).label("Preview")),
+                    .root(Image::new(handle).semantic_name("Preview")),
             )
             .build()?;
         let window_id = runtime.window_ids()[0];

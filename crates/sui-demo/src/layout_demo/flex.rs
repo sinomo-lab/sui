@@ -210,7 +210,7 @@ impl FlexPlayground {
         self.flex =
             std::mem::replace(&mut self.flex, Flex::horizontal()).with_style(settings.style());
         for (index, mode) in settings.modes.iter().enumerate() {
-            self.flex.set_item(index, mode.item(settings.column));
+            self.flex.set_flex_item(index, mode.item(settings.column));
         }
     }
 }

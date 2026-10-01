@@ -24,12 +24,17 @@ Builder order never matters. A widget stores what it is given and resolves
 values that depend on others, such as theme defaults, when it measures and
 paints. A later `.theme(...)` does not undo an earlier `.color(...)`.
 
-A getter reads state and never shares a name with a builder on any widget:
+A widget's getter reads state and never shares a name with a builder on any
+widget:
 
 - Booleans read as `is_<property>()`: `is_checked()`, `is_enabled()`.
 - Values that change while the widget runs read as `current_<property>()`,
   except for the selection, which reads as `selected_index()`.
 - A setter that changes a built widget in place is `set_<property>(...)`.
+
+Data types, such as the items a list or menu holds and the value types below,
+are not widgets: they read their own fields back under the field's name, as
+`TabBarItem::label()` reads the label passed to `new`.
 
 Methods without arguments are presets that set several properties at once,
 such as `Button::primary_action()` or `Checkbox::plain()`. A single on/off
@@ -139,7 +144,8 @@ accents. A custom widget can paint its disabled state the same way.
 
 ## Names and Labels
 
-- `label` is visible text, nothing else.
+- `label` is visible text, nothing else. A widget that shows no text, such as
+  `Icon` or `Image`, takes its accessible name through `semantic_name(...)`.
 - A widget with visible text uses it as its accessible name. Override the name
   with `semantic_name(...)` when the visible text alone is ambiguous.
 - An interactive or landmark widget without visible text, such as `Slider` or
@@ -162,7 +168,9 @@ accents. A custom widget can paint its disabled state the same way.
 - `child(widget)` sets a widget's single child, replacing any earlier one.
 - `with_child(widget)` appends a child to a widget that holds several.
 - `item(...)` and `items(...)` add data entries, such as list items, menu
-  items, or tree nodes, rather than child widgets.
+  items, or tree nodes, rather than child widgets. `Flex` calls each child's
+  layout settings its `FlexItem`, as CSS does, and reads them with
+  `flex_item(index)` and `flex_items()`.
 - A container reads its child back with `child_pod()`, which returns the
   retained `WidgetPod`.
 

@@ -171,7 +171,7 @@ impl BindingWidget {
             } => {
                 let mut icon = Icon::new(*glyph);
                 if let Some(label) = label {
-                    icon = icon.label(label.clone());
+                    icon = icon.semantic_name(label.clone());
                 }
                 if let Some(size) = size {
                     icon = icon.size(*size);
@@ -1191,7 +1191,7 @@ impl BindingWidget {
             } => {
                 let mut image = Image::new(image.into_sui()).fit((*fit).into());
                 if let Some(label) = label {
-                    image = image.label(label.clone());
+                    image = image.semantic_name(label.clone());
                 }
                 if let Some(size) = size {
                     image = image.size(*size);

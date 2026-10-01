@@ -448,9 +448,16 @@ impl Icon {
         self
     }
 
-    pub fn label(mut self, label: impl Into<String>) -> Self {
-        self.label = Some(label.into());
+    /// Name the icon for accessibility and automation. An icon shows no
+    /// text, so without a name assistive technology skips it.
+    pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.label = Some(name.into());
         self
+    }
+
+    #[deprecated(note = "use `semantic_name`")]
+    pub fn label(self, label: impl Into<String>) -> Self {
+        self.semantic_name(label)
     }
 
     fn resolved_color(&self) -> Color {

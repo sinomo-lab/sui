@@ -154,7 +154,12 @@ Versioning, with the usual expectation that the API may change during the
   `child()` getters are deprecated.
 - Breaking: `Link::url(url)` is a builder that sets the URL; build a link
   labeled with its URL with `Link::from_url`.
-- `RadioButton` takes `semantic_name`.
+- `RadioButton` takes `semantic_name`. `Icon::label` and `Image::label`,
+  which set only the accessible name, are deprecated in favor of
+  `semantic_name`.
+- `Flex` reads each child's layout settings with `flex_item`, `flex_items`,
+  `flex_items_mut`, and `set_flex_item`; `item`, `items`, `items_mut`, and
+  `set_item` are deprecated.
 - `CanvasViewport`, `CanvasSurface`, `FloatingViewConfig`,
   `TransientNotification`, `BrushPreviewSpec`, and `CoverageDotsConfig` are
   plain data: each implements `Default`, and their builders and constructors

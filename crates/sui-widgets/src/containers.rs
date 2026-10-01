@@ -1608,24 +1608,48 @@ impl Flex {
         self.style
     }
 
-    pub fn items(&self) -> &[FlexItem] {
+    /// Each child's [`FlexItem`] layout settings, in child order.
+    pub fn flex_items(&self) -> &[FlexItem] {
         &self.items
     }
 
-    pub fn items_mut(&mut self) -> &mut [FlexItem] {
+    #[deprecated(note = "use `flex_items`")]
+    pub fn items(&self) -> &[FlexItem] {
+        self.flex_items()
+    }
+
+    pub fn flex_items_mut(&mut self) -> &mut [FlexItem] {
         &mut self.items
     }
 
-    pub fn item(&self, index: usize) -> Option<FlexItem> {
+    #[deprecated(note = "use `flex_items_mut`")]
+    pub fn items_mut(&mut self) -> &mut [FlexItem] {
+        self.flex_items_mut()
+    }
+
+    /// The [`FlexItem`] layout settings of child `index`.
+    pub fn flex_item(&self, index: usize) -> Option<FlexItem> {
         self.items.get(index).copied()
     }
 
-    pub fn set_item(&mut self, index: usize, item: FlexItem) -> bool {
+    #[deprecated(note = "use `flex_item`")]
+    pub fn item(&self, index: usize) -> Option<FlexItem> {
+        self.flex_item(index)
+    }
+
+    /// Replace the [`FlexItem`] layout settings of child `index`, returning
+    /// whether that child exists.
+    pub fn set_flex_item(&mut self, index: usize, item: FlexItem) -> bool {
         let Some(slot) = self.items.get_mut(index) else {
             return false;
         };
         *slot = item;
         true
+    }
+
+    #[deprecated(note = "use `set_flex_item`")]
+    pub fn set_item(&mut self, index: usize, item: FlexItem) -> bool {
+        self.set_flex_item(index, item)
     }
 
     pub fn children(&self) -> &[WidgetPod] {
@@ -5243,6 +5267,19 @@ mod tests {
         WidgetNodeSnapshot, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor, WindowBuilder,
     };
     use sui_scene::{Brush, LayerCompositionMode, SceneCommand, SceneLayerDescriptor};
+
+    #[test]
+    fn flex_reads_and_replaces_each_childs_flex_item() {
+        let mut flex = Flex::horizontal()
+            .with_child(crate::Label::new("Fixed"))
+            .with_item(crate::Label::new("Fill"), FlexItem::flex(1.0));
+        assert_eq!(flex.flex_items().len(), 2);
+        assert_eq!(flex.flex_item(1), Some(FlexItem::flex(1.0)));
+        assert!(flex.set_flex_item(0, FlexItem::fixed(40.0)));
+        assert_eq!(flex.flex_item(0), Some(FlexItem::fixed(40.0)));
+        assert!(!flex.set_flex_item(2, FlexItem::new()));
+        assert_eq!(flex.flex_item(2), None);
+    }
 
     #[test]
     fn retained_output_matches_full_callbacks_across_text_dpi_and_style_changes() {

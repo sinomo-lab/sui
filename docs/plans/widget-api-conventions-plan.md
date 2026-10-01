@@ -102,9 +102,11 @@ Status: done, with these decisions:
   description, so assistive technology reads what is shown; the spinner's
   name still comes from `new`.
 
-Still to do: `Flex::item` and `Flex::items` read children back under builder
-names, and item types such as `TabBarItem` and `MenuItem` read their labels
-with `label()`.
+Follow-up, also done: `Flex` reads each child's layout settings with
+`flex_item`, `flex_items`, `flex_items_mut`, and `set_flex_item`. `Icon` and
+`Image` take their accessible name through `semantic_name`, since they show
+no text. Item types keep reading their labels with `label()`: the convention
+now says data types read their own fields under the field's name.
 
 - Getters stop sharing names with builders: `Button::label`,
   `TextInput::name`, `ColorPicker::color`, `FloatingWorkspace::state`, and
