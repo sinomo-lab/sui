@@ -160,30 +160,24 @@ Versioning, with the usual expectation that the API may change during the
 - `Flex` reads each child's layout settings with `flex_item`, `flex_items`,
   `flex_items_mut`, and `set_flex_item`; `item`, `items`, `items_mut`, and
   `set_item` are deprecated.
-- The JavaScript and Python bindings use the same words as Rust: `gap` instead
-  of `spacing` on `Stack`, `Toolbar`, `FieldGroup`, `ToolPalette`,
-  `CommandGroup`, `VirtualList`, `VirtualScrollView`, and `ReorderableList`;
-  `cornerRadius` (`corner_radius`) instead of `radius` on `Surface` and
-  `FormSection`; `open` instead of `shown` on `Dialog`, `CommandPalette`,
-  `SideSheet`, and `BottomSheet`; `checked` and `onChange` (`on_change`) on
-  `Checkbox`, `Switch`, and `RadioButton`; and `semanticName`
-  (`semantic_name`) instead of `label` on `Icon` and `Image`. The former names
-  still work as JavaScript factory options and Python keywords, with a
-  deprecation warning, and positional calls are unchanged.
-- Breaking (Python): `RadioButton`'s third positional argument is now
-  `on_change`, called with `True` when the radio becomes checked. Pass a
-  no-argument callback as `on_select=` instead, which is deprecated.
+- Breaking (bindings): the JavaScript and Python bindings, which are not
+  published yet, use the same words as Rust: `gap` instead of `spacing` on
+  `Stack`, `Toolbar`, `FieldGroup`, `ToolPalette`, `CommandGroup`,
+  `VirtualList`, `VirtualScrollView`, and `ReorderableList`; `cornerRadius`
+  (`corner_radius`) instead of `radius` on `Surface` and `FormSection`; `open`
+  instead of `shown` on `Dialog`, `CommandPalette`, `SideSheet`, and
+  `BottomSheet`; `checked` and `onChange` (`on_change`) on `Checkbox`,
+  `Switch`, and `RadioButton`, whose `onChange` is called with `true` when it
+  becomes checked; and `semanticName` (`semantic_name`) instead of `label` on
+  `Icon` and `Image`. The former names are gone.
 - Breaking (bindings): `SegmentedControlItem`, `TreeItem`, `LayerListItem`,
   `MenuItem`, and `ToolPaletteItem` take `enabled` where they took
   `disabled`, in the same position and with the opposite meaning, as their
-  Rust counterparts do. Python still accepts `disabled=` as a deprecated
-  keyword. The bindings core's item descriptors take `enabled` too.
+  Rust counterparts do. The bindings core's item descriptors take `enabled`
+  too.
 - The JavaScript consumer test passes again: it checks that a notification
   host publishes its notification rather than counting the draw commands of
   a first frame, which paint nothing while the toast fades in.
-- The binding spec renames a parameter with `name? was former: type`, which
-  keeps the former name working and marks it deprecated in the TypeScript
-  declarations and Python stubs.
 - `cargo xtask bindings check` passes again: `ShadowBox` is classified, with
   `Surface` as its binding equivalent. `cargo xtask bindings generate --check`
   passes again: the Python stub template declares `Shadow`'s `placement`.

@@ -26,14 +26,6 @@ end
 - `?` marks an optional parameter. `as` supplies an explicit Python parameter
   alias when an existing Python name differs from the normal snake-case form.
   In the example, JavaScript retains `min` and Python exposes `min_value`.
-- `was` renames an optional parameter while still accepting its former name:
-  `gap? was spacing: number`. Positional calls are unaffected. The former
-  name stays accepted as a JavaScript factory option and a keyword-only Python
-  argument, warns once that it is deprecated, and appears in the TypeScript
-  options and Python stubs marked as deprecated. Write `was former(type)` when
-  the former name took a different type. When the former name meant the
-  opposite, as with `enabled? was disabled`, the Python template inverts it. The Python template accepts the
-  former keyword and merges it with `renamed_kwarg`.
 - `api class` begins a class block containing constructors, methods, static
   methods, and properties; `endapi` closes it.
 - `python_stub manual` explicitly selects the hand-maintained Python class

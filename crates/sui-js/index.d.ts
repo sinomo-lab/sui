@@ -1014,8 +1014,6 @@ export function Icon(glyph: IconGlyph | string, semanticName?: string, size?: nu
 
 export interface IconOptions {
   semanticName?: string;
-  /** @deprecated Use `semanticName`. */
-  label?: string;
   size?: number;
   color?: Color;
 }
@@ -1050,8 +1048,6 @@ export function Checkbox(label: State | BindingValue, checked?: State | boolean 
 export interface CheckboxOptions {
   checked?: State | boolean | number;
   onChange?: (checked: boolean) => void;
-  /** @deprecated Use `onChange`. */
-  onToggle?: (checked: boolean) => void;
 }
 
 export function checkbox(label: State | BindingValue, options?: CheckboxOptions): Widget;
@@ -1060,11 +1056,7 @@ export function Switch(label: State | BindingValue, checked?: State | boolean | 
 
 export interface SwitchOptions {
   checked?: State | boolean | number;
-  /** @deprecated Use `checked`. */
-  on?: State | boolean | number;
   onChange?: (checked: boolean) => void;
-  /** @deprecated Use `onChange`. */
-  onToggle?: (checked: boolean) => void;
 }
 
 export function switchControl(label: State | BindingValue, options?: SwitchOptions): Widget;
@@ -1073,11 +1065,7 @@ export function RadioButton(label: State | BindingValue, checked?: State | boole
 
 export interface RadioButtonOptions {
   checked?: State | boolean | number;
-  /** @deprecated Use `checked`. */
-  selected?: State | boolean | number;
   onChange?: (checked: boolean) => void;
-  /** @deprecated Use `onChange`. */
-  onSelect?: () => void;
 }
 
 export function radioButton(label: State | BindingValue, options?: RadioButtonOptions): Widget;
@@ -1303,8 +1291,6 @@ export function Image(image: ImageHandle, semanticName?: string, fit?: ImageFit,
 
 export interface ImageOptions {
   semanticName?: string;
-  /** @deprecated Use `semanticName`. */
-  label?: string;
   fit?: ImageFit;
   size?: Size;
 }
@@ -1354,8 +1340,6 @@ export interface SurfaceOptions {
   border?: SurfaceBorder | string;
   elevation?: SurfaceElevation | string;
   cornerRadius?: number;
-  /** @deprecated Use `cornerRadius`. */
-  radius?: number;
   padding?: number;
   fillWidth?: boolean;
   fillHeight?: boolean;
@@ -1371,8 +1355,6 @@ export interface ToolbarOptions {
   extent?: number;
   padding?: number;
   gap?: number;
-  /** @deprecated Use `gap`. */
-  spacing?: number;
   background?: Color;
   divider?: boolean;
 }
@@ -1673,8 +1655,6 @@ export function VirtualList(name: string, model: VirtualListModel, estimatedRowH
 export interface VirtualListOptions {
   estimatedRowHeight?: number;
   gap?: number;
-  /** @deprecated Use `gap`. */
-  spacing?: number;
   padding?: number;
   rowPadding?: number;
   overscanViewports?: number;
@@ -1786,8 +1766,6 @@ export function Dialog(title: State | BindingValue, content: Widget, open?: Stat
 
 export interface DialogOptions {
   open?: State | boolean | number;
-  /** @deprecated Use `open`. */
-  shown?: State | boolean | number;
 }
 
 export function dialog(title: State | BindingValue, content: Widget, options?: DialogOptions): Widget;
@@ -1797,8 +1775,6 @@ export function CommandPalette(name: string, content: Widget, description?: stri
 export interface CommandPaletteOptions {
   description?: string;
   open?: State | boolean | number;
-  /** @deprecated Use `open`. */
-  shown?: State | boolean | number;
   maxWidth?: number;
   onDismiss?: () => void;
 }
@@ -1846,8 +1822,6 @@ export function Stack(children: Widget[], axis?: Axis, gap?: number, alignment?:
 export interface StackOptions {
   axis?: Axis;
   gap?: number;
-  /** @deprecated Use `gap`. */
-  spacing?: number;
   alignment?: "start" | "center" | "end" | "stretch";
 }
 
@@ -1877,8 +1851,6 @@ export function FieldGroup(children: Widget[], gap?: number, padding?: number, m
 
 export interface FieldGroupOptions {
   gap?: number;
-  /** @deprecated Use `gap`. */
-  spacing?: number;
   padding?: number;
   maxWidth?: number;
   fillWidth?: boolean;
@@ -1897,8 +1869,6 @@ export interface FormSectionOptions {
   maxWidth?: number;
   fillWidth?: boolean;
   cornerRadius?: number;
-  /** @deprecated Use `cornerRadius`. */
-  radius?: number;
   elevation?: SurfaceElevation | string;
 }
 
@@ -1957,8 +1927,6 @@ export interface ToolPaletteOptions {
   extent?: number;
   padding?: number;
   gap?: number;
-  /** @deprecated Use `gap`. */
-  spacing?: number;
   itemSize?: number;
   iconSize?: number;
   background?: Color;
@@ -2078,8 +2046,6 @@ export interface CommandGroupOptions {
   axis?: Axis;
   padding?: number;
   gap?: number;
-  /** @deprecated Use `gap`. */
-  spacing?: number;
   cornerRadius?: number;
   background?: Color;
   border?: Color;
@@ -2182,8 +2148,6 @@ export function SideSheet(title: string, body: Widget, description?: string, ope
 export interface SideSheetOptions {
   description?: string;
   open?: State | boolean | number;
-  /** @deprecated Use `open`. */
-  shown?: State | boolean | number;
   modal?: boolean;
   dismissOnScrim?: boolean;
   placement?: "left" | "right";
@@ -2200,8 +2164,6 @@ export function BottomSheet(title: string, body: Widget, description?: string, o
 export interface BottomSheetOptions {
   description?: string;
   open?: State | boolean | number;
-  /** @deprecated Use `open`. */
-  shown?: State | boolean | number;
   modal?: boolean;
   dismissOnScrim?: boolean;
   height?: number;
@@ -2343,8 +2305,6 @@ export interface VirtualScrollViewOptions {
   name?: string;
   padding?: number;
   gap?: number;
-  /** @deprecated Use `gap`. */
-  spacing?: number;
 }
 
 export function virtualScrollView(children: Widget[], options?: VirtualScrollViewOptions): Widget;
@@ -2353,8 +2313,6 @@ export function ReorderableList(name: string, children: Widget[], gap?: number, 
 
 export interface ReorderableListOptions {
   gap?: number;
-  /** @deprecated Use `gap`. */
-  spacing?: number;
   dragThreshold?: number;
   previewLabel?: string;
   onReorder?: (item: number, fromIndex: number, toIndex: number) => void;

@@ -141,7 +141,7 @@ descriptor SegmentedControlItem
   python class
   js class
   api class
-    constructor(label: string, semanticName?: string, description?: string, enabled? was disabled: boolean);
+    constructor(label: string, semanticName?: string, description?: string, enabled?: boolean);
   endapi
   docs SegmentedControlItem
 end
@@ -191,7 +191,7 @@ widget Icon
   core_constructor icon
   python function py_icon
   js function js_icon
-  api function Icon(glyph: IconGlyph | string, semanticName? was label: string, size?: number, color?: Color): Widget;
+  api function Icon(glyph: IconGlyph | string, semanticName?: string, size?: number, color?: Color): Widget;
   docs Icon
   compat
 end
@@ -221,7 +221,7 @@ widget Checkbox
   core_constructor checkbox
   python function py_checkbox
   js function js_checkbox
-  api function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange? was onToggle: (checked: boolean) => void): Widget;
+  api function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
   docs Checkbox
   compat
 end
@@ -231,7 +231,7 @@ widget Switch
   core_constructor switch
   python function py_switch
   js function js_switch
-  api function Switch(label: State | BindingValue, checked? was on: State | boolean | number, onChange? was onToggle: (checked: boolean) => void): Widget;
+  api function Switch(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
   docs Switch
   compat
 end
@@ -241,7 +241,7 @@ widget RadioButton
   core_constructor radio_button
   python function py_radio_button
   js function js_radio_button
-  api function RadioButton(label: State | BindingValue, checked? was selected: State | boolean | number, onChange? was onSelect(() => void): (checked: boolean) => void): Widget;
+  api function RadioButton(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
   docs RadioButton
   compat
 end
@@ -479,7 +479,7 @@ widget Image
   core_constructor image
   python function py_image
   js function js_image
-  api function Image(image: ImageHandle, semanticName? was label: string, fit?: ImageFit, size?: Size): Widget;
+  api function Image(image: ImageHandle, semanticName?: string, fit?: ImageFit, size?: Size): Widget;
   docs Image
 end
 
@@ -518,7 +518,7 @@ widget Surface
   core_constructor surface
   python function py_surface
   js function js_surface
-  api function Surface(child: Widget, role?: SurfaceRole | string, name?: string, border?: SurfaceBorder | string, elevation?: SurfaceElevation | string, cornerRadius? was radius: number, padding?: number, fillWidth?: boolean, fillHeight?: boolean): Widget;
+  api function Surface(child: Widget, role?: SurfaceRole | string, name?: string, border?: SurfaceBorder | string, elevation?: SurfaceElevation | string, cornerRadius?: number, padding?: number, fillWidth?: boolean, fillHeight?: boolean): Widget;
   docs Surface
   compat
 end
@@ -528,7 +528,7 @@ widget Toolbar
   core_constructor toolbar
   python function py_toolbar
   js function js_toolbar
-  api function Toolbar(children: Widget[], axis?: Axis, name?: string, extent?: number, padding?: number, gap? was spacing: number, background?: Color, divider?: boolean): Widget;
+  api function Toolbar(children: Widget[], axis?: Axis, name?: string, extent?: number, padding?: number, gap?: number, background?: Color, divider?: boolean): Widget;
   docs Toolbar
   compat
 end
@@ -906,7 +906,7 @@ widget VirtualList
   core_constructor virtual_list
   python function py_virtual_list
   js function js_virtual_list
-  api function VirtualList(name: string, model: VirtualListModel, estimatedRowHeight?: number, gap? was spacing: number, padding?: number, rowPadding?: number, overscanViewports?: number, cacheCapacity?: number, selectable?: boolean, transparent?: boolean, stickToEnd?: boolean, overlayScrollBars?: boolean, onChange?: (key: string) => void, onNearStart?: () => void, onNearEnd?: () => void): Widget;
+  api function VirtualList(name: string, model: VirtualListModel, estimatedRowHeight?: number, gap?: number, padding?: number, rowPadding?: number, overscanViewports?: number, cacheCapacity?: number, selectable?: boolean, transparent?: boolean, stickToEnd?: boolean, overlayScrollBars?: boolean, onChange?: (key: string) => void, onNearStart?: () => void, onNearEnd?: () => void): Widget;
   docs VirtualList
   compat
 end
@@ -935,7 +935,7 @@ descriptor TreeItem
   python class
   js class
   api class
-    constructor(label: string, detail?: string, expanded?: boolean, enabled? was disabled: boolean, children?: TreeItem[]);
+    constructor(label: string, detail?: string, expanded?: boolean, enabled?: boolean, children?: TreeItem[]);
   endapi
   docs TreeItem
 end
@@ -954,7 +954,7 @@ descriptor LayerListItem
   python class
   js class
   api class
-    constructor(label: string, detail?: string, visible?: boolean, locked?: boolean, enabled? was disabled: boolean);
+    constructor(label: string, detail?: string, visible?: boolean, locked?: boolean, enabled?: boolean);
   endapi
   docs LayerListItem
 end
@@ -973,7 +973,7 @@ descriptor MenuItem
   python class
   js class
   api class
-    constructor(label: string, shortcut?: string, enabled? was disabled: boolean, destructive?: boolean, separatorBefore?: boolean, submenu?: MenuItem[]);
+    constructor(label: string, shortcut?: string, enabled?: boolean, destructive?: boolean, separatorBefore?: boolean, submenu?: MenuItem[]);
   endapi
   docs MenuItem
 end
@@ -983,7 +983,7 @@ descriptor ToolPaletteItem
   python class
   js class
   api class
-    constructor(icon: IconGlyph | string, label: string, enabled? was disabled: boolean);
+    constructor(icon: IconGlyph | string, label: string, enabled?: boolean);
   endapi
   docs ToolPaletteItem
 end
@@ -1041,7 +1041,7 @@ widget Dialog
   core_constructor dialog
   python function py_dialog
   js function js_dialog
-  api function Dialog(title: State | BindingValue, content: Widget, open? was shown: State | boolean | number): Widget;
+  api function Dialog(title: State | BindingValue, content: Widget, open?: State | boolean | number): Widget;
   docs Dialog
 end
 
@@ -1050,7 +1050,7 @@ widget CommandPalette
   core_constructor command_palette
   python function py_command_palette
   js function js_command_palette
-  api function CommandPalette(name: string, content: Widget, description?: string, open? was shown: State | boolean | number, maxWidth?: number, onDismiss?: () => void): Widget;
+  api function CommandPalette(name: string, content: Widget, description?: string, open?: State | boolean | number, maxWidth?: number, onDismiss?: () => void): Widget;
   docs CommandPalette
   compat
 end
@@ -1096,7 +1096,7 @@ widget Stack
   core_constructor stack
   python function py_stack
   js function js_stack
-  api function Stack(children: Widget[], axis?: Axis, gap? was spacing: number, alignment?: "start" | "center" | "end" | "stretch"): Widget;
+  api function Stack(children: Widget[], axis?: Axis, gap?: number, alignment?: "start" | "center" | "end" | "stretch"): Widget;
   docs Stack
 end
 
@@ -1123,7 +1123,7 @@ widget FieldGroup
   core_constructor field_group
   python function py_field_group
   js function js_field_group
-  api function FieldGroup(children: Widget[], gap? was spacing: number, padding?: number, maxWidth?: number, fillWidth?: boolean): Widget;
+  api function FieldGroup(children: Widget[], gap?: number, padding?: number, maxWidth?: number, fillWidth?: boolean): Widget;
   docs FieldGroup
 end
 
@@ -1132,7 +1132,7 @@ widget FormSection
   core_constructor form_section
   python function py_form_section
   js function js_form_section
-  api function FormSection(title: string, child: Widget, description?: string, headerAction?: Widget, padding?: number, bodyGap?: number, headerGap?: number, maxWidth?: number, fillWidth?: boolean, cornerRadius? was radius: number, elevation?: SurfaceElevation | string): Widget;
+  api function FormSection(title: string, child: Widget, description?: string, headerAction?: Widget, padding?: number, bodyGap?: number, headerGap?: number, maxWidth?: number, fillWidth?: boolean, cornerRadius?: number, elevation?: SurfaceElevation | string): Widget;
   docs FormSection
 end
 
@@ -1186,7 +1186,7 @@ widget ToolPalette
   core_constructor tool_palette
   python function py_tool_palette
   js function js_tool_palette
-  api function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: int, value: string) => void, extent?: number, padding?: number, gap? was spacing: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean): Widget;
+  api function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: int, value: string) => void, extent?: number, padding?: number, gap?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean): Widget;
   docs ToolPalette
 end
 
@@ -1295,7 +1295,7 @@ widget CommandGroup
   core_constructor command_group
   python function py_command_group
   js function js_command_group
-  api function CommandGroup(name: string, children: Widget[], axis?: Axis, padding?: number, gap? was spacing: number, cornerRadius?: number, background?: Color, border?: Color): Widget;
+  api function CommandGroup(name: string, children: Widget[], axis?: Axis, padding?: number, gap?: number, cornerRadius?: number, background?: Color, border?: Color): Widget;
   docs CommandGroup
   compat
 end
@@ -1385,7 +1385,7 @@ widget SideSheet
   core_constructor side_sheet
   python function py_side_sheet
   js function js_side_sheet
-  api function SideSheet(title: string, body: Widget, description?: string, open? was shown: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, placement?: "left" | "right", width?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
+  api function SideSheet(title: string, body: Widget, description?: string, open?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, placement?: "left" | "right", width?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
   docs SideSheet
   compat
 end
@@ -1395,7 +1395,7 @@ widget BottomSheet
   core_constructor bottom_sheet
   python function py_bottom_sheet
   js function js_bottom_sheet
-  api function BottomSheet(title: string, body: Widget, description?: string, open? was shown: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, height?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
+  api function BottomSheet(title: string, body: Widget, description?: string, open?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, height?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
   docs BottomSheet
   compat
 end
@@ -1596,7 +1596,7 @@ widget VirtualScrollView
   core_constructor virtual_scroll_view
   python function py_virtual_scroll_view
   js function js_virtual_scroll_view
-  api function VirtualScrollView(children: Widget[], name?: string, padding?: number, gap? was spacing: number): Widget;
+  api function VirtualScrollView(children: Widget[], name?: string, padding?: number, gap?: number): Widget;
   docs VirtualScrollView
   compat
 end
@@ -1606,7 +1606,7 @@ widget ReorderableList
   core_constructor reorderable_list
   python function py_reorderable_list
   js function js_reorderable_list
-  api function ReorderableList(name: string, children: Widget[], gap? was spacing: number, dragThreshold?: number, previewLabel?: string, onReorder?: (item: int, fromIndex: int, toIndex: int) => void): Widget;
+  api function ReorderableList(name: string, children: Widget[], gap?: number, dragThreshold?: number, previewLabel?: string, onReorder?: (item: int, fromIndex: int, toIndex: int) => void): Widget;
   docs ReorderableList
   compat
 end

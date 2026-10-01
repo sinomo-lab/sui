@@ -738,26 +738,4 @@ const toolDisabled = Object.fromEntries(tools.semanticsNodes.map((node) => [node
 assert.equal(toolDisabled.Brush, false);
 assert.equal(toolDisabled.Eraser, true);
 
-// Renamed factory options still accept their former names, warning once.
-const deprecationWarnings = [];
-const emitWarning = process.emitWarning;
-process.emitWarning = (message, type) => deprecationWarnings.push([type, message]);
-try {
-  for (let index = 0; index < 2; index += 1) {
-    assert.equal(
-      sui.renderWidget(sui.stack([sui.label("A"), sui.label("B")], { spacing: 4 })).commandCount > 0,
-      true,
-    );
-  }
-  assert.equal(
-    sui.renderWidget(sui.stack([sui.label("A"), sui.label("B")], { gap: 4 })).commandCount > 0,
-    true,
-  );
-} finally {
-  process.emitWarning = emitWarning;
-}
-assert.deepEqual(deprecationWarnings, [
-  ["DeprecationWarning", "SUI: the `spacing` option is deprecated; use `gap`"],
-]);
-
 console.log("sui-js consumer boundary: ok");
