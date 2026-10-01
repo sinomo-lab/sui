@@ -4,7 +4,95 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
-## [Unreleased]
+## [0.4.0] - 2026-10-01
+
+This release refreshes the default theme, gives every widget one API
+vocabulary, animates through the runtime with reduced-motion support, follows
+HDR and wide-gamut outputs, and redesigns the widget book and most demos.
+
+### Highlights
+
+- A refreshed default theme derived in OKLCH from a few source colors, with a
+  categorical decorative palette, theme glows, and exact Gaussian shadows that
+  can sit behind, outside, or inside their box.
+- One API vocabulary across the built-in widgets, documented in
+  `docs/api/conventions.md`: a `_with_ctx` twin for every callback; the state
+  words `checked`, `selected`, `enabled`, `read_only`, and `open`, each with
+  `p`, `p_when`, and `p_from` forms; `gap`, `corner_radius`, and `colors`;
+  `child` for one child and `item` for data entries; and flags that take a
+  `bool`. Inputs, collections, and items can be disabled.
+- Runtime-driven motion: transitions keep their momentum when retargeted,
+  follow the display's refresh, honor a reduced-motion preference, and move or
+  fade retained layers without repainting. `Presence` and `KeyedStack` animate
+  content in and out with staggered delays.
+- HDR and wide gamut: tone mapping keeps hue and leaves SDR content alone,
+  Display P3 colors reach wide-gamut outputs, HDR themes fall back to what the
+  output can show, and tests can simulate SDR, wide-gamut, and HDR displays.
+- Text: `TextSurface` edits wrapped 20,000-line documents in milliseconds and
+  lays out right-to-left text correctly, `paint_text` places wrapped blocks,
+  and `Paragraph` lays text out once to measure and paint.
+- Drag and drop follows modifier keys, scrolls near edges, draws custom
+  previews, and reorders lists from the keyboard. Node graphs gain typed ports,
+  undo, copy and paste, and context menus.
+- The widget book is one scrolling page of 60 stories, and the animation, theme
+  editor, HDR validation, Settings, text, layout, drag and drop, commands, and
+  node graph demos are redesigned.
+- `TestApp` runs headless and in parallel by default, and headless renderers
+  share one GPU device, so a full workspace test run takes about a quarter of
+  the time.
+
+### Upgrading from 0.3
+
+- Update the SUI crates together from `0.3` to `0.4`, and `sinomo-ui-lucide` to
+  `1.47.1`, which bundles the same Lucide 1.47.0 icons for the `0.4` family.
+- Renamed APIs keep their old names as deprecated aliases, so they compile with
+  a warning that names the replacement. The aliases will be removed in 0.5.
+- These changes need code edits; the sections below give the details:
+  - Theme colors: `ThemeColors` is a source model (`neutrals`, `primary`,
+    `secondary`, status colors with `danger` formerly `error`, and
+    `decorative`); the `base_*`, `*_content`, `accent`, and `neutral` fields
+    are gone.
+  - The `sui` facade: diagnostics moved to `sui::diagnostics`, the prelude is
+    smaller, `sui::Padding` is the padding widget and insets are `sui::Insets`,
+    and the `testing` feature is gone.
+  - Every `_with_ctx` callback receives the `EventCtx` first.
+  - `TabBar`, `Tabs`, and `SegmentedControl` return `Option<usize>` from
+    `selected_index()`, and `read_only` takes a `bool`.
+  - Single on/off builders take a `bool`: pass `true` to `fill_width`,
+    `fill_height`, `fill_child_width`, `fill_child_height`, `single_line`,
+    `destructive`, `separator_before`, `activate_with_child`, `appear`,
+    `fit_on_first_layout`, and `TextCellPaint::numeric`.
+  - `SizedBox::child(widget)` sets the child, and containers read theirs with
+    `child_pod()`. `Link::url(url)` sets the URL; `Link::from_url` builds a
+    link labeled with its URL.
+  - Painting: `PaintCtx` can no longer request invalidations, and
+    `paint_aligned_text` and `paint_single_line_aligned_text` became
+    `paint_text` and `paint_text_line`.
+  - New fields: struct literals of `ShadowParams`, `FloatingViewSnapshot`,
+    `WindowOutputDiagnostics`, `DragEvent`, `DragPreview`, and node-graph
+    `Handle` need them, and those of `LayerProperties`, `PlaybackState`,
+    `FloatingViewConfig`, and `NodeGraphConfig` can end with
+    `..Default::default()`. Exhaustive matches on `NodeGraphEvent` need the
+    new variants.
+  - Drag sources allow several `DropEffects`, and `allowed_effect` is the
+    effect a drop takes when no key asks for another.
+  - `CommandSender` and `UiHandle` sends return a sequence number, so a send
+    used as a `()` expression needs a semicolon.
+- These changes compile but behave differently:
+  - Built-in controls are restyled, and a shadow's `blur` is now the CSS blur
+    radius, so theme shadows match their CSS tokens and look different.
+  - `Clamp` and `Reinhard` tone mapping keep hue and pass SDR content through
+    unchanged.
+  - `TestApp` runs headless unless a test asks for `live(true)` or
+    `visible(true)`.
+
+### Compatibility and release notes
+
+- Rust 1.90 remains the minimum supported version.
+- Linux webview builds require the system WebKitGTK 4.1 development libraries.
+- Browser support remains alpha and Android remains experimental. The Python
+  and JavaScript bindings remain source-built and are not part of this registry
+  release; their widget parameters now use the same names as Rust.
 
 ### Breaking: refreshed default theme
 
@@ -364,8 +452,8 @@ Versioning, with the usual expectation that the API may change during the
   out: it fades and grows from 96% by default (`PresenceTransition` sets the
   opacity, scale, offset, and enter and exit specs), and with `collapse` the
   space it takes grows and shrinks too, so neighbors move smoothly. Drive it
-  with `shown_from(observable)` or `shown_when(closure)`; `appear()` animates
-  the child in on first layout. A hidden child stays retained and takes no
+  with `shown_from(observable)` or `shown_when(closure)`; `appear(true)`
+  animates the child in on first layout. A hidden child stays retained and takes no
   space. Reduced motion only fades: space opens at once on entry and closes
   after an exit.
 - Added `KeyedStack`, a row or column kept in step with a list of keyed items
@@ -582,7 +670,7 @@ Versioning, with the usual expectation that the API may change during the
   frame. Widgets that read an option while painting, like optical text
   centering, used to keep their old paint until something else invalidated
   them.
-- `Switch::on_when` shows state that other controls can change too, like
+- `Switch::checked_when` shows state that other controls can change too, like
   `Checkbox::checked_when`.
 - `OutputColorRange`, `window_output_color_range`, and
   `window_output_color_range_signal` are exported from `sui`.
@@ -1173,4 +1261,4 @@ Initial public alpha release of the Rust workspace.
 [0.2.0]: https://github.com/sinomo-lab/sui/compare/v0.1.0...v0.2.0
 [0.2.1]: https://github.com/sinomo-lab/sui/compare/v0.2.0...v0.2.1
 [0.3.0]: https://github.com/sinomo-lab/sui/compare/v0.2.1...v0.3.0
-[Unreleased]: https://github.com/sinomo-lab/sui/compare/v0.3.0...HEAD
+[0.4.0]: https://github.com/sinomo-lab/sui/compare/v0.3.0...v0.4.0

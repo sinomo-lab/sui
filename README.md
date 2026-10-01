@@ -30,7 +30,7 @@ SUI requires Rust 1.90 or newer and the system libraries normally required by
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", version = "0.2" }
+sui = { package = "sinomo-ui", version = "0.4" }
 ```
 
 The package is named `sinomo-ui` because the `sui` registry namespace is

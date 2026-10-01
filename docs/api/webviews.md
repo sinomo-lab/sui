@@ -14,8 +14,8 @@ Add both packages under their conventional import names:
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", version = "0.2" }
-sui-webview = { package = "sinomo-ui-webview", version = "0.2" }
+sui = { package = "sinomo-ui", version = "0.4" }
+sui-webview = { package = "sinomo-ui-webview", version = "0.4" }
 ```
 
 ## Create and Run

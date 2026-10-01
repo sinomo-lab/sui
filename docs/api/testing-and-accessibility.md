@@ -14,7 +14,7 @@ operate.
 
 ```toml
 [dev-dependencies]
-sinomo-ui-testing = "0.2"
+sinomo-ui-testing = "0.4"
 ```
 
 Import application types and test helpers independently:

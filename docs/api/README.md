@@ -76,7 +76,7 @@ Alias the dependency as `sui` and import the prelude:
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", version = "0.2" }
+sui = { package = "sinomo-ui", version = "0.4" }
 ```
 
 ```rust,no_run
