@@ -6,7 +6,6 @@ use std::{
     rc::Rc,
 };
 
-use sui::EventPhase;
 use sui::prelude::*;
 use sui::{
     InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, PointerButton,
@@ -79,7 +78,11 @@ pub(crate) fn build_shell(
         Rc::clone(&state),
         Rc::clone(&theme_reader),
         scroll_state.clone(),
-    );
+    )
+    .on_offset_change_with_ctx({
+        let nav = Rc::clone(&nav);
+        move |ctx, _| nav.follow_page(ctx)
+    });
     let top_bar = top_bar(
         Rc::clone(&state),
         Rc::clone(&theme_reader),
@@ -90,7 +93,7 @@ pub(crate) fn build_shell(
     BookShell::new(
         theme_reader,
         rail,
-        Dock::new(ScrollSpy::new(Rc::clone(&nav), page)).top(TOP_BAR_HEIGHT, top_bar),
+        Dock::new(page).top(TOP_BAR_HEIGHT, top_bar),
     )
 }
 
@@ -337,9 +340,9 @@ pub(crate) struct NavShared {
     rail_scroll_state: ScrollState,
     /// Page item the rail marks as current.
     active_item: Cell<Option<usize>>,
-    /// Scroll offset when a jump was requested. The rail keeps the jump
-    /// target current until the offset moves, because the jump itself only
-    /// resolves during the next layout pass.
+    /// Scroll offset a requested jump lands on. The rail keeps the jump
+    /// target current until the page scrolls away from it, so a target the
+    /// page cannot bring to the top, near its end, stays marked.
     jump_origin: Cell<Option<f32>>,
     /// Rail entry extents relative to the rail list's top, from its last
     /// arrange; entries follow page order without the page intro.
@@ -348,8 +351,13 @@ pub(crate) struct NavShared {
 
 impl NavShared {
     fn jump(&self, item: usize, ctx: &mut EventCtx) {
-        self.jump_origin
-            .set(Some(self.scroll_state.current_offset().y));
+        let state = &self.scroll_state;
+        let landing = state
+            .virtual_item_offset(item)
+            .map_or(state.current_offset().y, |top| {
+                top.clamp(0.0, state.max_offset().y)
+            });
+        self.jump_origin.set(Some(landing));
         self.active_item.set(Some(item));
         let _ = self.scroll_state.scroll_to_item_with_ctx(item, ctx);
     }
@@ -375,6 +383,18 @@ impl NavShared {
         rail.set_offset(Vector::new(0.0, (top - viewport * 0.25).max(0.0)))
     }
 
+    /// Moves the current entry to follow the page's scroll position, and
+    /// the rail to keep that entry in view.
+    fn follow_page(&self, ctx: &mut EventCtx) {
+        if self.sync_scroll_spy() {
+            if self.reveal_active_entry() {
+                request_book_refresh(ctx);
+            } else {
+                request_book_repaint(ctx);
+            }
+        }
+    }
+
     /// Recomputes the current item from the scroll position. Returns whether
     /// it changed.
     fn sync_scroll_spy(&self) -> bool {
@@ -392,62 +412,6 @@ impl NavShared {
         let changed = self.active_item.get() != next;
         self.active_item.set(next);
         changed
-    }
-}
-
-/// Wraps the page to follow its scroll position. Wheel, drag, keyboard, and
-/// touch scrolling all route through the page's ancestors, so checking after
-/// every event keeps the rail's current entry in step with the page.
-struct ScrollSpy {
-    nav: Rc<NavShared>,
-    child: SingleChild,
-}
-
-impl ScrollSpy {
-    fn new<W>(nav: Rc<NavShared>, child: W) -> Self
-    where
-        W: Widget + 'static,
-    {
-        Self {
-            nav,
-            child: SingleChild::new(child),
-        }
-    }
-}
-
-impl Widget for ScrollSpy {
-    fn event(&mut self, ctx: &mut EventCtx, _event: &Event) {
-        if ctx.phase() != EventPhase::Capture && self.nav.sync_scroll_spy() {
-            if self.nav.reveal_active_entry() {
-                request_book_refresh(ctx);
-            } else {
-                request_book_repaint(ctx);
-            }
-        }
-    }
-
-    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
-        self.child.measure(ctx, constraints)
-    }
-
-    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
-        self.child.arrange(ctx, bounds);
-    }
-
-    fn paint(&self, ctx: &mut PaintCtx) {
-        self.child.paint(ctx);
-    }
-
-    fn semantics(&self, ctx: &mut SemanticsCtx) {
-        self.child.semantics(ctx);
-    }
-
-    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
-        self.child.visit_children(visitor);
-    }
-
-    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
-        self.child.visit_children_mut(visitor);
     }
 }
 

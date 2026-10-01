@@ -2414,6 +2414,49 @@ impl TouchFling {
     }
 }
 
+type OffsetChangeCallback = Rc<dyn Fn(Vector)>;
+type OffsetChangeCallbackWithCtx = Rc<dyn Fn(&mut EventCtx, Vector)>;
+
+/// A scroll view's `on_offset_change` callbacks and the offset they last saw.
+#[derive(Default)]
+struct OffsetChange {
+    callback: Option<OffsetChangeCallback>,
+    callback_with_ctx: Option<OffsetChangeCallbackWithCtx>,
+    notified: Vector,
+}
+
+impl OffsetChange {
+    fn is_watched(&self) -> bool {
+        self.callback.is_some() || self.callback_with_ctx.is_some()
+    }
+
+    /// Tell the callbacks about `offset` if it differs from what they saw.
+    fn notify(&mut self, ctx: &mut EventCtx, offset: Vector) {
+        if offset == self.notified {
+            return;
+        }
+        self.notified = offset;
+        if let Some(callback) = self.callback.clone() {
+            callback(offset);
+        }
+        if let Some(callback) = self.callback_with_ctx.clone() {
+            callback(ctx, offset);
+        }
+    }
+
+    /// Layout moved the view to `offset`, as for a scroll bar drag or a
+    /// jump to an item. Layout has no event context to pass, so the
+    /// callbacks hear about it on the next animation frame.
+    fn defer<C>(&self, ctx: &mut C, offset: Vector)
+    where
+        C: ScrollInvalidationCtx,
+    {
+        if offset != self.notified && self.is_watched() {
+            ctx.request_animation_frame();
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct TouchScrollGesture {
     pointer_id: u64,
@@ -3681,6 +3724,7 @@ pub struct ScrollView {
     bars: Option<ScrollBars>,
     touch_scroll: Option<TouchScrollGesture>,
     touch_fling: TouchFling,
+    offset_change: OffsetChange,
     drag_auto_scroll: DragAutoScroll,
     child: SingleChild,
 }
@@ -3711,6 +3755,7 @@ impl ScrollView {
             bars: None,
             touch_scroll: None,
             touch_fling: TouchFling::default(),
+            offset_change: OffsetChange::default(),
             drag_auto_scroll: DragAutoScroll::default(),
             child: SingleChild::new(child),
         }
@@ -3840,6 +3885,26 @@ impl ScrollView {
     /// Whether a drag held near an edge scrolls the view. On by default.
     pub fn auto_scroll_on_drag(mut self, enabled: bool) -> Self {
         self.drag_auto_scroll.enabled = enabled;
+        self
+    }
+
+    /// Called with the new offset whenever the view scrolls, whatever moved
+    /// it: the wheel, a touch drag or fling, keys, a scroll bar, or code.
+    /// Changes made during layout, such as a scroll bar drag or a jump to an
+    /// item, arrive on the next animation frame.
+    pub fn on_offset_change<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(Vector) + 'static,
+    {
+        self.offset_change.callback = Some(Rc::new(callback));
+        self
+    }
+
+    pub fn on_offset_change_with_ctx<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&mut EventCtx, Vector) + 'static,
+    {
+        self.offset_change.callback_with_ctx = Some(Rc::new(callback));
         self
     }
 
@@ -4139,6 +4204,7 @@ impl ScrollView {
             ));
             ctx.request_semantics();
             ctx.refresh_drag_targets();
+            self.offset_change.notify(ctx, self.offset);
             true
         } else {
             false
@@ -4163,6 +4229,7 @@ impl ScrollView {
                 request_scroll_bar_refresh(ctx, scroll_bar_id);
             }
         }
+        self.offset_change.defer(ctx, self.offset);
     }
 
     fn publish_state(&self, ctx: &mut EventCtx, viewport: Size) {
@@ -4198,6 +4265,7 @@ pub struct VirtualScrollView {
     bars: Option<ScrollBars>,
     touch_scroll: Option<TouchScrollGesture>,
     touch_fling: TouchFling,
+    offset_change: OffsetChange,
     drag_auto_scroll: DragAutoScroll,
     children: WidgetChildren,
 }
@@ -4223,6 +4291,7 @@ impl VirtualScrollView {
             bars: None,
             touch_scroll: None,
             touch_fling: TouchFling::default(),
+            offset_change: OffsetChange::default(),
             drag_auto_scroll: DragAutoScroll::default(),
             children: WidgetChildren::new(),
         }
@@ -4281,6 +4350,26 @@ impl VirtualScrollView {
     /// Whether a drag held near an edge scrolls the view. On by default.
     pub fn auto_scroll_on_drag(mut self, enabled: bool) -> Self {
         self.drag_auto_scroll.enabled = enabled;
+        self
+    }
+
+    /// Called with the new offset whenever the view scrolls, whatever moved
+    /// it: the wheel, a touch drag or fling, keys, a scroll bar, or code.
+    /// Changes made during layout, such as a scroll bar drag or a jump to an
+    /// item, arrive on the next animation frame.
+    pub fn on_offset_change<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(Vector) + 'static,
+    {
+        self.offset_change.callback = Some(Rc::new(callback));
+        self
+    }
+
+    pub fn on_offset_change_with_ctx<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&mut EventCtx, Vector) + 'static,
+    {
+        self.offset_change.callback_with_ctx = Some(Rc::new(callback));
         self
     }
 
@@ -4516,6 +4605,8 @@ impl VirtualScrollView {
             }
             ctx.request_semantics();
             ctx.refresh_drag_targets();
+            self.offset_change
+                .notify(ctx, Vector::new(0.0, self.offset_y));
             true
         } else {
             false
@@ -4545,6 +4636,8 @@ impl VirtualScrollView {
                 request_scroll_bar_refresh(ctx, scroll_bar_id);
             }
         }
+        self.offset_change
+            .defer(ctx, Vector::new(0.0, self.offset_y));
     }
 
     fn publish_state(&self, ctx: &mut EventCtx, viewport: Size) {
@@ -4594,6 +4687,9 @@ impl Widget for ScrollView {
         let viewport = self.viewport_rect(ctx.bounds()).size;
         if let Event::Pointer(pointer) = event {
             self.handle_touch_pointer(ctx, pointer, viewport);
+        }
+        if matches!(event, Event::Wake(WakeEvent::AnimationFrame { .. })) {
+            self.offset_change.notify(ctx, self.offset);
         }
 
         match event {
@@ -4891,6 +4987,10 @@ impl Widget for VirtualScrollView {
         let viewport = self.viewport_rect(ctx.bounds());
         if let Event::Pointer(pointer) = event {
             self.handle_touch_pointer(ctx, pointer, viewport);
+        }
+        if matches!(event, Event::Wake(WakeEvent::AnimationFrame { .. })) {
+            self.offset_change
+                .notify(ctx, Vector::new(0.0, self.offset_y));
         }
 
         match event {
@@ -5236,6 +5336,7 @@ fn clamp_shared_offset(
 
 pub(crate) trait ScrollInvalidationCtx {
     fn push_invalidation(&mut self, request: InvalidationRequest);
+    fn request_animation_frame(&mut self);
 }
 
 pub(crate) trait ScrollWidgetCtx {
@@ -5246,17 +5347,29 @@ impl ScrollInvalidationCtx for EventCtx {
     fn push_invalidation(&mut self, request: InvalidationRequest) {
         self.request(request);
     }
+
+    fn request_animation_frame(&mut self) {
+        EventCtx::request_animation_frame(self);
+    }
 }
 
 impl ScrollInvalidationCtx for MeasureCtx {
     fn push_invalidation(&mut self, request: InvalidationRequest) {
         self.request(request);
     }
+
+    fn request_animation_frame(&mut self) {
+        MeasureCtx::request_animation_frame(self);
+    }
 }
 
 impl ScrollInvalidationCtx for ArrangeCtx {
     fn push_invalidation(&mut self, request: InvalidationRequest) {
         self.request(request);
+    }
+
+    fn request_animation_frame(&mut self) {
+        ArrangeCtx::request_animation_frame(self);
     }
 }
 
@@ -9074,6 +9187,121 @@ mod tests {
 
         assert_eq!(state.current_offset(), Vector::new(0.0, 80.0));
         assert!(!runtime.has_pending_animation_frames(window_id).unwrap());
+    }
+
+    fn wheel(position: Point, delta_y: f32) -> Event {
+        let mut wheel = PointerEvent::new(PointerEventKind::Scroll, position);
+        wheel.delta = Vector::new(0.0, delta_y);
+        Event::Pointer(wheel)
+    }
+
+    #[test]
+    fn offset_change_reports_wheel_and_fling_scrolling_in_order() {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let plain = Rc::clone(&seen);
+        let with_ctx = Rc::clone(&seen);
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
+                ScrollView::vertical(OverflowingBox::new(
+                    Size::new(80.0, 4_000.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .state(state.clone())
+                .on_offset_change(move |offset| plain.borrow_mut().push(("plain", offset.y)))
+                .on_offset_change_with_ctx(move |_, offset| {
+                    with_ctx.borrow_mut().push(("ctx", offset.y));
+                }),
+            ),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        runtime
+            .handle_event(window_id, wheel(Point::new(20.0, 20.0), -30.0))
+            .unwrap();
+        assert_eq!(*seen.borrow(), vec![("plain", 30.0), ("ctx", 30.0)]);
+
+        // A fling keeps reporting after the finger lifts, frame by frame.
+        let (time, position) = touch_swipe_up(
+            &mut runtime,
+            window_id,
+            5,
+            Point::new(20.0, 30.0),
+            10.0,
+            6,
+            1.0,
+        );
+        touch_up(&mut runtime, window_id, 5, position, time);
+        let released = seen.borrow().len();
+        let _ = run_frames(&mut runtime, time, 5.0);
+        let seen = seen.borrow();
+        assert!(seen.len() > released + 10);
+        assert_eq!(seen.last().unwrap().1, state.current_offset().y);
+        assert!(seen.windows(2).all(|pair| pair[0].1 <= pair[1].1));
+    }
+
+    #[test]
+    fn offset_change_reports_layout_moves_on_the_next_frame() {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let seen_by_view = Rc::clone(&seen);
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 60.0)).child(
+                ScrollView::vertical(OverflowingBox::new(
+                    Size::new(80.0, 180.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .name("Results")
+                .state(state.clone())
+                .on_offset_change_with_ctx(move |_, offset| {
+                    seen_by_view.borrow_mut().push(offset.y);
+                }),
+            ),
+        );
+        let output = runtime.render(window_id).unwrap();
+        let scroll_bar = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Results vertical scroll bar"))
+            .expect("embedded scroll bar present");
+
+        drag_vertical_scroll_bar(&mut runtime, window_id, scroll_bar.bounds, 42, 20.0);
+        let _ = runtime.render(window_id).unwrap();
+        let moved_to = state.current_offset().y;
+        assert!(moved_to > 0.0);
+        assert!(seen.borrow().is_empty(), "layout has no event context");
+
+        runtime.tick(1.0);
+        handle_ready_events(&mut runtime);
+        assert_eq!(*seen.borrow(), vec![moved_to]);
+
+        // Nothing new to report, so no further frames.
+        runtime.tick(2.0);
+        handle_ready_events(&mut runtime);
+        assert_eq!(*seen.borrow(), vec![moved_to]);
+    }
+
+    #[test]
+    fn virtual_scroll_view_reports_offset_changes() {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let seen_by_view = Rc::clone(&seen);
+        let mut view = VirtualScrollView::new().on_offset_change(move |offset| {
+            seen_by_view.borrow_mut().push(offset);
+        });
+        for _ in 0..3 {
+            view.push(FixedBox::new(
+                Size::new(80.0, 40.0),
+                Color::rgba(0.2, 0.3, 0.7, 1.0),
+            ));
+        }
+        let (mut runtime, window_id) =
+            build_runtime(SizedBox::new().size(Size::new(80.0, 40.0)).child(view));
+        let _ = runtime.render(window_id).unwrap();
+
+        runtime
+            .handle_event(window_id, wheel(Point::new(20.0, 20.0), -25.0))
+            .unwrap();
+        assert_eq!(*seen.borrow(), vec![Vector::new(0.0, 25.0)]);
     }
 
     #[test]

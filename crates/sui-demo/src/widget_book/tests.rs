@@ -325,6 +325,91 @@ fn scrolling_the_page_moves_the_current_rail_entry_and_keeps_it_visible() -> Res
 }
 
 #[test]
+fn rail_follows_the_page_while_a_fling_coasts() -> Result<()> {
+    let (mut runtime, window_id) =
+        build_runtime(Size::new(1280.0, 800.0), build_widget_book_gallery())?;
+    let output = runtime.render(window_id)?;
+    let bounds = gallery_bounds(&output.semantics);
+    let touch = |kind, position: Point, delta: Vector| {
+        let mut pointer = PointerEvent::new(kind, position);
+        pointer.pointer_id = 3;
+        pointer.pointer_kind = sui::PointerKind::Touch;
+        pointer.delta = delta;
+        pointer.is_primary = true;
+        if kind != PointerEventKind::Up {
+            pointer.buttons = PointerButtons::new(1);
+        }
+        if kind != PointerEventKind::Move {
+            pointer.button = Some(PointerButton::Primary);
+        }
+        Event::Pointer(pointer)
+    };
+
+    // A fast flick: six moves of 100 pixels a sixtieth of a second apart.
+    let x = bounds.x() + 40.0;
+    let mut y = bounds.max_y() - 20.0;
+    let mut time = 1.0;
+    runtime.tick(time);
+    runtime.handle_event(
+        window_id,
+        touch(PointerEventKind::Down, Point::new(x, y), Vector::ZERO),
+    )?;
+    for _ in 0..6 {
+        time += 1.0 / 60.0;
+        y -= 100.0;
+        runtime.tick(time);
+        runtime.handle_event(
+            window_id,
+            touch(
+                PointerEventKind::Move,
+                Point::new(x, y),
+                Vector::new(0.0, -100.0),
+            ),
+        )?;
+    }
+    runtime.handle_event(
+        window_id,
+        touch(PointerEventKind::Up, Point::new(x, y), Vector::ZERO),
+    )?;
+    let at_release = selected_rail_links(&runtime.render(window_id)?.semantics);
+
+    // Only animation frames from here: no input passes through the page.
+    let mut output = runtime.render(window_id)?;
+    for _ in 0..600 {
+        time += 1.0 / 120.0;
+        runtime.tick(time);
+        let ready = runtime.drain_ready_events();
+        if ready.is_empty() {
+            break;
+        }
+        for (ready_window, event) in ready {
+            runtime.handle_event(ready_window, event)?;
+        }
+        output = runtime.render(window_id)?;
+    }
+
+    let current = selected_rail_links(&output.semantics);
+    assert_eq!(current.len(), 1, "one rail entry is current: {current:?}");
+    assert_ne!(
+        current, at_release,
+        "the fling carried the page to another story"
+    );
+    let region = stories()
+        .iter()
+        .find(|story| story.title == current[0])
+        .and_then(|story| named(&output.semantics, &story.region_name()))
+        .expect("the current story is laid out");
+    assert!(
+        region
+            .bounds
+            .intersection(gallery_bounds(&output.semantics))
+            .is_some(),
+        "the current story is on screen"
+    );
+    Ok(())
+}
+
+#[test]
 fn filter_collapses_non_matching_stories_and_categories() -> Result<()> {
     let app = open_book(Size::new(1280.0, 900.0))?;
     let window = app.main_window()?;

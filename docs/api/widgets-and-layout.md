@@ -198,6 +198,12 @@ needs to inspect or control an offset. Without it, the view retains its own
 scroll state. For a `VirtualScrollView`, `scroll_to_item` jumps to a child and
 `virtual_item_at`, `first_visible_item`, and `virtual_item_offset` report which
 child sits at a content offset, which is enough to build scroll-spy navigation.
+To follow the offset as it moves, use `on_offset_change` or
+`on_offset_change_with_ctx`. They fire for every source: the wheel, keys, a
+touch drag and the fling that coasts after it, a scroll bar, and code. A move
+that happens during layout, such as a scroll bar drag or an item jump, is
+reported on the next animation frame so the handler still gets an event
+context.
 
 Use `content_width` and `content_height` to separate the viewport from the
 child's content offer. `ContentExtent::Viewport` enables wrapping at viewport
@@ -210,7 +216,8 @@ compatibility shims.
 when their content exceeds the viewport. The bars do not consume layout space,
 follow the view's static or dynamic theme, and support pointer dragging and
 accessibility range actions. Scrollable containers also support direct touch
-panning with nested inner-to-outer handoff at a scroll boundary.
+panning with nested inner-to-outer handoff at a scroll boundary. A quick
+release keeps scrolling and slows to a stop; touching the view catches it.
 
 For a traditional gutter, bind a standalone `ScrollBar` to the same
 `ScrollState` and disable the built-in overlay:
