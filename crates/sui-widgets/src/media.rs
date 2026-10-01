@@ -551,9 +551,13 @@ impl ColorSwatch {
         self
     }
 
-    pub fn read_only(mut self) -> Self {
-        self.read_only = true;
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
         self
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     pub fn on_press<F>(mut self, on_press: F) -> Self
@@ -901,8 +905,11 @@ impl ColorPalette {
         self
     }
 
-    pub fn selected(mut self, selected: usize) -> Self {
-        self.selected = Some(selected);
+    /// Select item `index`, or nothing with `None`; `selected(2)` and
+    /// `selected(None)` both work.
+    pub fn selected(mut self, selected: impl Into<Option<usize>>) -> Self {
+        let selected = selected.into();
+        self.selected = selected;
         self.selected_reader = None;
         self
     }
@@ -5496,7 +5503,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             ColorSwatch::new("Current brush color", *color.borrow())
                 .color_when(move || *color_reader.borrow())
-                .read_only(),
+                .read_only(true),
         );
 
         let output = runtime.render(window_id)?;

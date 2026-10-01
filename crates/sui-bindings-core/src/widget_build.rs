@@ -141,7 +141,7 @@ impl BindingWidget {
                     move || text.resolve()
                 });
                 if let Some(theme) = errors.theme.clone() {
-                    label = label.style_when(move || theme.snapshot().body_text_style());
+                    label = label.text_style_when(move || theme.snapshot().body_text_style());
                 }
                 BindingRuntimeWidget::new(label)
             }
@@ -274,7 +274,7 @@ impl BindingWidget {
                 if state.is_some() || action.is_some() {
                     let action = action.clone();
                     let errors = errors.clone();
-                    checkbox = checkbox.on_toggle(move |value| {
+                    checkbox = checkbox.on_change(move |value| {
                         if let Some(state) = &state {
                             state.set(value);
                         }
@@ -295,12 +295,12 @@ impl BindingWidget {
                 })
             }
             BindingWidgetKind::Switch { label, on, action } => {
-                let mut switch = Switch::new(label.resolve()).on(on.resolve());
+                let mut switch = Switch::new(label.resolve()).checked(on.resolve());
                 let state = on.state();
                 if state.is_some() || action.is_some() {
                     let action = action.clone();
                     let errors = errors.clone();
-                    switch = switch.on_toggle(move |value| {
+                    switch = switch.on_change(move |value| {
                         if let Some(state) = &state {
                             state.set(value);
                         }
@@ -325,12 +325,12 @@ impl BindingWidget {
                 selected,
                 action,
             } => {
-                let mut radio = RadioButton::new(label.resolve()).selected(selected.resolve());
+                let mut radio = RadioButton::new(label.resolve()).checked(selected.resolve());
                 let state = selected.state();
                 if state.is_some() || action.is_some() {
                     let action = action.clone();
                     let errors = errors.clone();
-                    radio = radio.on_select(move || {
+                    radio = radio.on_change(move |_| {
                         if let Some(state) = &state {
                             state.set(true);
                         }
@@ -1210,7 +1210,7 @@ impl BindingWidget {
                     swatch = swatch.size(*size);
                 }
                 if *read_only {
-                    swatch = swatch.read_only();
+                    swatch = swatch.read_only(true);
                 }
                 if let Some(action) = action.clone() {
                     let errors = errors.clone();

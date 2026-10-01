@@ -218,8 +218,8 @@ fn developer_section(theme_reader: &DevThemeReader, host: &SettingsHost) -> Pane
         rows().with_child(
             Switch::new(PERFORMANCE_OVERLAY_LABEL)
                 .theme_when(clone_dev_theme_reader(theme_reader))
-                .on_when(move || visible())
-                .on_toggle(move |on| show(on)),
+                .checked_when(move || visible())
+                .on_change(move |on| show(on)),
         ),
     )
 }

@@ -893,7 +893,7 @@ fn build_vector_document_bar(
         .padding(Insets::all(6.0))
         .spacing(8.0)
         .with_child(
-            Label::new(VECTOR_DOCUMENT_NAME).style_when(demo_text_style_when(
+            Label::new(VECTOR_DOCUMENT_NAME).text_style_when(demo_text_style_when(
                 &theme_reader,
                 DemoTextRole::CardTitle,
                 |theme| theme.palette.text,
@@ -909,14 +909,14 @@ fn build_vector_document_bar(
                 "{:.0} x {:.0} px",
                 VECTOR_DOCUMENT_WIDTH, VECTOR_DOCUMENT_HEIGHT
             ))
-            .style_when(demo_text_style_when(
+            .text_style_when(demo_text_style_when(
                 &theme_reader,
                 DemoTextRole::Metadata,
                 |theme| theme.palette.text_muted,
             )),
         )
         .with_child(
-            Label::new("SVG / Display P3").style_when(demo_text_style_when(
+            Label::new("SVG / Display P3").text_style_when(demo_text_style_when(
                 &theme_reader,
                 DemoTextRole::Metadata,
                 |theme| theme.palette.text_muted,
@@ -928,7 +928,7 @@ fn build_vector_document_bar(
                 .theme_when(clone_dev_theme_reader(&theme_reader)),
         )
         .with_child(
-            Label::new("1 artboard / 3 objects").style_when(demo_text_style_when(
+            Label::new("1 artboard / 3 objects").text_style_when(demo_text_style_when(
                 &theme_reader,
                 DemoTextRole::Metadata,
                 |theme| theme.palette.text_muted,
@@ -980,7 +980,7 @@ fn build_vector_document_bar(
                             vector_zoom_status_text(&zoom_reader_state)
                         })
                         .semantic_name(VECTOR_ZOOM_READOUT_NAME)
-                        .style_when(demo_text_style_when(
+                        .text_style_when(demo_text_style_when(
                             &theme_reader,
                             DemoTextRole::Metadata,
                             |theme| theme.palette.text,
@@ -1254,7 +1254,7 @@ fn build_vector_appearance_panel(
                 .theme_when(clone_dev_theme_reader(&theme_reader))
                 .size(Size::new(104.0, 32.0))
                 .color_when(move || color_state.selected_object_color())
-                .read_only(),
+                .read_only(true),
         ))
         .with_child(vector_property_slider_row(
             &theme_reader,
@@ -1441,7 +1441,7 @@ where
             .alignment(Alignment::Center)
             .with_child(control)
             .with_child(SizedBox::new().width(44.0).height(28.0).with_child(
-                Label::dynamic("", value_reader).style_when(demo_text_style_when(
+                Label::dynamic("", value_reader).text_style_when(demo_text_style_when(
                     theme_reader,
                     DemoTextRole::Metadata,
                     |theme| theme.palette.text_muted,

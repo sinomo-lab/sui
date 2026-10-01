@@ -66,7 +66,7 @@ where
 }
 
 fn caption_label(theme: DefaultTheme, text: &str) -> Label {
-    Label::new(text).style(demo_text_style(
+    Label::new(text).text_style(demo_text_style(
         theme,
         DemoTextRole::Metadata,
         theme.palette.text_muted,
@@ -74,7 +74,7 @@ fn caption_label(theme: DefaultTheme, text: &str) -> Label {
 }
 
 fn row_label(theme: DefaultTheme, text: &str) -> Label {
-    Label::new(text).style(demo_text_style(
+    Label::new(text).text_style(demo_text_style(
         theme,
         DemoTextRole::Supporting,
         theme.palette.text_muted,

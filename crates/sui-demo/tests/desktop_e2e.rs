@@ -1762,8 +1762,8 @@ fn build_scroll_history_repro_scroll(name: &str) -> impl sui::Widget {
                         .font_size(26.0)
                         .line_height(30.0),
                 )
-                .with_child(Switch::new("Enable snapping").on(true))
-                .with_child(RadioButton::new("Standalone radio sample").selected(false))
+                .with_child(Switch::new("Enable snapping").checked(true))
+                .with_child(RadioButton::new("Standalone radio sample").checked(false))
                 .with_child(
                     SizedBox::new().width(280.0).with_child(
                         RadioGroup::new("Quality")

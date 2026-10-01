@@ -74,14 +74,12 @@ pub(crate) fn demo_label(
     role: DemoTextRole,
     color: DemoTextColor,
 ) -> Label {
-    Label::new(text).style_when(demo_text_style_when(
-        theme_reader,
-        role,
-        move |theme| match color {
+    Label::new(text).text_style_when(demo_text_style_when(theme_reader, role, move |theme| {
+        match color {
             DemoTextColor::Text => theme.palette.text,
             DemoTextColor::Muted => theme.palette.text_muted,
-        },
-    ))
+        }
+    }))
 }
 
 pub(crate) fn demo_mono_label<F>(
@@ -93,7 +91,7 @@ pub(crate) fn demo_mono_label<F>(
 where
     F: Fn(DefaultTheme) -> Color + 'static,
 {
-    Label::new(text).style_when(demo_mono_text_style_when(theme_reader, role, color))
+    Label::new(text).text_style_when(demo_mono_text_style_when(theme_reader, role, color))
 }
 
 pub(crate) struct MinimumWidth {

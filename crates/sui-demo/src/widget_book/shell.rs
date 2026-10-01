@@ -131,7 +131,7 @@ fn top_bar(
         .segments(theme_choices.iter().map(|choice| choice.label()))
         .selected_when(selected_index(&state))
         .theme_when(clone_dev_theme_reader(&theme_reader))
-        .on_change_with_ctx(move |index, _, ctx| on_segment(ctx, index));
+        .on_change_with_ctx(move |ctx, index, _| on_segment(ctx, index));
     let on_option = select_choice(&state);
     let compact = Select::new(WIDGET_BOOK_THEME_SWITCH_NAME)
         .options(theme_choices.iter().map(|choice| choice.label()))

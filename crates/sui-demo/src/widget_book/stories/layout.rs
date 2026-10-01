@@ -88,11 +88,9 @@ fn shadows_and_glows(ctx: &StoryCtx) -> Vec<Section> {
         SizedBox::new()
             .width(104.0)
             .height(64.0)
-            .with_child(Align::center(Label::new(label).style(demo_text_style(
-                theme,
-                DemoTextRole::Supporting,
-                theme.palette.text_muted,
-            ))))
+            .with_child(Align::center(Label::new(label).text_style(
+                demo_text_style(theme, DemoTextRole::Supporting, theme.palette.text_muted),
+            )))
     };
     type Token = fn(&DefaultTheme) -> ThemeShadow;
     let box_shadows: [(&str, Token); 7] = [
@@ -273,11 +271,9 @@ fn surface(ctx: &StoryCtx) -> Vec<Section> {
         SizedBox::new()
             .width(116.0)
             .height(64.0)
-            .with_child(Align::center(Label::new(label).style(demo_text_style(
-                theme,
-                DemoTextRole::Supporting,
-                color,
-            ))))
+            .with_child(Align::center(Label::new(label).text_style(
+                demo_text_style(theme, DemoTextRole::Supporting, color),
+            )))
     };
     let muted = theme.palette.text_muted;
     let roles = [

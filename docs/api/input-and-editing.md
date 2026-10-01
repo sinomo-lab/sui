@@ -243,13 +243,16 @@ fn message_composer() -> impl Widget {
 The callback borrows the current text. Clear or replace the field from its
 owner after the application accepts the message.
 
-## Read-only and Selectable Content
+## Read-only, Disabled, and Selectable Content
 
-Call `read_only()` when users may focus and copy a value but must not modify
-it. Use a selectable `Label`, `RichText`, or `TextSurface` when the content is
-display-oriented rather than a form field. Read-only state should also remain
-visible in semantics so assistive technologies do not advertise unavailable
-edit actions.
+Call `read_only(true)` when users may focus and copy a value but must not
+modify it. Call `enabled(false)`, or bind it with `enabled_when` or
+`enabled_from`, when the field is unavailable altogether: a disabled input
+ignores input, can't take focus, draws in the theme's disabled colors, and
+tells assistive technology it is unavailable. Use a selectable `Label`,
+`RichText`, or `TextSurface` when the content is display-oriented rather than a
+form field. Read-only state should also remain visible in semantics so
+assistive technologies do not advertise unavailable edit actions.
 
 ## Password Security Boundary
 

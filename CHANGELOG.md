@@ -44,6 +44,51 @@ Versioning, with the usual expectation that the API may change during the
   theme regardless of builder order and across live theme switches; added
   `Dialog::theme_when` and `ResponsiveSidebar::theme_when`.
 
+### Widget API conventions
+
+- Documented the conventions every built-in widget follows, in
+  `docs/api/conventions.md`: builder and getter names, static, polled, and
+  observed values, callbacks, and a shared state vocabulary. A phased plan in
+  `docs/plans/widget-api-conventions-plan.md` moves the existing widgets onto
+  them.
+- Breaking: every `_with_ctx` callback receives the `EventCtx` first.
+  `ListView::on_change_with_ctx`, `VirtualList::on_change_with_ctx`,
+  `BrowserTabBar::on_change_with_ctx` and `on_close_with_ctx`, and
+  `SegmentedControl::on_change_with_ctx` passed it last.
+- Two-state inputs share one vocabulary. `Switch` takes `checked`,
+  `checked_when`, `set_checked`, and `is_checked`; `RadioButton` takes
+  `checked`, `set_checked`, and `is_checked`; and `Checkbox`, `Switch`, and
+  `RadioButton` report `on_change(bool)` with an `on_change_with_ctx` twin.
+  `Switch::on`, `on_when`, `set_on`, and `is_on`, `RadioButton::selected`,
+  `set_selected`, `is_selected`, and `on_select`, and `on_toggle` are
+  deprecated. A radio button's `on_change` fires only when it becomes
+  checked; the deprecated `on_select` still fires on every activation.
+- `Label::theme` supplies defaults: a color, font size, line height, or text
+  style set on the label wins over it, whichever came first. Before, a theme
+  set after them discarded them. `Label` gains `theme_when`, and
+  `style`/`style_when` are deprecated in favor of `text_style`/
+  `text_style_when`, which keep the label's other settings.
+- The JavaScript and Python radio button actions run when the radio becomes
+  checked, not again when an already checked radio is clicked.
+- Inputs can be disabled: `Checkbox`, `Switch`, `RadioButton`, `Slider`,
+  `NumberInput`, `Select`, `TextInput`, `TextArea`, `PasswordInput`, and
+  `DateTimeInput` take `enabled`, `enabled_when`, and `enabled_from`. A
+  disabled input ignores input, can't take focus, reports itself disabled,
+  and paints with the new `DefaultTheme::for_disabled_control()`. The widget
+  book shows each input disabled.
+- Two-state inputs take `checked_from`, and `RadioButton` takes
+  `checked_when`. `Button::is_enabled` and `IconButton::is_enabled` are
+  public.
+- Selection takes an optional index: every collection's `selected` accepts
+  `impl Into<Option<usize>>`, so `selected(2)` keeps working and
+  `selected(None)` clears it. `TreeView` gains `selected_path`. Breaking:
+  `TabBar`, `Tabs`, and `SegmentedControl` return `Option<usize>` from
+  `selected_index()`, `None` only when they have no items.
+- Items take `enabled(bool)`; `disabled()` is deprecated. Breaking:
+  `read_only()` takes a `bool` on `TextInput`, `TextArea`, `PasswordInput`,
+  `DateTimeInput`, `ColorSwatch`, and `TextSurface`, which also gain
+  `is_read_only()`.
+
 ### Breaking: a clearer `sui` facade
 
 - `sui::Padding` is now the padding container widget at the crate root, as it

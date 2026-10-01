@@ -65,20 +65,24 @@ fn state_columns() -> Vec<&'static str> {
     PREVIEW_STATES
         .iter()
         .map(|preview| preview_label(*preview))
+        .chain(["Disabled"])
         .collect()
 }
 
-/// Rows of `(label, build)` compared across every interaction state.
+/// Rows of `(label, build)` compared across every interaction state, then
+/// disabled. `build` takes the state to preview and whether the control is
+/// enabled.
 fn state_rows<W, F>(rows: Vec<(&'static str, F)>) -> Vec<(&'static str, Vec<BoxedWidget>)>
 where
     W: Widget + 'static,
-    F: Fn(InteractionPreview) -> W,
+    F: Fn(InteractionPreview, bool) -> W,
 {
     rows.into_iter()
         .map(|(label, make)| {
             let cells = PREVIEW_STATES
                 .iter()
-                .map(|preview| boxed(make(*preview)))
+                .map(|preview| boxed(make(*preview, true)))
+                .chain([boxed(make(InteractionPreview::None, false))])
                 .collect();
             (label, cells)
         })
@@ -88,10 +92,11 @@ where
 fn checkbox(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let make = |checked: bool, framed: bool| {
-        move |preview| {
+        move |preview, enabled: bool| {
             let checkbox = Checkbox::new("Snap to grid")
                 .checked(checked)
                 .interaction_preview(preview)
+                .enabled(enabled)
                 .theme(theme);
             if framed { checkbox.framed() } else { checkbox }
         }
@@ -126,10 +131,11 @@ fn checkbox(ctx: &StoryCtx) -> Vec<Section> {
 fn radio_button(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let make = |selected: bool, framed: bool| {
-        move |preview| {
+        move |preview, enabled: bool| {
             let radio = RadioButton::new("High quality")
-                .selected(selected)
+                .checked(selected)
                 .interaction_preview(preview)
+                .enabled(enabled)
                 .theme(theme);
             if framed { radio.framed() } else { radio }
         }
@@ -199,10 +205,11 @@ fn radio_group(ctx: &StoryCtx) -> Vec<Section> {
 fn switch(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let make = |on: bool, framed: bool| {
-        move |preview| {
+        move |preview, enabled: bool| {
             let switch = Switch::new("Live preview")
-                .on(on)
+                .checked(on)
                 .interaction_preview(preview)
+                .enabled(enabled)
                 .theme(theme);
             if framed { switch.framed() } else { switch }
         }
@@ -221,7 +228,7 @@ fn switch(ctx: &StoryCtx) -> Vec<Section> {
             state_rows(vec![("Off", make(false, true)), ("On", make(true, true))]),
         ),
         size_strip(ctx, |size_theme| {
-            Switch::new("Live preview").on(true).theme(size_theme)
+            Switch::new("Live preview").checked(true).theme(size_theme)
         }),
     ]
 }
@@ -258,7 +265,7 @@ fn segmented_control(ctx: &StoryCtx) -> Vec<Section> {
                             .items([
                                 SegmentedControlItem::new("RGB"),
                                 SegmentedControlItem::new("Alpha"),
-                                SegmentedControlItem::new("Depth").disabled(),
+                                SegmentedControlItem::new("Depth").enabled(false),
                             ])
                             .selected(0)
                             .theme(theme),
@@ -278,13 +285,14 @@ fn segmented_control(ctx: &StoryCtx) -> Vec<Section> {
 fn slider(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let make = |value: f64| {
-        move |preview| {
+        move |preview, enabled: bool| {
             sized(
                 132.0,
                 Slider::new("Opacity")
                     .range(0.0, 100.0)
                     .value(value)
                     .interaction_preview(preview)
+                    .enabled(enabled)
                     .theme(theme),
             )
         }

@@ -3,6 +3,7 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
 pub mod animation;
+mod binding;
 pub mod canvas;
 pub mod collection;
 pub mod composites;

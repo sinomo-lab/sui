@@ -679,7 +679,7 @@ pub fn build_retained_text_benchmark_with_theme(theme_reader: DevThemeReader) ->
                     Label::new(
                         "The outer scroll view stays retained, the visible content stays dominated by wrapped labels, and the benchmark scrolls through enough sections to keep retained packet rebuilds focused on atlas text payloads.",
                     )
-                    .style_when(demo_text_style_when(
+                    .text_style_when(demo_text_style_when(
                         &theme_reader,
                         DemoTextRole::Body,
                         |_| Color::rgba(0.38, 0.46, 0.56, 1.0),
@@ -691,7 +691,7 @@ pub fn build_retained_text_benchmark_with_theme(theme_reader: DevThemeReader) ->
                     Label::new(
                         "Each section deliberately uses several long paragraphs so the per-frame upload delta is shaped by text submission rather than button chrome, icons, or image content.",
                     )
-                    .style_when(demo_text_style_when(
+                    .text_style_when(demo_text_style_when(
                         &theme_reader,
                         DemoTextRole::Body,
                         |_| Color::rgba(0.42, 0.49, 0.58, 1.0),
@@ -711,7 +711,7 @@ pub fn build_retained_text_benchmark_with_theme(theme_reader: DevThemeReader) ->
                         section_index,
                         paragraph_index,
                     ))
-                    .style_when(demo_text_style_when(
+                    .text_style_when(demo_text_style_when(
                         &theme_reader,
                         DemoTextRole::Body,
                         |_| Color::rgba(0.36, 0.44, 0.53, 1.0),
@@ -727,12 +727,12 @@ pub fn build_retained_text_benchmark_with_theme(theme_reader: DevThemeReader) ->
                 Stack::vertical()
                     .spacing(10.0)
                     .alignment(Alignment::Stretch)
-                    .with_child(Label::new(title).style_when(demo_text_style_when(
+                    .with_child(Label::new(title).text_style_when(demo_text_style_when(
                         &theme_reader,
                         DemoTextRole::SectionTitle,
                         |_| Color::rgba(0.11, 0.15, 0.21, 1.0),
                     )))
-                    .with_child(Label::new(subtitle).style_when(demo_text_style_when(
+                    .with_child(Label::new(subtitle).text_style_when(demo_text_style_when(
                         &theme_reader,
                         DemoTextRole::Body,
                         |_| Color::rgba(0.44, 0.51, 0.60, 1.0),

@@ -262,7 +262,7 @@ impl BindingSegmentedControlItem {
             item = item.description(description.clone());
         }
         if self.disabled {
-            item = item.disabled();
+            item = item.enabled(false);
         }
         item
     }
@@ -360,7 +360,7 @@ impl BindingTreeItem {
             item = item.detail(detail.clone());
         }
         if self.disabled {
-            item = item.disabled();
+            item = item.enabled(false);
         }
         item.children(self.children.iter().map(BindingTreeItem::into_sui))
     }
@@ -400,7 +400,7 @@ impl BindingLayerListItem {
             item = item.detail(detail.clone());
         }
         if self.disabled {
-            item = item.disabled();
+            item = item.enabled(false);
         }
         item
     }
@@ -441,7 +441,7 @@ impl BindingMenuItem {
             item = item.shortcut(shortcut.clone());
         }
         if self.disabled {
-            item = item.disabled();
+            item = item.enabled(false);
         }
         if self.destructive {
             item = item.destructive();
@@ -474,7 +474,11 @@ impl BindingToolPaletteItem {
 
     pub(crate) fn into_sui(&self) -> ToolPaletteItem {
         let item = ToolPaletteItem::new(self.icon, self.label.clone());
-        if self.disabled { item.disabled() } else { item }
+        if self.disabled {
+            item.enabled(false)
+        } else {
+            item
+        }
     }
 }
 

@@ -398,7 +398,7 @@ pub(crate) struct BindingSwitchWidget {
 impl BindingSwitchWidget {
     pub(crate) fn sync_state(&mut self) {
         if matches!(self.on, BindingBool::State(_)) {
-            self.inner.set_on(self.on.resolve());
+            self.inner.set_checked(self.on.resolve());
         }
     }
 }
@@ -447,7 +447,7 @@ pub(crate) struct BindingRadioButtonWidget {
 impl BindingRadioButtonWidget {
     pub(crate) fn sync_state(&mut self) {
         if matches!(self.selected, BindingBool::State(_)) {
-            self.inner.set_selected(self.selected.resolve());
+            self.inner.set_checked(self.selected.resolve());
         }
     }
 }

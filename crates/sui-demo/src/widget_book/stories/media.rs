@@ -260,7 +260,7 @@ fn color_swatch(ctx: &StoryCtx) -> Vec<Section> {
                 ),
                 (
                     "Read only",
-                    boxed(swatch("Locked swatch", theme.colors.secondary).read_only()),
+                    boxed(swatch("Locked swatch", theme.colors.secondary).read_only(true)),
                 ),
             ],
         ),

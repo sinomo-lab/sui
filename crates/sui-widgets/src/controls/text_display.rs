@@ -7,7 +7,11 @@ pub struct Label {
     text_reader: Option<Box<dyn Fn() -> String>>,
     text_source: Option<Arc<dyn Observable<String>>>,
     semantic_name: Option<String>,
+    /// The theme's body style, the default the label falls back on.
     style: TextStyle,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    /// A complete style set on the label, which wins over the theme.
+    text_style: Option<TextStyle>,
     style_reader: Option<Box<dyn Fn() -> TextStyle>>,
     font_size_override: Option<f32>,
     line_height_override: Option<f32>,
@@ -29,6 +33,8 @@ impl Label {
             text_source: None,
             semantic_name: None,
             style: DefaultTheme::default().body_text_style(),
+            theme_reader: None,
+            text_style: None,
             style_reader: None,
             font_size_override: None,
             line_height_override: None,
@@ -105,9 +111,20 @@ impl Label {
         self.selection_scope.as_ref()
     }
 
+    /// Take the default text style from `theme`. A style, color, font size,
+    /// or line height set on the label wins over it, whichever came first.
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.style = theme.body_text_style();
-        self.clear_style_overrides();
+        self.theme_reader = None;
+        self
+    }
+
+    /// [`Self::theme`], reading the theme each time the label lays out.
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -146,24 +163,42 @@ impl Label {
         self
     }
 
-    pub fn style(mut self, style: TextStyle) -> Self {
-        self.style = style;
-        self.clear_style_overrides();
+    /// Draw the label in `text_style`, in place of the theme's. A color, font
+    /// size, or line height set on the label still layers over it.
+    pub fn text_style(mut self, text_style: TextStyle) -> Self {
+        self.text_style = Some(text_style);
+        self.style_reader = None;
         self
     }
 
-    /// Resolve the complete text style each time the label is measured or painted.
-    ///
-    /// As with [`Self::style`], this replaces earlier whole-style and per-property
-    /// builders. Later `font_size`, `line_height`, `color`, or `color_when` calls
-    /// layer their respective property over the dynamically resolved style.
+    /// [`Self::text_style`], resolving the style each time the label is
+    /// measured or painted.
+    pub fn text_style_when<F>(mut self, text_style: F) -> Self
+    where
+        F: Fn() -> TextStyle + 'static,
+    {
+        self.text_style = None;
+        self.style_reader = Some(Box::new(text_style));
+        self
+    }
+
+    /// Replace the label's style, discarding a color, font size, or line
+    /// height set before it.
+    #[deprecated(note = "use `text_style`, which keeps the label's other settings")]
+    pub fn style(mut self, style: TextStyle) -> Self {
+        self.clear_style_overrides();
+        self.text_style(style)
+    }
+
+    /// Resolve the complete style each time the label lays out, discarding a
+    /// color, font size, or line height set before it.
+    #[deprecated(note = "use `text_style_when`, which keeps the label's other settings")]
     pub fn style_when<F>(mut self, style: F) -> Self
     where
         F: Fn() -> TextStyle + 'static,
     {
         self.clear_style_overrides();
-        self.style_reader = Some(Box::new(style));
-        self
+        self.text_style_when(style)
     }
 
     fn current_text(&self) -> String {
@@ -182,11 +217,15 @@ impl Label {
     }
 
     pub(super) fn resolved_style(&self) -> TextStyle {
-        let mut style = self
-            .style_reader
-            .as_ref()
-            .map(|reader| reader())
-            .unwrap_or_else(|| self.style.clone());
+        let mut style = if let Some(reader) = &self.style_reader {
+            reader()
+        } else if let Some(style) = &self.text_style {
+            style.clone()
+        } else if let Some(theme) = &self.theme_reader {
+            theme().body_text_style()
+        } else {
+            self.style.clone()
+        };
         if let Some(font_size) = self.font_size_override {
             style.font_size = font_size;
         }
@@ -203,7 +242,6 @@ impl Label {
     }
 
     fn clear_style_overrides(&mut self) {
-        self.style_reader = None;
         self.font_size_override = None;
         self.line_height_override = None;
         self.color_override = None;
@@ -298,6 +336,7 @@ impl Label {
 impl Widget for Label {
     fn supports_output_reuse(&self) -> bool {
         self.text_reader.is_none()
+            && self.theme_reader.is_none()
             && self.style_reader.is_none()
             && self.color_reader.is_none()
             && self.selection_scope.is_none()

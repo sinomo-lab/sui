@@ -656,7 +656,7 @@ fn menu_items(page: &Page) -> Vec<MenuItem> {
                 if page.state.can_paste() {
                     paste
                 } else {
-                    paste.disabled()
+                    paste.enabled(false)
                 },
                 MenuItem::new(FIT_LABEL).shortcut("Home").separator_before(),
             ]

@@ -53,7 +53,7 @@ pub(super) fn gallery(theme_reader: DevThemeReader) -> impl Widget {
                 Stack::vertical()
                     .spacing(8.0)
                     .alignment(Alignment::Start)
-                    .with_child(Switch::new("Wi-Fi").on(true).theme_when(theme()))
+                    .with_child(Switch::new("Wi-Fi").checked(true).theme_when(theme()))
                     .with_child(
                         Checkbox::new("Remember me")
                             .checked(true)
@@ -224,7 +224,7 @@ where
         Stack::vertical()
             .spacing(6.0)
             .alignment(Alignment::Stretch)
-            .with_child(Label::new(title).style_when(demo_text_style_when(
+            .with_child(Label::new(title).text_style_when(demo_text_style_when(
                 theme_reader,
                 DemoTextRole::CardTitle,
                 |theme| theme.palette.text,
@@ -233,7 +233,7 @@ where
                 Label::dynamic(token_line(&theme_reader()), move || {
                     token_line(&token_theme())
                 })
-                .style_when(demo_text_style_when(
+                .text_style_when(demo_text_style_when(
                     theme_reader,
                     DemoTextRole::Metadata,
                     |theme| theme.palette.text_muted,

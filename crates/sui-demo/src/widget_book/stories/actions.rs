@@ -412,7 +412,7 @@ fn tool_palette(ctx: &StoryCtx) -> Vec<Section> {
                         .items([
                             ToolPaletteItem::new(IconGlyph::Hand, "Move"),
                             ToolPaletteItem::new(IconGlyph::Brush, "Brush"),
-                            ToolPaletteItem::new(IconGlyph::Eraser, "Eraser").disabled(),
+                            ToolPaletteItem::new(IconGlyph::Eraser, "Eraser").enabled(false),
                         ])
                         .selected(0)
                         .theme(theme),

@@ -115,9 +115,16 @@ impl ListItem {
         self
     }
 
-    pub fn disabled(mut self) -> Self {
-        self.disabled = true;
+    /// Whether the item can be chosen. Items are enabled unless set
+    /// otherwise.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.disabled = !enabled;
         self
+    }
+
+    #[deprecated(note = "use `enabled(false)`")]
+    pub fn disabled(self) -> Self {
+        self.enabled(false)
     }
 
     pub fn activate_with_child(mut self) -> Self {
@@ -235,8 +242,11 @@ impl ListView {
         self
     }
 
-    pub fn selected(mut self, selected: usize) -> Self {
-        self.selected = Some(selected);
+    /// Select item `index`, or nothing with `None`; `selected(2)` and
+    /// `selected(None)` both work.
+    pub fn selected(mut self, selected: impl Into<Option<usize>>) -> Self {
+        let selected = selected.into();
+        self.selected = selected;
         self.selected_reader = None;
         self
     }
@@ -271,7 +281,7 @@ impl ListView {
 
     pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
     where
-        F: FnMut(usize, String, &mut EventCtx) + 'static,
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
     {
         self.on_change_with_ctx = Some(Box::new(on_change));
         self
@@ -408,7 +418,7 @@ impl ListView {
             on_change(index, label.clone());
         }
         if let Some(on_change) = &mut self.on_change_with_ctx {
-            on_change(index, label, ctx);
+            on_change(ctx, index, label);
         }
     }
 
@@ -1045,9 +1055,16 @@ impl LayerListItem {
         self
     }
 
-    pub fn disabled(mut self) -> Self {
-        self.disabled = true;
+    /// Whether the item can be chosen. Items are enabled unless set
+    /// otherwise.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.disabled = !enabled;
         self
+    }
+
+    #[deprecated(note = "use `enabled(false)`")]
+    pub fn disabled(self) -> Self {
+        self.enabled(false)
     }
 
     pub fn label(&self) -> &str {
@@ -1189,8 +1206,11 @@ impl LayerList {
         self
     }
 
-    pub fn selected(mut self, selected: usize) -> Self {
-        self.selected = Some(selected);
+    /// Select item `index`, or nothing with `None`; `selected(2)` and
+    /// `selected(None)` both work.
+    pub fn selected(mut self, selected: impl Into<Option<usize>>) -> Self {
+        let selected = selected.into();
+        self.selected = selected;
         self.selected_reader = None;
         self
     }
@@ -2139,9 +2159,16 @@ impl TreeItem {
         self
     }
 
-    pub fn disabled(mut self) -> Self {
-        self.disabled = true;
+    /// Whether the item can be chosen. Items are enabled unless set
+    /// otherwise.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.disabled = !enabled;
         self
+    }
+
+    #[deprecated(note = "use `enabled(false)`")]
+    pub fn disabled(self) -> Self {
+        self.enabled(false)
     }
 
     /// Let otherwise unhandled pointer presses on custom content activate the
@@ -2275,8 +2302,18 @@ impl TreeView {
         self
     }
 
-    pub fn selected(mut self, index: usize) -> Self {
-        self.selected = Some(vec![index]);
+    /// Select top-level row `index`, or nothing with `None`. Select a
+    /// nested row with [`Self::selected_path`].
+    pub fn selected(mut self, index: impl Into<Option<usize>>) -> Self {
+        self.selected = index.into().map(|index| vec![index]);
+        self
+    }
+
+    /// Select the row at `path`: its index among the top-level rows, then
+    /// among that row's children, and so on, as `on_change` reports it.
+    pub fn selected_path(mut self, path: impl IntoIterator<Item = usize>) -> Self {
+        let path = path.into_iter().collect::<Vec<_>>();
+        self.selected = (!path.is_empty()).then_some(path);
         self
     }
 
@@ -3220,8 +3257,11 @@ impl Table {
         self
     }
 
-    pub fn selected(mut self, selected: usize) -> Self {
-        self.selected = Some(selected);
+    /// Select item `index`, or nothing with `None`; `selected(2)` and
+    /// `selected(None)` both work.
+    pub fn selected(mut self, selected: impl Into<Option<usize>>) -> Self {
+        let selected = selected.into();
+        self.selected = selected;
         self.selected_reader = None;
         self
     }
@@ -3865,7 +3905,7 @@ pub struct VirtualTableRowContext<'a> {
 }
 
 type ListViewChange = Box<dyn FnMut(usize, String)>;
-type ListViewContextChange = Box<dyn FnMut(usize, String, &mut EventCtx)>;
+type ListViewContextChange = Box<dyn FnMut(&mut EventCtx, usize, String)>;
 type VirtualTableRowPainter = Box<dyn for<'a> Fn(&mut PaintCtx, &VirtualTableRowContext<'a>)>;
 type VirtualTableRowName = Box<dyn Fn(usize) -> String>;
 type VirtualTableRowDescription = Box<dyn Fn(usize) -> String>;
@@ -4039,8 +4079,11 @@ impl VirtualTable {
         self
     }
 
-    pub fn selected(mut self, selected: usize) -> Self {
-        self.selected = Some(selected);
+    /// Select item `index`, or nothing with `None`; `selected(2)` and
+    /// `selected(None)` both work.
+    pub fn selected(mut self, selected: impl Into<Option<usize>>) -> Self {
+        let selected = selected.into();
+        self.selected = selected;
         self
     }
 
@@ -7837,7 +7880,7 @@ mod tests {
         let (mut runtime, window_id) = build_runtime(
             ListView::new("Assets")
                 .items([ListItem::new("First"), ListItem::new("Second")])
-                .on_change_with_ctx(move |index, label, ctx| {
+                .on_change_with_ctx(move |ctx, index, label| {
                     on_change.borrow_mut().push((index, label));
                     *requested.borrow_mut() += 1;
                     ctx.request_measure();
@@ -7870,7 +7913,7 @@ mod tests {
                     .items([
                         ListItem::new("Paint").detail("Normal / 100%"),
                         ListItem::new("Paper").detail("Background"),
-                        ListItem::new("Locked").detail("Read only").disabled(),
+                        ListItem::new("Locked").detail("Read only").enabled(false),
                     ])
                     .selected(0),
             ),
@@ -8755,6 +8798,44 @@ mod tests {
         assert!(
             (before_child.y() - after_child.y() - 24.0).abs() < 0.5,
             "custom tree child should move with scroll: before={before_child:?}, after={after_child:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn selection_takes_an_optional_index_or_a_tree_path() -> Result<()> {
+        let list = |selected: Option<usize>| {
+            ListView::new("Files")
+                .items([ListItem::new("A"), ListItem::new("B")])
+                .selected(selected)
+        };
+        assert_eq!(list(None).selected_index(), None);
+        assert_eq!(list(Some(1)).selected_index(), Some(1));
+        // A plain index works too.
+        let plain = ListView::new("Files")
+            .items([ListItem::new("A"), ListItem::new("B")])
+            .selected(1);
+        assert_eq!(plain.selected_index(), Some(1));
+
+        let (mut runtime, window_id) = build_runtime(
+            TreeView::new("Scene")
+                .item(
+                    TreeItem::new("Root")
+                        .expanded(true)
+                        .with_child(TreeItem::new("Child A"))
+                        .with_child(TreeItem::new("Child B")),
+                )
+                .selected_path([0, 1]),
+        );
+        let output = runtime.render(window_id)?;
+        let tree = output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Tree)
+            .expect("tree semantics present");
+        assert_eq!(
+            tree.value,
+            Some(SemanticsValue::Text("Child B".to_string()))
         );
         Ok(())
     }

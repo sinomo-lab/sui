@@ -109,8 +109,8 @@ fn toolbar(theme_reader: &DevThemeReader, choices: &Choices) -> impl Widget + us
         let write = choices.wrap.clone();
         Switch::new(WRAP_LABEL)
             .theme_when(clone_dev_theme_reader(theme_reader))
-            .on_when(move || read.get())
-            .on_toggle(move |on| {
+            .checked_when(move || read.get())
+            .on_change(move |on| {
                 write.set(on);
             })
     };

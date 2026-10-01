@@ -355,34 +355,31 @@ pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader
     );
     let source = MarkdownSourceEditor::new(state, Rc::clone(&theme_reader));
 
-    let scroll = ScrollView::vertical(Padding::all(
-        18.0,
-        Stack::vertical()
-            .spacing(14.0)
-            .alignment(Alignment::Stretch)
-            .with_child(
-                Label::new("Rich documents").style_when(demo_text_style_when(
-                    &theme_reader,
-                    DemoTextRole::PageTitle,
-                    |theme| theme.palette.text,
-                )),
-            )
-            .with_child(
-                Label::new("")
-                    .text_from(activity)
-                    .style_when(demo_text_style_when(
+    let scroll =
+        ScrollView::vertical(Padding::all(
+            18.0,
+            Stack::vertical()
+                .spacing(14.0)
+                .alignment(Alignment::Stretch)
+                .with_child(
+                    Label::new("Rich documents").text_style_when(demo_text_style_when(
                         &theme_reader,
-                        DemoTextRole::Supporting,
-                        |theme| theme.palette.text_muted,
+                        DemoTextRole::PageTitle,
+                        |theme| theme.palette.text,
                     )),
-            )
-            .with_child(MarkdownPanelSplit::new(
-                markdown_panel("Markdown source", source, Rc::clone(&theme_reader)),
-                markdown_panel("RichDocumentView", rendered, Rc::clone(&theme_reader)),
-            )),
-    ))
-    .name(MARKDOWN_RENDER_SCROLL_NAME)
-    .theme_when(clone_dev_theme_reader(&theme_reader));
+                )
+                .with_child(Label::new("").text_from(activity).text_style_when(
+                    demo_text_style_when(&theme_reader, DemoTextRole::Supporting, |theme| {
+                        theme.palette.text_muted
+                    }),
+                ))
+                .with_child(MarkdownPanelSplit::new(
+                    markdown_panel("Markdown source", source, Rc::clone(&theme_reader)),
+                    markdown_panel("RichDocumentView", rendered, Rc::clone(&theme_reader)),
+                )),
+        ))
+        .name(MARKDOWN_RENDER_SCROLL_NAME)
+        .theme_when(clone_dev_theme_reader(&theme_reader));
 
     Background::new(theme_reader().palette.surface, scroll)
         .brush_when(dev_theme_color(&theme_reader, |theme| {
@@ -526,7 +523,7 @@ where
             Stack::vertical()
                 .spacing(10.0)
                 .alignment(Alignment::Stretch)
-                .with_child(Label::new(title).style_when(demo_text_style_when(
+                .with_child(Label::new(title).text_style_when(demo_text_style_when(
                     &theme_reader,
                     DemoTextRole::CardTitle,
                     |theme| theme.palette.text,

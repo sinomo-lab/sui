@@ -1,5 +1,6 @@
 mod interaction;
 use crate::animation::Reveal;
+use crate::binding::Binding;
 use crate::draw::{inset_rect, measure_text, mix_color, rect_center};
 use crate::frame::draw_control_frame;
 use crate::{
@@ -1117,9 +1118,7 @@ pub struct IconButton {
     icon_size: Option<f32>,
     selected: bool,
     selected_reader: Option<Box<dyn Fn() -> bool>>,
-    enabled: bool,
-    enabled_reader: Option<Box<dyn Fn() -> bool>>,
-    enabled_source: Option<Arc<dyn Observable<bool>>>,
+    enabled: Binding<bool>,
     interaction: PressInteraction,
     focus_animation: AnimatedScalar,
     on_press: Option<Box<dyn FnMut()>>,
@@ -1150,9 +1149,7 @@ impl IconButton {
             icon_size: None,
             selected: false,
             selected_reader: None,
-            enabled: true,
-            enabled_reader: None,
-            enabled_source: None,
+            enabled: Binding::new(true),
             interaction: PressInteraction::default(),
             focus_animation: AnimatedScalar::new(0.0),
             on_press: None,
@@ -1214,9 +1211,7 @@ impl IconButton {
     }
 
     pub fn enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self.enabled_reader = None;
-        self.enabled_source = None;
+        self.enabled.set(enabled);
         self
     }
 
@@ -1224,8 +1219,7 @@ impl IconButton {
     where
         F: Fn() -> bool + 'static,
     {
-        self.enabled_reader = Some(Box::new(enabled));
-        self.enabled_source = None;
+        self.enabled.set_when(enabled);
         self
     }
 
@@ -1236,8 +1230,7 @@ impl IconButton {
     where
         O: Observable<bool> + 'static,
     {
-        self.enabled_source = Some(Arc::new(enabled));
-        self.enabled_reader = None;
+        self.enabled.set_from(enabled);
         self
     }
 
@@ -1302,22 +1295,16 @@ impl IconButton {
             .unwrap_or(self.selected)
     }
 
-    fn is_enabled(&self) -> bool {
-        if let Some(source) = &self.enabled_source {
-            return source.get();
-        }
-        self.enabled_reader
-            .as_ref()
-            .map(|enabled| enabled())
-            .unwrap_or(self.enabled)
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
     }
 
     /// Repaint and re-announce the button when an observed enabled state
     /// changes.
     fn observe_enabled<T>(&self, observe: impl FnOnce(&dyn Observable<bool>) -> T) {
-        if let Some(source) = &self.enabled_source {
-            observe(source.as_ref());
-        }
+        self.enabled.observe(|source| {
+            observe(source);
+        });
     }
 
     fn activate(&mut self, ctx: &mut EventCtx) {
@@ -1436,9 +1423,7 @@ pub struct Button {
     focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     label_layout: Option<PersistentTextLayout>,
-    enabled: bool,
-    enabled_reader: Option<Box<dyn Fn() -> bool>>,
-    enabled_source: Option<Arc<dyn Observable<bool>>>,
+    enabled: Binding<bool>,
     glow: bool,
     on_press: Option<Box<dyn FnMut()>>,
     on_press_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
@@ -1476,9 +1461,7 @@ impl Button {
             focus_animation: AnimatedScalar::new(0.0),
             label_measurement: None,
             label_layout: None,
-            enabled: true,
-            enabled_reader: None,
-            enabled_source: None,
+            enabled: Binding::new(true),
             glow: true,
             on_press: None,
             on_press_with_ctx: None,
@@ -1597,9 +1580,7 @@ impl Button {
     }
 
     pub fn enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self.enabled_reader = None;
-        self.enabled_source = None;
+        self.enabled.set(enabled);
         self
     }
 
@@ -1607,8 +1588,7 @@ impl Button {
     where
         F: Fn() -> bool + 'static,
     {
-        self.enabled_reader = Some(Box::new(enabled));
-        self.enabled_source = None;
+        self.enabled.set_when(enabled);
         self
     }
 
@@ -1619,8 +1599,7 @@ impl Button {
     where
         O: Observable<bool> + 'static,
     {
-        self.enabled_source = Some(Arc::new(enabled));
-        self.enabled_reader = None;
+        self.enabled.set_from(enabled);
         self
     }
 
@@ -1668,22 +1647,16 @@ impl Button {
         }
     }
 
-    fn is_enabled(&self) -> bool {
-        if let Some(source) = &self.enabled_source {
-            return source.get();
-        }
-        self.enabled_reader
-            .as_ref()
-            .map(|enabled| enabled())
-            .unwrap_or(self.enabled)
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
     }
 
     /// Repaint and re-announce the button when an observed enabled state
     /// changes.
     fn observe_enabled<T>(&self, observe: impl FnOnce(&dyn Observable<bool>) -> T) {
-        if let Some(source) = &self.enabled_source {
-            observe(source.as_ref());
-        }
+        self.enabled.observe(|source| {
+            observe(source);
+        });
     }
 
     fn resolved_theme(&self) -> DefaultTheme {
@@ -1940,9 +1913,7 @@ impl Button {
 
 impl Widget for Button {
     fn supports_output_reuse(&self) -> bool {
-        self.theme_reader.is_none()
-            && self.enabled_reader.is_none()
-            && self.enabled_source.is_none()
+        self.theme_reader.is_none() && !self.enabled.is_live()
     }
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         let enabled = self.is_enabled();
@@ -2095,9 +2066,11 @@ pub struct Checkbox {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    enabled: Binding<bool>,
     semantic_name: Option<String>,
     checked: bool,
     checked_reader: Option<Box<dyn Fn() -> bool>>,
+    checked_source: Option<Arc<dyn Observable<bool>>>,
     appearance: ChoiceAppearance,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
@@ -2110,7 +2083,8 @@ pub struct Checkbox {
     toggle_animation: AnimatedScalar,
     focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
-    on_toggle: Option<Box<dyn FnMut(bool)>>,
+    on_change: Option<Box<dyn FnMut(bool)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, bool)>>,
     preview: InteractionPreview,
 }
 
@@ -2217,9 +2191,11 @@ impl Checkbox {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            enabled: Binding::new(true),
             semantic_name: None,
             checked: false,
             checked_reader: None,
+            checked_source: None,
             appearance: ChoiceAppearance::Plain,
             text_style: None,
             padding: None,
@@ -2233,7 +2209,8 @@ impl Checkbox {
             focus_animation: AnimatedScalar::new(0.0),
             preview: InteractionPreview::None,
             label_measurement: None,
-            on_toggle: None,
+            on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -2258,13 +2235,80 @@ impl Checkbox {
     {
         let current = checked();
         self.checked_reader = Some(Box::new(checked));
+        self.checked_source = None;
         self.checked(current)
     }
 
+    /// Show the observed `checked` value, and repaint when it changes.
+    /// Toggling still calls `on_change` with the new value; update the
+    /// observable there.
+    pub fn checked_from<O>(mut self, checked: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        let current = checked.get();
+        self.checked_source = Some(Arc::new(checked));
+        self.checked_reader = None;
+        self.checked(current)
+    }
+
+    /// Whether the user can change the control. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it is unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the control needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the control is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
+    }
+
     fn current_checked(&self) -> bool {
+        if let Some(source) = &self.checked_source {
+            return source.get();
+        }
         self.checked_reader
             .as_ref()
             .map_or(self.checked, |checked| checked())
+    }
+
+    /// Repaint and re-announce the control when an observed checked state
+    /// changes.
+    fn observe_checked<T>(&self, observe: impl FnOnce(&dyn Observable<bool>) -> T) {
+        if let Some(source) = &self.checked_source {
+            observe(source.as_ref());
+        }
     }
 
     /// Adopt a value changed elsewhere, without animating.
@@ -2343,18 +2387,40 @@ impl Checkbox {
         self
     }
 
-    pub fn on_toggle<F>(mut self, on_toggle: F) -> Self
+    /// Call `on_change` with the new state when the user checks or unchecks
+    /// the control.
+    pub fn on_change<F>(mut self, on_change: F) -> Self
     where
         F: FnMut(bool) + 'static,
     {
-        self.on_toggle = Some(Box::new(on_toggle));
+        self.on_change = Some(Box::new(on_change));
         self
     }
 
-    fn toggle(&mut self) {
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, bool) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
+    #[deprecated(note = "use `on_change`")]
+    pub fn on_toggle<F>(self, on_toggle: F) -> Self
+    where
+        F: FnMut(bool) + 'static,
+    {
+        self.on_change(on_toggle)
+    }
+
+    fn toggle(&mut self, ctx: &mut EventCtx) {
         self.checked = !self.current_checked();
-        if let Some(on_toggle) = &mut self.on_toggle {
-            on_toggle(self.checked);
+        if let Some(on_change) = &mut self.on_change {
+            on_change(self.checked);
+        }
+        if let Some(on_change) = &mut self.on_change_with_ctx {
+            on_change(ctx, self.checked);
         }
     }
 
@@ -2402,14 +2468,23 @@ impl Checkbox {
     }
 
     fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.hover_animation.get(clock).max(self.preview.hover())
     }
 
     fn press_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.press_animation.get(clock).max(self.preview.press())
     }
 
     fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
@@ -2419,6 +2494,19 @@ impl Widget for Checkbox {
         if self.sync_checked() {
             ctx.request_paint();
             ctx.request_semantics();
+        }
+        if !self.enabled.get() {
+            // Disabled controls take no input, but let go of a press begun
+            // while they were enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+                && self.pressed
+            {
+                self.pressed = false;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+            }
+            return;
         }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
@@ -2463,7 +2551,7 @@ impl Widget for Checkbox {
                 set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 if toggle {
-                    self.toggle();
+                    self.toggle(ctx);
                     set_toggle_animation_target(
                         &mut self.toggle_animation,
                         self.checked as u8 as f32,
@@ -2494,7 +2582,7 @@ impl Widget for Checkbox {
                     && matches!(key.key.as_str(), "Enter" | " ") =>
             {
                 let theme = self.resolved_theme();
-                self.toggle();
+                self.toggle(ctx);
                 set_toggle_animation_target(
                     &mut self.toggle_animation,
                     self.checked as u8 as f32,
@@ -2531,11 +2619,18 @@ impl Widget for Checkbox {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.observe_checked(|source| ctx.observe(source));
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
-        let text_style = self.resolved_text_style();
+        let mut text_style = self.resolved_text_style();
+        if !self.enabled.get() {
+            text_style.color = theme.palette.text_disabled;
+        }
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
         let gap = self.resolved_gap();
@@ -2592,6 +2687,10 @@ impl Widget for Checkbox {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.observe_checked(|source| ctx.observe(source));
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::CheckBox, ctx.bounds());
         node.name = Some(
             self.semantic_name
@@ -2605,12 +2704,17 @@ impl Widget for Checkbox {
         } else {
             ToggleState::Unchecked
         });
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        node.state.disabled = !self.enabled.get();
+        node.actions = if self.enabled.get() {
+            vec![SemanticsAction::Focus, SemanticsAction::Activate]
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -2625,9 +2729,11 @@ pub struct Switch {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    enabled: Binding<bool>,
     semantic_name: Option<String>,
-    on: bool,
-    on_reader: Option<Box<dyn Fn() -> bool>>,
+    checked: bool,
+    checked_reader: Option<Box<dyn Fn() -> bool>>,
+    checked_source: Option<Arc<dyn Observable<bool>>>,
     appearance: ChoiceAppearance,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
@@ -2639,7 +2745,8 @@ pub struct Switch {
     toggle_animation: AnimatedScalar,
     focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
-    on_toggle: Option<Box<dyn FnMut(bool)>>,
+    on_change: Option<Box<dyn FnMut(bool)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, bool)>>,
     preview: InteractionPreview,
 }
 
@@ -2661,9 +2768,11 @@ impl Switch {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            enabled: Binding::new(true),
             semantic_name: None,
-            on: false,
-            on_reader: None,
+            checked: false,
+            checked_reader: None,
+            checked_source: None,
             appearance: ChoiceAppearance::Plain,
             text_style: None,
             padding: None,
@@ -2676,14 +2785,20 @@ impl Switch {
             focus_animation: AnimatedScalar::new(0.0),
             preview: InteractionPreview::None,
             label_measurement: None,
-            on_toggle: None,
+            on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
-    pub fn on(mut self, on: bool) -> Self {
-        self.on = on;
-        self.toggle_animation = AnimatedScalar::new(on as u8 as f32);
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = checked;
+        self.toggle_animation = AnimatedScalar::new(checked as u8 as f32);
         self
+    }
+
+    #[deprecated(note = "use `checked`")]
+    pub fn on(self, on: bool) -> Self {
+        self.checked(on)
     }
 
     /// Name the control for accessibility and automation instead of its
@@ -2693,34 +2808,116 @@ impl Switch {
         self
     }
 
-    /// Show whatever `on` returns, for state that other controls can change
-    /// too. Toggling still calls `on_toggle` with the new value.
-    pub fn on_when<F>(mut self, on: F) -> Self
+    /// Show whatever `checked` returns, for state that other controls can
+    /// change too. Toggling still calls `on_change` with the new value.
+    pub fn checked_when<F>(mut self, checked: F) -> Self
     where
         F: Fn() -> bool + 'static,
     {
-        let current = on();
-        self.on_reader = Some(Box::new(on));
-        self.on(current)
+        let current = checked();
+        self.checked_reader = Some(Box::new(checked));
+        self.checked_source = None;
+        self.checked(current)
     }
 
-    fn current_on(&self) -> bool {
-        self.on_reader.as_ref().map_or(self.on, |on| on())
+    /// Show the observed `checked` value, and repaint when it changes.
+    /// Toggling still calls `on_change` with the new value; update the
+    /// observable there.
+    pub fn checked_from<O>(mut self, checked: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        let current = checked.get();
+        self.checked_source = Some(Arc::new(checked));
+        self.checked_reader = None;
+        self.checked(current)
+    }
+
+    /// Whether the user can change the control. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it is unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the control needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the control is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
+    }
+
+    #[deprecated(note = "use `checked_when`")]
+    pub fn on_when<F>(self, on: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.checked_when(on)
+    }
+
+    fn current_checked(&self) -> bool {
+        if let Some(source) = &self.checked_source {
+            return source.get();
+        }
+        self.checked_reader
+            .as_ref()
+            .map_or(self.checked, |checked| checked())
+    }
+
+    /// Repaint and re-announce the control when an observed checked state
+    /// changes.
+    fn observe_checked<T>(&self, observe: impl FnOnce(&dyn Observable<bool>) -> T) {
+        if let Some(source) = &self.checked_source {
+            observe(source.as_ref());
+        }
     }
 
     /// Adopt a value changed elsewhere, without animating.
-    fn sync_on(&mut self) -> bool {
-        let current = self.current_on();
-        if current == self.on {
+    fn sync_checked(&mut self) -> bool {
+        let current = self.current_checked();
+        if current == self.checked {
             return false;
         }
-        self.on = current;
+        self.checked = current;
         self.toggle_animation.jump_to(current as u8 as f32);
         true
     }
 
+    pub fn is_checked(&self) -> bool {
+        self.current_checked()
+    }
+
+    #[deprecated(note = "use `is_checked`")]
     pub fn is_on(&self) -> bool {
-        self.current_on()
+        self.is_checked()
     }
 
     /// Selects whether the complete switch row is plain or framed.
@@ -2739,9 +2936,14 @@ impl Switch {
         self.appearance(ChoiceAppearance::Framed)
     }
 
+    pub fn set_checked(&mut self, checked: bool) {
+        self.checked = checked;
+        self.toggle_animation = AnimatedScalar::new(checked as u8 as f32);
+    }
+
+    #[deprecated(note = "use `set_checked`")]
     pub fn set_on(&mut self, on: bool) {
-        self.on = on;
-        self.toggle_animation = AnimatedScalar::new(on as u8 as f32);
+        self.set_checked(on);
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -2779,12 +2981,31 @@ impl Switch {
         self
     }
 
-    pub fn on_toggle<F>(mut self, on_toggle: F) -> Self
+    /// Call `on_change` with the new state when the user checks or unchecks
+    /// the control.
+    pub fn on_change<F>(mut self, on_change: F) -> Self
     where
         F: FnMut(bool) + 'static,
     {
-        self.on_toggle = Some(Box::new(on_toggle));
+        self.on_change = Some(Box::new(on_change));
         self
+    }
+
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, bool) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
+    #[deprecated(note = "use `on_change`")]
+    pub fn on_toggle<F>(self, on_toggle: F) -> Self
+    where
+        F: FnMut(bool) + 'static,
+    {
+        self.on_change(on_toggle)
     }
 
     fn resolved_text_style(&self) -> TextStyle {
@@ -2810,10 +3031,13 @@ impl Switch {
             .unwrap_or(*self.theme)
     }
 
-    fn toggle(&mut self) {
-        self.on = !self.current_on();
-        if let Some(on_toggle) = &mut self.on_toggle {
-            on_toggle(self.on);
+    fn toggle(&mut self, ctx: &mut EventCtx) {
+        self.checked = !self.current_checked();
+        if let Some(on_change) = &mut self.on_change {
+            on_change(self.checked);
+        }
+        if let Some(on_change) = &mut self.on_change_with_ctx {
+            on_change(ctx, self.checked);
         }
     }
 
@@ -2841,7 +3065,7 @@ impl Switch {
         clock: &impl FrameClock,
         output: Option<OutputColorRange>,
     ) -> SwitchVisuals {
-        let mut theme = self.resolved_theme();
+        let mut theme = self.paint_theme();
         theme.hdr = theme.hdr.limited_to(output);
         let palette = theme.palette;
         let interaction = theme.interaction;
@@ -2872,7 +3096,11 @@ impl Switch {
             mix_color(palette.border_control, palette.text_muted, hover_t * 0.5)
         };
         let label_peak_lift = resolve_luminance_role(&theme.hdr, WidgetLuminanceRole::Standard);
-        let label_color = apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift);
+        let label_color = if self.enabled.get() {
+            apply_hdr_policy_cap(self.resolved_text_style().color, label_peak_lift)
+        } else {
+            palette.text_disabled
+        };
 
         if matches!(theme.hdr.mode, HdrThemeMode::Disabled) || !on {
             return SwitchVisuals {
@@ -2917,27 +3145,49 @@ impl Switch {
 
     #[cfg(test)]
     fn resolved_visuals(&self, focused: bool) -> SwitchVisuals {
-        self.resolved_visuals_for_state(self.current_on(), focused, &0.0, None)
+        self.resolved_visuals_for_state(self.current_checked(), focused, &0.0, None)
     }
 
     fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.hover_animation.get(clock).max(self.preview.hover())
     }
 
     fn press_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.press_animation.get(clock).max(self.preview.press())
     }
 
     fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
 impl Widget for Switch {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if self.sync_on() {
+        if self.sync_checked() {
             ctx.request_paint();
             ctx.request_semantics();
+        }
+        if !self.enabled.get() {
+            // Disabled controls take no input, but let go of a press begun
+            // while they were enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+                && self.pressed
+            {
+                self.pressed = false;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+            }
+            return;
         }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
@@ -2982,10 +3232,10 @@ impl Widget for Switch {
                 set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.release_pointer_capture(pointer.pointer_id);
                 if toggle {
-                    self.toggle();
+                    self.toggle(ctx);
                     set_toggle_animation_target(
                         &mut self.toggle_animation,
-                        self.on as u8 as f32,
+                        self.checked as u8 as f32,
                         &theme,
                         ctx,
                     );
@@ -3013,10 +3263,10 @@ impl Widget for Switch {
                     && matches!(key.key.as_str(), "Enter" | " ") =>
             {
                 let theme = self.resolved_theme();
-                self.toggle();
+                self.toggle(ctx);
                 set_toggle_animation_target(
                     &mut self.toggle_animation,
-                    self.on as u8 as f32,
+                    self.checked as u8 as f32,
                     &theme,
                     ctx,
                 );
@@ -3052,26 +3302,34 @@ impl Widget for Switch {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.observe_checked(|source| ctx.observe(source));
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let metrics = theme.metrics;
         let palette = theme.palette;
         let interaction = theme.interaction;
-        let text_style = self.resolved_text_style();
+        let mut text_style = self.resolved_text_style();
+        if !self.enabled.get() {
+            text_style.color = theme.palette.text_disabled;
+        }
         let padding = self.resolved_padding();
         let gap = self.resolved_gap();
         let track = switch_track_rect(ctx.bounds(), padding, metrics);
         let label_rect = switch_label_rect(ctx.bounds(), padding, metrics, gap);
         let focused = ctx.is_focused() || self.preview.is_focused();
         let output = ctx.output_color_range();
-        let visuals = self.resolved_visuals_for_state(self.current_on(), focused, &0.0, output);
+        let visuals =
+            self.resolved_visuals_for_state(self.current_checked(), focused, &0.0, output);
         let off_visuals = self.resolved_visuals_for_state(false, focused, ctx, output);
         let on_visuals = self.resolved_visuals_for_state(true, focused, ctx, output);
         let hover_progress = self.hover_value(ctx) * interaction.hover_blend;
         let press_progress = self.press_value(ctx) * interaction.pressed_blend;
         // A value changed elsewhere shows at once, even before the switch
         // next handles an event and adopts it.
-        let on = self.current_on();
-        let toggle_progress = if on == self.on {
+        let on = self.current_checked();
+        let toggle_progress = if on == self.checked {
             self.toggle_animation.get(ctx)
         } else {
             on as u8 as f32
@@ -3169,6 +3427,10 @@ impl Widget for Switch {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.observe_checked(|source| ctx.observe(source));
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Switch, ctx.bounds());
         node.name = Some(
             self.semantic_name
@@ -3177,17 +3439,22 @@ impl Widget for Switch {
         );
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
-        node.state.checked = Some(if self.current_on() {
+        node.state.checked = Some(if self.current_checked() {
             ToggleState::Checked
         } else {
             ToggleState::Unchecked
         });
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        node.state.disabled = !self.enabled.get();
+        node.actions = if self.enabled.get() {
+            vec![SemanticsAction::Focus, SemanticsAction::Activate]
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -3202,7 +3469,10 @@ pub struct RadioButton {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
-    selected: bool,
+    enabled: Binding<bool>,
+    checked: bool,
+    checked_reader: Option<Box<dyn Fn() -> bool>>,
+    checked_source: Option<Arc<dyn Observable<bool>>>,
     appearance: ChoiceAppearance,
     text_style: Option<TextStyle>,
     padding: Option<Insets>,
@@ -3216,6 +3486,8 @@ pub struct RadioButton {
     focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
     on_select: Option<Box<dyn FnMut()>>,
+    on_change: Option<Box<dyn FnMut(bool)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, bool)>>,
     preview: InteractionPreview,
 }
 
@@ -3225,7 +3497,10 @@ impl RadioButton {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
-            selected: false,
+            enabled: Binding::new(true),
+            checked: false,
+            checked_reader: None,
+            checked_source: None,
             appearance: ChoiceAppearance::Plain,
             text_style: None,
             padding: None,
@@ -3240,17 +3515,124 @@ impl RadioButton {
             preview: InteractionPreview::None,
             label_measurement: None,
             on_select: None,
+            on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
-    pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self.toggle_animation = AnimatedScalar::new(selected as u8 as f32);
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = checked;
+        self.toggle_animation = AnimatedScalar::new(checked as u8 as f32);
         self
     }
 
+    #[deprecated(note = "use `checked`")]
+    pub fn selected(self, selected: bool) -> Self {
+        self.checked(selected)
+    }
+
+    /// Show whatever `checked` returns, for state that other controls can
+    /// change too. Activating still calls `on_change`.
+    pub fn checked_when<F>(mut self, checked: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        let current = checked();
+        self.checked_reader = Some(Box::new(checked));
+        self.checked_source = None;
+        self.checked(current)
+    }
+
+    /// Show the observed `checked` value, and repaint when it changes.
+    /// Toggling still calls `on_change` with the new value; update the
+    /// observable there.
+    pub fn checked_from<O>(mut self, checked: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        let current = checked.get();
+        self.checked_source = Some(Arc::new(checked));
+        self.checked_reader = None;
+        self.checked(current)
+    }
+
+    /// Whether the user can change the control. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it is unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the control needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the control is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
+    }
+
+    pub fn is_checked(&self) -> bool {
+        self.current_checked()
+    }
+
+    fn current_checked(&self) -> bool {
+        if let Some(source) = &self.checked_source {
+            return source.get();
+        }
+        self.checked_reader
+            .as_ref()
+            .map_or(self.checked, |checked| checked())
+    }
+
+    /// Repaint and re-announce the control when an observed checked state
+    /// changes.
+    fn observe_checked<T>(&self, observe: impl FnOnce(&dyn Observable<bool>) -> T) {
+        if let Some(source) = &self.checked_source {
+            observe(source.as_ref());
+        }
+    }
+
+    /// Adopt a value changed elsewhere, without animating.
+    fn sync_checked(&mut self) -> bool {
+        let current = self.current_checked();
+        if current == self.checked {
+            return false;
+        }
+        self.checked = current;
+        self.toggle_animation.jump_to(current as u8 as f32);
+        true
+    }
+
+    #[deprecated(note = "use `is_checked`")]
     pub fn is_selected(&self) -> bool {
-        self.selected
+        self.is_checked()
     }
 
     /// Selects whether the complete radio row is plain or framed.
@@ -3269,9 +3651,14 @@ impl RadioButton {
         self.appearance(ChoiceAppearance::Framed)
     }
 
+    pub fn set_checked(&mut self, checked: bool) {
+        self.checked = checked;
+        self.toggle_animation = AnimatedScalar::new(checked as u8 as f32);
+    }
+
+    #[deprecated(note = "use `set_checked`")]
     pub fn set_selected(&mut self, selected: bool) {
-        self.selected = selected;
-        self.toggle_animation = AnimatedScalar::new(selected as u8 as f32);
+        self.set_checked(selected);
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -3314,6 +3701,28 @@ impl RadioButton {
         self
     }
 
+    /// Call `on_change` with `true` when the user checks the button. The user
+    /// can't uncheck a radio button, so it never reports `false`.
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(bool) + 'static,
+    {
+        self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, bool) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
+    /// Call `on_select` every time the user activates the button, even when
+    /// it is already checked.
+    #[deprecated(note = "use `on_change`, which reports only actual changes")]
     pub fn on_select<F>(mut self, on_select: F) -> Self
     where
         F: FnMut() + 'static,
@@ -3352,10 +3761,16 @@ impl RadioButton {
 
     fn activate(&mut self, ctx: &mut EventCtx) {
         let theme = self.resolved_theme();
-        let changed = !self.selected;
-        self.selected = true;
+        let changed = !self.current_checked();
+        self.checked = true;
         if changed {
             set_toggle_animation_target(&mut self.toggle_animation, 1.0, &theme, ctx);
+            if let Some(on_change) = &mut self.on_change {
+                on_change(true);
+            }
+            if let Some(on_change) = &mut self.on_change_with_ctx {
+                on_change(ctx, true);
+            }
         }
         if let Some(on_select) = &mut self.on_select {
             on_select();
@@ -3378,20 +3793,46 @@ impl RadioButton {
     }
 
     fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.hover_animation.get(clock).max(self.preview.hover())
     }
 
     fn press_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.press_animation.get(clock).max(self.preview.press())
     }
 
     fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
 impl Widget for RadioButton {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if self.sync_checked() {
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+        if !self.enabled.get() {
+            // Disabled controls take no input, but let go of a press begun
+            // while they were enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+                && self.pressed
+            {
+                self.pressed = false;
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.request_paint();
+            }
+            return;
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -3491,17 +3932,30 @@ impl Widget for RadioButton {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.observe_checked(|source| ctx.observe(source));
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
-        let text_style = self.resolved_text_style();
+        let mut text_style = self.resolved_text_style();
+        if !self.enabled.get() {
+            text_style.color = theme.palette.text_disabled;
+        }
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
         let gap = self.resolved_gap();
         let hover_progress = self.hover_value(ctx) * interaction.hover_blend;
         let press_progress = self.press_value(ctx) * interaction.pressed_blend;
-        let toggle_progress = self.toggle_animation.get(ctx);
+        // A value changed elsewhere shows at once, before events catch up.
+        let checked = self.current_checked();
+        let toggle_progress = if checked == (self.toggle_animation.target() > 0.5) {
+            self.toggle_animation.get(ctx)
+        } else {
+            checked as u8 as f32
+        };
         let focus_progress = self.focus_value(ctx);
         let layout_padding = choice_control_layout_padding(padding, self.padding.is_some());
         let indicator = indicator_rect(ctx.bounds(), layout_padding, indicator_size);
@@ -3556,13 +4010,22 @@ impl Widget for RadioButton {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.observe_checked(|source| ctx.observe(source));
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
         let mut node =
             SemanticsNode::new(ctx.widget_id(), SemanticsRole::RadioButton, ctx.bounds());
         node.name = Some(self.label.clone());
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
-        node.state.selected = self.selected;
-        node.actions = vec![SemanticsAction::Focus, SemanticsAction::Activate];
+        node.state.selected = self.current_checked();
+        node.state.disabled = !self.enabled.get();
+        node.actions = if self.enabled.get() {
+            vec![SemanticsAction::Focus, SemanticsAction::Activate]
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
@@ -3651,10 +4114,13 @@ impl RadioGroup {
         self
     }
 
-    pub fn selected(mut self, selected: usize) -> Self {
-        self.selected = Some(selected);
+    /// Select item `index`, or nothing with `None`; `selected(2)` and
+    /// `selected(None)` both work.
+    pub fn selected(mut self, selected: impl Into<Option<usize>>) -> Self {
+        let selected = selected.into();
+        self.selected = selected;
         self.selected_reader = None;
-        self.selected_visual = Some(selected);
+        self.selected_visual = selected;
         self.selection_animation = AnimatedScalar::new(1.0);
         self
     }
@@ -4032,6 +4498,7 @@ pub struct Slider {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
+    enabled: Binding<bool>,
     min: f64,
     max: f64,
     step: f64,
@@ -4053,6 +4520,7 @@ impl Slider {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             name: name.into(),
+            enabled: Binding::new(true),
             min: 0.0,
             max: 1.0,
             step: 0.01,
@@ -4081,6 +4549,48 @@ impl Slider {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the control. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it is unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the control needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the control is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn range(mut self, min: f64, max: f64) -> Self {
@@ -4236,14 +4746,23 @@ impl Slider {
     }
 
     fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.hover_animation.get(clock).max(self.preview.hover())
     }
 
     fn drag_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.drag_animation.get(clock).max(self.preview.press())
     }
 
     fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
@@ -4251,6 +4770,16 @@ impl Slider {
 impl Widget for Slider {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         self.sync_external_value();
+        if !self.enabled.get() {
+            // Disabled, the control takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
 
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
@@ -4377,7 +4906,10 @@ impl Widget for Slider {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let hover_progress = self.hover_value(ctx);
@@ -4425,6 +4957,9 @@ impl Widget for Slider {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Slider, ctx.bounds());
         node.name = Some(self.name.clone());
         node.value = Some(SemanticsValue::Range {
@@ -4435,17 +4970,22 @@ impl Widget for Slider {
         node.numeric_step = Some(self.step.max(0.01));
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
-        node.actions = vec![
-            SemanticsAction::Focus,
-            SemanticsAction::Increment,
-            SemanticsAction::Decrement,
-            SemanticsAction::SetValue,
-        ];
+        node.state.disabled = !self.enabled.get();
+        node.actions = if self.enabled.get() {
+            vec![
+                SemanticsAction::Focus,
+                SemanticsAction::Increment,
+                SemanticsAction::Decrement,
+                SemanticsAction::SetValue,
+            ]
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -4467,6 +5007,7 @@ pub struct NumberInput {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
+    enabled: Binding<bool>,
     value: f64,
     min: f64,
     max: f64,
@@ -4493,6 +5034,7 @@ impl NumberInput {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             name: name.into(),
+            enabled: Binding::new(true),
             value,
             min: f64::NEG_INFINITY,
             max: f64::INFINITY,
@@ -4525,6 +5067,48 @@ impl NumberInput {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the control. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it is unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the control needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the control is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn range(mut self, min: f64, max: f64) -> Self {
@@ -4710,14 +5294,23 @@ impl NumberInput {
     }
 
     fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.hover_animation.get(clock).max(self.preview.hover())
     }
 
     fn press_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.press_animation.get(clock).max(self.preview.press())
     }
 
     fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
@@ -4725,6 +5318,16 @@ impl NumberInput {
 impl Widget for NumberInput {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         self.sync_external_value();
+        if !self.enabled.get() {
+            // Disabled, the control takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let theme = self.resolved_theme();
@@ -4865,13 +5468,19 @@ impl Widget for NumberInput {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
         let content = number_input_text_rect(ctx.bounds(), metrics);
         let stepper = number_input_stepper_rect(ctx.bounds(), metrics);
-        let text_style = self.text_style();
+        let mut text_style = self.text_style();
+        if !self.enabled.get() {
+            text_style.color = theme.palette.text_disabled;
+        }
         let buffer = self.display_buffer();
         let stepper_hover_progress =
             self.stepper_hover_animation.get(ctx) * interaction.hover_blend;
@@ -4992,6 +5601,9 @@ impl Widget for NumberInput {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::SpinBox, ctx.bounds());
         node.name = Some(self.name.clone());
         node.value = Some(SemanticsValue::Range {
@@ -5002,17 +5614,22 @@ impl Widget for NumberInput {
         node.numeric_step = Some(self.step);
         node.state.focused = ctx.is_focused();
         node.state.hovered = self.hovered;
-        node.actions = vec![
-            SemanticsAction::Focus,
-            SemanticsAction::Increment,
-            SemanticsAction::Decrement,
-            SemanticsAction::SetValue,
-        ];
+        node.state.disabled = !self.enabled.get();
+        node.actions = if self.enabled.get() {
+            vec![
+                SemanticsAction::Focus,
+                SemanticsAction::Increment,
+                SemanticsAction::Decrement,
+                SemanticsAction::SetValue,
+            ]
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -5036,6 +5653,7 @@ pub struct TextArea {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
+    enabled: Binding<bool>,
     editor: EditableTextController,
     placeholder: String,
     read_only: bool,
@@ -5064,6 +5682,7 @@ impl TextArea {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             name: name.into(),
+            enabled: Binding::new(true),
             editor: EditableTextController::new(),
             placeholder: String::new(),
             read_only: false,
@@ -5101,6 +5720,48 @@ impl TextArea {
         self
     }
 
+    /// Whether the user can use the control. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it is unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the control needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the control is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
+    }
+
     pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = Some(text_style);
         self
@@ -5136,9 +5797,13 @@ impl TextArea {
         self
     }
 
-    pub fn read_only(mut self) -> Self {
-        self.read_only = true;
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
         self
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
@@ -5383,16 +6048,32 @@ impl TextArea {
     }
 
     fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.hover_animation.get(clock).max(self.preview.hover())
     }
 
     fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
 impl Widget for TextArea {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the control takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -5640,7 +6321,10 @@ impl Widget for TextArea {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let padding = self.resolved_padding();
@@ -5678,7 +6362,15 @@ impl Widget for TextArea {
                     );
                 }
             }
-            ctx.draw_persistent_text_layout(content.origin, layout);
+            if self.enabled.get() {
+                ctx.draw_persistent_text_layout(content.origin, layout);
+            } else {
+                ctx.draw_persistent_text_layout_with_color(
+                    content.origin,
+                    layout,
+                    theme.palette.text_disabled,
+                );
+            }
             ctx.pop_clip();
         }
 
@@ -5718,6 +6410,9 @@ impl Widget for TextArea {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::TextInput, ctx.bounds());
         let display_text = self.input_text();
         let display_selection = self.editor.display_selection();
@@ -5735,12 +6430,17 @@ impl Widget for TextArea {
             scroll_x: 0.0,
             scroll_y: 0.0,
         });
-        node.actions = self.editor.semantic_actions(self.read_only);
+        node.state.disabled = !self.enabled.get();
+        node.actions = if self.enabled.get() {
+            self.editor.semantic_actions(self.read_only)
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -6010,6 +6710,7 @@ pub struct Select {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
+    enabled: Binding<bool>,
     options: Vec<String>,
     selected: Option<usize>,
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
@@ -6036,6 +6737,7 @@ impl Select {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             name: name.into(),
+            enabled: Binding::new(true),
             options: Vec::new(),
             selected: None,
             selected_reader: None,
@@ -6070,6 +6772,48 @@ impl Select {
         self
     }
 
+    /// Whether the user can use the control. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it is unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the control needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the control is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
+    }
+
     pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = placeholder.into();
         self
@@ -6089,8 +6833,11 @@ impl Select {
         self
     }
 
-    pub fn selected(mut self, index: usize) -> Self {
-        self.selected = Some(index);
+    /// Select item `index`, or nothing with `None`; `selected(2)` and
+    /// `selected(None)` both work.
+    pub fn selected(mut self, index: impl Into<Option<usize>>) -> Self {
+        let index = index.into();
+        self.selected = index;
         self.selected_reader = None;
         self
     }
@@ -6415,14 +7162,23 @@ impl Select {
     }
 
     fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.hover_animation.get(clock).max(self.preview.hover())
     }
 
     fn press_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.press_animation.get(clock).max(self.preview.press())
     }
 
     fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
@@ -6436,6 +7192,19 @@ impl Widget for Select {
     }
 
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            if self.expanded {
+                self.set_expanded(ctx, false);
+            }
+            // Disabled, the control takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hover_state(
@@ -6651,7 +7420,10 @@ impl Widget for Select {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
@@ -6726,6 +7498,9 @@ impl Widget for Select {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::ComboBox, ctx.bounds());
         node.name = Some(self.name.clone());
         node.value = Some(SemanticsValue::Text(self.current_label()));
@@ -6733,17 +7508,22 @@ impl Widget for Select {
         node.state.hovered = self.hovered_header || self.menu_state.borrow().hovered.is_some();
         node.state.expanded = Some(self.expanded);
         node.popup = Some(SemanticsPopupKind::ListBox);
-        node.actions = vec![
-            SemanticsAction::Focus,
-            SemanticsAction::Expand,
-            SemanticsAction::Collapse,
-            SemanticsAction::SetValue,
-        ];
+        node.state.disabled = !self.enabled.get();
+        node.actions = if self.enabled.get() {
+            vec![
+                SemanticsAction::Focus,
+                SemanticsAction::Expand,
+                SemanticsAction::Collapse,
+                SemanticsAction::SetValue,
+            ]
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn overlay_options(&self) -> Option<OverlayOptions> {
@@ -6803,6 +7583,7 @@ pub struct TextInput {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     name: String,
+    enabled: Binding<bool>,
     editor: EditableTextController,
     password: bool,
     placeholder: String,
@@ -6834,6 +7615,7 @@ impl TextInput {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             name: name.into(),
+            enabled: Binding::new(true),
             editor: EditableTextController::new(),
             password: false,
             placeholder: String::new(),
@@ -6878,6 +7660,48 @@ impl TextInput {
         self
     }
 
+    /// Whether the user can use the control. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it is unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the control needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the control is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
+    }
+
     pub fn text_style(mut self, text_style: TextStyle) -> Self {
         self.text_style = Some(text_style);
         self
@@ -6918,9 +7742,13 @@ impl TextInput {
         self
     }
 
-    pub fn read_only(mut self) -> Self {
-        self.read_only = true;
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
         self
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
@@ -7241,16 +8069,32 @@ impl TextInput {
     }
 
     fn hover_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.hover_animation.get(clock).max(self.preview.hover())
     }
 
     fn focus_value(&self, clock: &impl FrameClock) -> f32 {
+        if !self.enabled.get() {
+            return 0.0;
+        }
         self.focus_animation.get(clock).max(self.preview.focus())
     }
 }
 
 impl Widget for TextInput {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the control takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx.bounds().contains(pointer.position), ctx);
@@ -7464,10 +8308,16 @@ impl Widget for TextInput {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
-        let text_style = self.resolved_text_style();
+        let mut text_style = self.resolved_text_style();
+        if !self.enabled.get() {
+            text_style.color = theme.palette.text_disabled;
+        }
         let padding = self.resolved_padding();
         let focus_progress = self.focus_value(ctx);
         // Fields keep their well; hover strengthens the outline and focus adds
@@ -7524,7 +8374,15 @@ impl Widget for TextInput {
                     }
                 }
             }
-            ctx.draw_persistent_text_layout(layout_origin, layout);
+            if self.enabled.get() {
+                ctx.draw_persistent_text_layout(layout_origin, layout);
+            } else {
+                ctx.draw_persistent_text_layout_with_color(
+                    layout_origin,
+                    layout,
+                    theme.palette.text_disabled,
+                );
+            }
         } else {
             let display_style = if placeholder {
                 theme.placeholder_text_style()
@@ -7599,6 +8457,9 @@ impl Widget for TextInput {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::TextInput, ctx.bounds());
         let display_text = self.input_text();
         let display_selection = self.editor.display_selection();
@@ -7616,12 +8477,17 @@ impl Widget for TextInput {
             scroll_x: 0.0,
             scroll_y: 0.0,
         });
-        node.actions = self.editor.semantic_actions(self.read_only);
+        node.state.disabled = !self.enabled.get();
+        node.actions = if self.enabled.get() {
+            self.editor.semantic_actions(self.read_only)
+        } else {
+            Vec::new()
+        };
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -7689,9 +8555,42 @@ impl PasswordInput {
         self
     }
 
-    pub fn read_only(mut self) -> Self {
-        self.inner = self.inner.read_only();
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.inner = self.inner.read_only(read_only);
         self
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.inner.is_read_only()
+    }
+
+    /// Whether the user can use the field; see [`TextInput::enabled`].
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.inner = self.inner.enabled(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the field needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.inner = self.inner.enabled_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.inner = self.inner.enabled_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.inner.is_enabled()
     }
 
     /// Pins hover or focus visuals; see [`InteractionPreview`].
@@ -7828,9 +8727,42 @@ impl DateTimeInput {
         self
     }
 
-    pub fn read_only(mut self) -> Self {
-        self.inner = self.inner.read_only();
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.inner = self.inner.read_only(read_only);
         self
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.inner.is_read_only()
+    }
+
+    /// Whether the user can use the field; see [`TextInput::enabled`].
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.inner = self.inner.enabled(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the field needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.inner = self.inner.enabled_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.inner = self.inner.enabled_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.inner.is_enabled()
     }
 
     /// Pins hover or focus visuals; see [`InteractionPreview`].

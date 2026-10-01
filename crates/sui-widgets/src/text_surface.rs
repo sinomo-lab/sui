@@ -380,9 +380,13 @@ impl TextSurface {
         self
     }
 
-    pub fn read_only(mut self) -> Self {
-        self.read_only = true;
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
         self
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     pub fn selectable(mut self, selection_scope: SelectionScope) -> Self {
@@ -3564,7 +3568,7 @@ mod tests {
                         .theme(theme)
                         .text_style(text_style.clone())
                         .value("Pinned")
-                        .read_only()
+                        .read_only(true)
                         .on_change(move |value| on_change.borrow_mut().push(value)),
                 ),
         );

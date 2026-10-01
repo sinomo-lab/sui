@@ -46,6 +46,10 @@ that keeps application code on the narrowest and most stable surface.
 13. [Platforms and Cargo features](platforms-and-features.md) lists the
    supported execution surfaces, feature gates, and current caveats.
 
+[Widget API conventions](conventions.md) describes how every built-in widget
+is configured: builder and getter names, static, polled, and observed values,
+callbacks, and the shared state vocabulary.
+
 ## Which API Level Should I Use?
 
 | Need | Start with | Escape hatch |

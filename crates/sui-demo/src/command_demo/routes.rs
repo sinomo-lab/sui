@@ -822,8 +822,8 @@ impl LaneChip {
                 Switch::new("Handles it")
                     .semantic_name(lane.switch_name())
                     .theme_when(clone_dev_theme_reader(theme_reader))
-                    .on_when(move || read.get()[switch])
-                    .on_toggle(move |on| {
+                    .checked_when(move || read.get()[switch])
+                    .on_change(move |on| {
                         write.update(|handles| handles[switch] = on);
                     }),
             );

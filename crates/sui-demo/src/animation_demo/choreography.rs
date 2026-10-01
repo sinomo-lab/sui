@@ -256,7 +256,7 @@ fn stagger_card(theme_reader: &DevThemeReader) -> impl Widget + use<> {
                             .position(|(origin, _)| *origin == chosen.get())
                     })
                     .theme_when(clone_dev_theme_reader(theme_reader))
-                    .on_change_with_ctx(move |index, _, ctx| {
+                    .on_change_with_ctx(move |ctx, index, _| {
                         set_origin.set(STAGGER_ORIGINS[index].0);
                         replay.update(|count| *count += 1);
                         refresh_page(ctx);
@@ -387,7 +387,7 @@ fn presence_card(theme_reader: &DevThemeReader) -> impl Widget + use<> {
             .with_child(
                 Switch::new(DETAILS_TOGGLE_LABEL)
                     .theme_when(clone_dev_theme_reader(theme_reader))
-                    .on_toggle(move |on| {
+                    .on_change(move |on| {
                         toggle.set(on);
                     }),
             )

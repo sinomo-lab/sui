@@ -196,7 +196,10 @@ impl TabBar {
         self
     }
 
-    pub fn selected(mut self, index: usize) -> Self {
+    /// Select item `index`. This widget always shows one choice, so `None`
+    /// selects the first.
+    pub fn selected(mut self, index: impl Into<Option<usize>>) -> Self {
+        let index = index.into().unwrap_or(0);
         self.selected = index;
         self.selected_reader = None;
         self.selected_source = None;
@@ -246,8 +249,9 @@ impl TabBar {
         self
     }
 
-    pub fn selected_index(&self) -> usize {
-        self.normalized_selected()
+    /// The selected item, or `None` when there are no items.
+    pub fn selected_index(&self) -> Option<usize> {
+        (!self.tabs.is_empty()).then(|| self.normalized_selected())
     }
 
     pub fn current_tab(&self) -> Option<&str> {
@@ -755,7 +759,7 @@ impl BrowserTabHit {
 }
 
 pub(super) type BrowserTabBarChange = Box<dyn FnMut(usize, String)>;
-pub(super) type BrowserTabBarContextChange = Box<dyn FnMut(usize, String, &mut EventCtx)>;
+pub(super) type BrowserTabBarContextChange = Box<dyn FnMut(&mut EventCtx, usize, String)>;
 
 /// A tab that just closed: it fades while the space it took collapses, so
 /// the tabs after it slide over.
@@ -879,7 +883,10 @@ impl BrowserTabBar {
         )
     }
 
-    pub fn selected(mut self, index: Option<usize>) -> Self {
+    /// Select item `index`, or nothing with `None`; `selected(2)` and
+    /// `selected(None)` both work.
+    pub fn selected(mut self, index: impl Into<Option<usize>>) -> Self {
+        let index = index.into();
         self.selected = index;
         self.selection_from = index;
         self.selection_to = index;
@@ -905,7 +912,7 @@ impl BrowserTabBar {
 
     pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
     where
-        F: FnMut(usize, String, &mut EventCtx) + 'static,
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
     {
         self.on_change_with_ctx = Some(Box::new(on_change));
         self
@@ -921,7 +928,7 @@ impl BrowserTabBar {
 
     pub fn on_close_with_ctx<F>(mut self, on_close: F) -> Self
     where
-        F: FnMut(usize, String, &mut EventCtx) + 'static,
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
     {
         self.on_close_with_ctx = Some(Box::new(on_close));
         self
@@ -977,7 +984,7 @@ impl BrowserTabBar {
             on_change(index, label.clone());
         }
         if let Some(on_change) = &mut self.on_change_with_ctx {
-            on_change(index, label, ctx);
+            on_change(ctx, index, label);
         }
         self.refresh_tabs();
         self.start_selection_animation(from, self.normalized_selected(), ctx);
@@ -994,7 +1001,7 @@ impl BrowserTabBar {
             on_close(index, label.clone());
         }
         if let Some(on_close) = &mut self.on_close_with_ctx {
-            on_close(index, label, ctx);
+            on_close(ctx, index, label);
         }
         self.refresh_tabs();
         self.start_selection_animation(from, self.normalized_selected(), ctx);
@@ -1601,9 +1608,16 @@ impl SegmentedControlItem {
         self
     }
 
-    pub fn disabled(mut self) -> Self {
-        self.disabled = true;
+    /// Whether the item can be chosen. Items are enabled unless set
+    /// otherwise.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.disabled = !enabled;
         self
+    }
+
+    #[deprecated(note = "use `enabled(false)`")]
+    pub fn disabled(self) -> Self {
+        self.enabled(false)
     }
 
     pub fn label(&self) -> &str {
@@ -1672,7 +1686,10 @@ impl SegmentedControl {
         self
     }
 
-    pub fn selected(mut self, index: usize) -> Self {
+    /// Select item `index`. This widget always shows one choice, so `None`
+    /// selects the first.
+    pub fn selected(mut self, index: impl Into<Option<usize>>) -> Self {
+        let index = index.into().unwrap_or(0);
         self.selected = index;
         self.selected_reader = None;
         self.selection_from = index;
@@ -1698,14 +1715,15 @@ impl SegmentedControl {
 
     pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
     where
-        F: FnMut(usize, String, &mut EventCtx) + 'static,
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
     {
         self.on_change_with_ctx = Some(Box::new(on_change));
         self
     }
 
-    pub fn selected_index(&self) -> usize {
-        self.normalized_selected()
+    /// The selected item, or `None` when there are no items.
+    pub fn selected_index(&self) -> Option<usize> {
+        (!self.segments.is_empty()).then(|| self.normalized_selected())
     }
 
     pub(super) fn normalized_selected(&self) -> usize {
@@ -1789,7 +1807,7 @@ impl SegmentedControl {
                 on_change(index, label.clone());
             }
             if let Some(on_change) = &mut self.on_change_with_ctx {
-                on_change(index, label, ctx);
+                on_change(ctx, index, label);
             }
         }
     }
@@ -2169,7 +2187,10 @@ impl Tabs {
         self
     }
 
-    pub fn selected(mut self, index: usize) -> Self {
+    /// Select item `index`. This widget always shows one choice, so `None`
+    /// selects the first.
+    pub fn selected(mut self, index: impl Into<Option<usize>>) -> Self {
+        let index = index.into().unwrap_or(0);
         self.selected = index;
         self.selection_from = index;
         self.selection_animation = Progress::new(1.0);
@@ -2193,8 +2214,9 @@ impl Tabs {
         self
     }
 
-    pub fn selected_index(&self) -> usize {
-        self.normalized_selected()
+    /// The selected item, or `None` when there are no items.
+    pub fn selected_index(&self) -> Option<usize> {
+        (!self.labels.is_empty()).then(|| self.normalized_selected())
     }
 
     pub fn current_tab(&self) -> Option<&str> {

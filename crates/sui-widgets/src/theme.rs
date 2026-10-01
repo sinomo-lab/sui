@@ -3074,6 +3074,50 @@ impl DefaultTheme {
         }
     }
 
+    /// This theme as a disabled control draws with it: text and placeholders
+    /// take the disabled ink, fills fade toward the control tier, and borders
+    /// and accents lose strength, so a widget that paints with the result
+    /// looks disabled without colors of its own.
+    pub fn for_disabled_control(mut self) -> Self {
+        let interaction = self.interaction;
+        let p = &mut self.palette;
+        let control = p.control;
+        let fade = |color: Color| {
+            color
+                .mix_oklab(control, 0.72)
+                .with_alpha(color.alpha * interaction.disabled_opacity)
+        };
+        let soften =
+            |color: Color| color.with_alpha(color.alpha * interaction.disabled_content_opacity);
+        let ink = p.text_disabled;
+        p.text = ink;
+        p.text_muted = ink;
+        p.placeholder = ink;
+        p.caret = ink;
+        p.field = fade(p.field);
+        p.button = fade(p.button);
+        p.button_hover = p.button;
+        p.button_pressed = p.button;
+        p.button_border = soften(p.button_border);
+        p.border = soften(p.border);
+        p.border_strong = soften(p.border_strong);
+        p.border_control = soften(p.border_control);
+        p.border_hover = p.border_control;
+        p.border_focus = p.border_control;
+        p.accent = fade(p.accent);
+        p.accent_hover = p.accent;
+        p.accent_pressed = p.accent;
+        p.accent_border = soften(p.accent_border);
+        p.accent_border_hover = p.accent_border;
+        p.accent_border_focus = p.accent_border;
+        p.accent_text = soften(p.accent_text);
+        p.accent_soft = fade(p.accent_soft);
+        p.accent_soft_text = ink;
+        p.selection = fade(p.selection);
+        p.focus_ring = Color::TRANSPARENT;
+        self
+    }
+
     pub fn body_text_style(&self) -> TextStyle {
         self.text_style(self.palette.text)
     }

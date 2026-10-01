@@ -73,19 +73,23 @@ fn field_columns() -> Vec<&'static str> {
     FIELD_STATES
         .iter()
         .map(|preview| preview_label(*preview))
+        .chain(["Disabled"])
         .collect()
 }
 
+/// Rows of `(label, build)` across the field states, then disabled. `build`
+/// takes the state to preview and whether the field is enabled.
 fn field_rows<W, F>(rows: Vec<(&'static str, F)>) -> Vec<(&'static str, Vec<BoxedWidget>)>
 where
     W: Widget + 'static,
-    F: Fn(InteractionPreview) -> W,
+    F: Fn(InteractionPreview, bool) -> W,
 {
     rows.into_iter()
         .map(|(label, make)| {
             let cells = FIELD_STATES
                 .iter()
-                .map(|preview| boxed(make(*preview)))
+                .map(|preview| boxed(make(*preview, true)))
+                .chain([boxed(make(InteractionPreview::None, false))])
                 .collect();
             (label, cells)
         })
@@ -97,17 +101,18 @@ const FIELD_WIDTH: f32 = 180.0;
 fn text_input(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let make = |value: &'static str, placeholder: &'static str, icon: bool, read_only: bool| {
-        move |preview| {
+        move |preview, enabled: bool| {
             let mut input = TextInput::new("Layer name")
                 .placeholder(placeholder)
                 .value(value)
                 .interaction_preview(preview)
+                .enabled(enabled)
                 .theme(theme);
             if icon {
                 input = input.leading_icon(IconGlyph::Search);
             }
             if read_only {
-                input = input.read_only();
+                input = input.read_only(true);
             }
             sized(FIELD_WIDTH, input)
         }
@@ -138,13 +143,14 @@ fn text_input(ctx: &StoryCtx) -> Vec<Section> {
 fn password_input(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let make = |value: &'static str| {
-        move |preview| {
+        move |preview, enabled: bool| {
             sized(
                 FIELD_WIDTH,
                 PasswordInput::new("Password")
                     .placeholder("Enter a password")
                     .value(value)
                     .interaction_preview(preview)
+                    .enabled(enabled)
                     .theme(theme),
             )
         }
@@ -160,12 +166,13 @@ fn password_input(ctx: &StoryCtx) -> Vec<Section> {
 fn date_time_input(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let make = |value: &'static str| {
-        move |preview| {
+        move |preview, enabled: bool| {
             sized(
                 FIELD_WIDTH,
                 DateTimeInput::new("Scheduled for")
                     .value(value)
                     .interaction_preview(preview)
+                    .enabled(enabled)
                     .theme(theme),
             )
         }
@@ -184,7 +191,7 @@ fn date_time_input(ctx: &StoryCtx) -> Vec<Section> {
 fn number_input(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let make = |precision: usize, value: f64| {
-        move |preview| {
+        move |preview, enabled: bool| {
             sized(
                 140.0,
                 NumberInput::new("Brush size")
@@ -193,6 +200,7 @@ fn number_input(ctx: &StoryCtx) -> Vec<Section> {
                     .precision(precision)
                     .value(value)
                     .interaction_preview(preview)
+                    .enabled(enabled)
                     .theme(theme),
             )
         }
@@ -210,7 +218,8 @@ fn number_input(ctx: &StoryCtx) -> Vec<Section> {
                 label,
                 states
                     .iter()
-                    .map(|preview| boxed(make(*preview)))
+                    .map(|preview| boxed(make(*preview, true)))
+                    .chain([boxed(make(InteractionPreview::None, false))])
                     .collect::<Vec<BoxedWidget>>(),
             )
         })
@@ -218,6 +227,7 @@ fn number_input(ctx: &StoryCtx) -> Vec<Section> {
     let columns: Vec<&str> = states
         .iter()
         .map(|preview| preview_label(*preview))
+        .chain(["Disabled"])
         .collect();
     vec![
         grid(theme, "Precision and states", &columns, rows),
@@ -236,12 +246,13 @@ fn number_input(ctx: &StoryCtx) -> Vec<Section> {
 fn text_area(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let make = |value: &'static str| {
-        move |preview| {
+        move |preview, enabled: bool| {
             SizedBox::new().width(200.0).height(88.0).with_child(
                 TextArea::new("Notes")
                     .placeholder("Write notes")
                     .value(value)
                     .interaction_preview(preview)
+                    .enabled(enabled)
                     .theme(theme),
             )
         }
@@ -261,11 +272,12 @@ fn select(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let modes = ["Normal", "Multiply", "Screen", "Overlay"];
     let make = |selected: Option<usize>| {
-        move |preview| {
+        move |preview, enabled: bool| {
             let select = Select::new("Blend mode")
                 .placeholder("Choose blend mode")
                 .options(modes)
                 .interaction_preview(preview)
+                .enabled(enabled)
                 .theme(theme);
             sized(
                 FIELD_WIDTH,
@@ -289,7 +301,8 @@ fn select(ctx: &StoryCtx) -> Vec<Section> {
                 label,
                 states
                     .iter()
-                    .map(|preview| boxed(make(*preview)))
+                    .map(|preview| boxed(make(*preview, true)))
+                    .chain([boxed(make(InteractionPreview::None, false))])
                     .collect::<Vec<BoxedWidget>>(),
             )
         })
@@ -297,6 +310,7 @@ fn select(ctx: &StoryCtx) -> Vec<Section> {
     let columns: Vec<&str> = states
         .iter()
         .map(|preview| preview_label(*preview))
+        .chain(["Disabled"])
         .collect();
     vec![
         grid(theme, "Content and states", &columns, rows),

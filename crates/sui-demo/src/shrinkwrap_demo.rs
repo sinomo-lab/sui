@@ -97,18 +97,16 @@ fn build_demo(state: Signal<Motion>, theme: DevThemeReader) -> impl Widget {
             Stack::vertical()
                 .spacing(16.0)
                 .alignment(Alignment::Stretch)
-                .with_child(
-                    Label::new("Shrinkwrap conversation").style_when(demo_text_style_when(
-                        &theme,
-                        DemoTextRole::PageTitle,
-                        |theme| theme.palette.text,
-                    )),
-                )
+                .with_child(Label::new("Shrinkwrap conversation").text_style_when(
+                    demo_text_style_when(&theme, DemoTextRole::PageTitle, |theme| {
+                        theme.palette.text
+                    }),
+                ))
                 .with_child(
                     Label::new(
                         "A changing container. Real text reflow. Bubbles that fit their words.",
                     )
-                    .style_when(demo_text_style_when(
+                    .text_style_when(demo_text_style_when(
                         &theme,
                         DemoTextRole::Supporting,
                         |theme| theme.palette.text_muted,
@@ -160,13 +158,11 @@ fn build_demo(state: Signal<Motion>, theme: DevThemeReader) -> impl Widget {
                             FlexItem::new().basis_fraction(0.8).min_width(120.0),
                         )
                         .with_item(
-                            Label::new("")
-                                .text_from(readout)
-                                .style_when(demo_text_style_when(
-                                    &theme,
-                                    DemoTextRole::Metadata,
-                                    |theme| theme.palette.text_muted,
-                                )),
+                            Label::new("").text_from(readout).text_style_when(
+                                demo_text_style_when(&theme, DemoTextRole::Metadata, |theme| {
+                                    theme.palette.text_muted
+                                }),
+                            ),
                             FlexItem::fixed(64.0),
                         ),
                 )
@@ -175,7 +171,7 @@ fn build_demo(state: Signal<Motion>, theme: DevThemeReader) -> impl Widget {
                     Label::new(
                         "Drag the width slider to pause. Play resumes from the current width.",
                     )
-                    .style_when(demo_text_style_when(
+                    .text_style_when(demo_text_style_when(
                         &theme,
                         DemoTextRole::Supporting,
                         |theme| theme.palette.text_muted,

@@ -338,11 +338,13 @@ fn build_paint_toolbar(paint_state: PixelCanvasState, theme_reader: DevThemeRead
         .extent(44.0)
         .padding(Insets::all(6.0))
         .spacing(8.0)
-        .with_child(Label::new("SUI Paint").style_when(demo_text_style_when(
-            &theme_reader,
-            DemoTextRole::CardTitle,
-            |theme| theme.palette.text,
-        )))
+        .with_child(
+            Label::new("SUI Paint").text_style_when(demo_text_style_when(
+                &theme_reader,
+                DemoTextRole::CardTitle,
+                |theme| theme.palette.text,
+            )),
+        )
         .with_child(
             paint_command_group(PAINT_HISTORY_COMMANDS_NAME, &theme_reader)
                 .with_child(
@@ -656,7 +658,7 @@ fn build_paint_document_bar(
         .padding(Insets::all(6.0))
         .spacing(8.0)
         .with_child(
-            Label::new(PAINT_DOCUMENT_NAME).style_when(demo_text_style_when(
+            Label::new(PAINT_DOCUMENT_NAME).text_style_when(demo_text_style_when(
                 &theme_reader,
                 DemoTextRole::CardTitle,
                 |theme| theme.palette.text,
@@ -672,17 +674,19 @@ fn build_paint_document_bar(
                 "{} x {} px",
                 PAINT_DOCUMENT_WIDTH, PAINT_DOCUMENT_HEIGHT
             ))
-            .style_when(demo_text_style_when(
+            .text_style_when(demo_text_style_when(
                 &theme_reader,
                 DemoTextRole::Metadata,
                 |theme| theme.palette.text_muted,
             )),
         )
-        .with_child(Label::new("RGB / 8-bit").style_when(demo_text_style_when(
-            &theme_reader,
-            DemoTextRole::Metadata,
-            |theme| theme.palette.text_muted,
-        )))
+        .with_child(
+            Label::new("RGB / 8-bit").text_style_when(demo_text_style_when(
+                &theme_reader,
+                DemoTextRole::Metadata,
+                |theme| theme.palette.text_muted,
+            )),
+        )
         .with_child(
             Separator::vertical()
                 .length(18.0)
@@ -706,7 +710,7 @@ fn build_paint_document_bar(
                     SizedBox::new().width(78.0).with_child(
                         Label::dynamic("Zoom --", move || paint_zoom_status_text(&zoom_state))
                             .semantic_name(PAINT_ZOOM_READOUT_NAME)
-                            .style_when(demo_text_style_when(
+                            .text_style_when(demo_text_style_when(
                                 &theme_reader,
                                 DemoTextRole::Metadata,
                                 |theme| theme.palette.text,
@@ -822,7 +826,7 @@ fn build_paint_color_panel(
                 .theme_when(clone_dev_theme_reader(&theme_reader))
                 .size(Size::new(104.0, 32.0))
                 .color_when(move || swatch_reader_state.brush_color())
-                .read_only(),
+                .read_only(true),
         ))
         .with_child(
             ColorPalette::new(PAINT_COLOR_PRESETS_NAME)

@@ -131,8 +131,8 @@ fn option_switch(
     Switch::new(label)
         .semantic_name(place.name(label))
         .theme_when(clone_dev_theme_reader(theme_reader))
-        .on_when(move || on(&read.get()))
-        .on_toggle(move |value| write.update(|options| set(options, value)))
+        .checked_when(move || on(&read.get()))
+        .on_change(move |value| write.update(|options| set(options, value)))
 }
 
 /// A number input showing `value` for the options within `range`, and

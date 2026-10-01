@@ -27,7 +27,7 @@ fn mode_card(mode: HdrThemeMode) -> impl Widget {
         Stack::vertical()
             .spacing(10.0)
             .alignment(Alignment::Start)
-            .with_child(Label::new(title).style(demo_text_style(
+            .with_child(Label::new(title).text_style(demo_text_style(
                 theme,
                 DemoTextRole::Emphasis,
                 theme.palette.text,
@@ -44,7 +44,7 @@ fn mode_card(mode: HdrThemeMode) -> impl Widget {
                         theme.hdr.luminance.alert_pulse,
                     ),
                 })
-                .style(demo_text_style(
+                .text_style(demo_text_style(
                     theme,
                     DemoTextRole::Metadata,
                     theme.palette.placeholder,
@@ -55,7 +55,11 @@ fn mode_card(mode: HdrThemeMode) -> impl Widget {
                     .min_width(180.0)
                     .theme(theme),
             )
-            .with_child(Switch::new(format!("{title} live")).on(true).theme(theme))
+            .with_child(
+                Switch::new(format!("{title} live"))
+                    .checked(true)
+                    .theme(theme),
+            )
             .with_child(
                 Stack::horizontal()
                     .spacing(10.0)
@@ -64,7 +68,7 @@ fn mode_card(mode: HdrThemeMode) -> impl Widget {
                         format!("{title} emissive indicator"),
                         theme,
                     ))
-                    .with_child(Label::new("Emissive indicator").style(demo_text_style(
+                    .with_child(Label::new("Emissive indicator").text_style(demo_text_style(
                         theme,
                         DemoTextRole::Metadata,
                         theme.palette.placeholder,
@@ -75,7 +79,7 @@ fn mode_card(mode: HdrThemeMode) -> impl Widget {
             .with_child(
                 Surface::field(Padding::all(
                     8.0,
-                    Label::new(format!("{title} live signal")).style(demo_text_style(
+                    Label::new(format!("{title} live signal")).text_style(demo_text_style(
                         theme,
                         DemoTextRole::Metadata,
                         theme.palette.text,

@@ -25,7 +25,7 @@ Connect external state through two complementary APIs:
   `Select::selected_when`, `Button::enabled_when`, or `SwitchView::selected_when`
   reads the current value when the relevant runtime phase runs. Readers remain
   useful for adapting existing state that does not emit notifications.
-- A callback such as `on_press`, `on_change`, `on_toggle`, or a
+- A callback such as `on_press`, `on_change`, or a
   `*_with_ctx` variant updates the application model.
 
 The `*_with_ctx` callbacks additionally receive `&mut EventCtx`, allowing the
@@ -109,9 +109,9 @@ Not every widget has a reader for every property.
   edit buffer. Use `value(...)` for the initial text and `on_change(...)` to
   mirror edits into application state. If an owner has mutable access to the
   widget, `set_value(...)` replaces the buffer programmatically.
-- Controls such as `Checkbox` and `Switch` retain their current toggle state
-  and report changes with `on_toggle`.
-- Controls with `value_when` or `selected_when` should use the reader as the
+- Two-state controls, `Checkbox`, `Switch`, and `RadioButton`, retain their
+  checked state and report changes with `on_change`.
+- Controls with `value_when`, `checked_when`, or `selected_when` should use the reader as the
   authoritative value and update that same external state from the callback.
 
 Rebuilding a subtree resets its local focus, animation, selection, and editing

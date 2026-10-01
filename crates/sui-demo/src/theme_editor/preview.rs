@@ -141,7 +141,7 @@ fn header(theme: DefaultTheme) -> impl Widget {
     Stack::vertical()
         .spacing(6.0)
         .alignment(Alignment::Stretch)
-        .with_child(Label::new("Preview").style(demo_text_style(
+        .with_child(Label::new("Preview").text_style(demo_text_style(
             theme,
             DemoTextRole::PageTitle,
             theme.palette.text,
@@ -150,7 +150,7 @@ fn header(theme: DefaultTheme) -> impl Widget {
             Label::new(
                 "Every edit lands here immediately. Component stories come from the widget book.",
             )
-            .style(demo_text_style(
+            .text_style(demo_text_style(
                 theme,
                 DemoTextRole::Supporting,
                 theme.palette.text_muted,
@@ -170,12 +170,12 @@ where
     Stack::vertical()
         .spacing(8.0)
         .alignment(Alignment::Stretch)
-        .with_child(Label::new(title).style(demo_text_style(
+        .with_child(Label::new(title).text_style(demo_text_style(
             theme,
             DemoTextRole::Emphasis,
             theme.palette.text,
         )))
-        .with_child(Label::new(summary).style(demo_text_style(
+        .with_child(Label::new(summary).text_style(demo_text_style(
             theme,
             DemoTextRole::Supporting,
             theme.palette.text_muted,
@@ -208,12 +208,12 @@ fn contrast_report(theme: DefaultTheme) -> impl Widget {
         Stack::vertical()
             .spacing(8.0)
             .alignment(Alignment::Stretch)
-            .with_child(Label::new("Contrast").style(demo_text_style(
+            .with_child(Label::new("Contrast").text_style(demo_text_style(
                 theme,
                 DemoTextRole::Emphasis,
                 theme.palette.text,
             )))
-            .with_child(Label::new(summary).style(demo_text_style(
+            .with_child(Label::new(summary).text_style(demo_text_style(
                 theme,
                 DemoTextRole::Supporting,
                 if failing == 0 {
@@ -243,7 +243,7 @@ fn contrast_cell(theme: DefaultTheme, check: ContrastCheck) -> impl Widget {
             .with_child(Align::new(
                 Alignment::Center,
                 Alignment::Center,
-                Label::new("Aa").style(demo_text_style(
+                Label::new("Aa").text_style(demo_text_style(
                     theme,
                     DemoTextRole::Body,
                     check.foreground,
@@ -261,7 +261,7 @@ fn contrast_cell(theme: DefaultTheme, check: ContrastCheck) -> impl Widget {
                 right: 8.0,
                 bottom: 1.0,
             },
-            Label::new(check.badge()).style(demo_text_style(
+            Label::new(check.badge()).text_style(demo_text_style(
                 theme,
                 DemoTextRole::Metadata,
                 tone_ink,
@@ -276,7 +276,7 @@ fn contrast_cell(theme: DefaultTheme, check: ContrastCheck) -> impl Widget {
             Stack::vertical()
                 .spacing(3.0)
                 .alignment(Alignment::Start)
-                .with_child(Label::new(check.label.clone()).style(demo_text_style(
+                .with_child(Label::new(check.label.clone()).text_style(demo_text_style(
                     theme,
                     DemoTextRole::Supporting,
                     palette.text,
@@ -307,7 +307,7 @@ fn surfaces(theme: DefaultTheme) -> impl Widget {
 fn surface_tile(theme: DefaultTheme, name: &'static str, fill: Color) -> impl Widget {
     let neutrals = theme.colors.neutrals;
     let line = |text: &'static str, role: DemoTextRole, color: Color| {
-        Label::new(text).style(demo_text_style(theme, role, color))
+        Label::new(text).text_style(demo_text_style(theme, role, color))
     };
     let field = Tile::new(
         neutrals.field,
@@ -380,7 +380,7 @@ fn decorative(theme: DefaultTheme) -> impl Widget {
                         right: 10.0,
                         bottom: 3.0,
                     },
-                    Label::new(hue_name(hue)).style(demo_text_style(
+                    Label::new(hue_name(hue)).text_style(demo_text_style(
                         theme,
                         DemoTextRole::Supporting,
                         roles.text,
@@ -405,7 +405,7 @@ fn decorative(theme: DefaultTheme) -> impl Widget {
                     .with_child(Align::new(
                         Alignment::Center,
                         Alignment::Center,
-                        Label::new(format!("{}", index + 1)).style(demo_text_style(
+                        Label::new(format!("{}", index + 1)).text_style(demo_text_style(
                             theme,
                             DemoTextRole::Emphasis,
                             roles.on_solid,

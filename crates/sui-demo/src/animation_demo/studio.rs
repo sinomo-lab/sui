@@ -721,7 +721,7 @@ fn toolbar(state: StudioState, theme_reader: DevThemeReader) -> impl Widget {
                                 .position(|(mode, _)| *mode == loop_choice.loop_mode())
                         })
                         .theme_when(theme())
-                        .on_change_with_ctx(move |index, _, ctx| {
+                        .on_change_with_ctx(move |ctx, index, _| {
                             loop_change.set_loop_mode(LOOP_CHOICES[index].0);
                             refresh_page(ctx);
                         }),
@@ -826,7 +826,7 @@ fn toolbar(state: StudioState, theme_reader: DevThemeReader) -> impl Widget {
                 ),
         )
         .with_child(
-            Label::dynamic(summary.summary(), move || summary.summary()).style_when(
+            Label::dynamic(summary.summary(), move || summary.summary()).text_style_when(
                 demo_text_style_when(&theme_reader, DemoTextRole::Metadata, |theme| {
                     theme.palette.text_muted
                 }),

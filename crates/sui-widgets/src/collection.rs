@@ -1114,7 +1114,7 @@ struct CapturedAnchor<K> {
 }
 
 type VirtualListChange<K> = Box<dyn FnMut(K)>;
-type VirtualListContextChange<K> = Box<dyn FnMut(K, &mut EventCtx)>;
+type VirtualListContextChange<K> = Box<dyn FnMut(&mut EventCtx, K)>;
 type VirtualListEdge = Box<dyn FnMut()>;
 type VirtualListContextEdge = Box<dyn FnMut(&mut EventCtx)>;
 
@@ -1341,7 +1341,7 @@ where
 
     pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
     where
-        F: FnMut(K, &mut EventCtx) + 'static,
+        F: FnMut(&mut EventCtx, K) + 'static,
     {
         self.on_change = None;
         self.on_change_with_ctx = Some(Box::new(on_change));
@@ -1867,7 +1867,7 @@ where
         let changed = self.state.select(Some(key.clone()));
         if changed {
             if let Some(on_change) = &mut self.on_change_with_ctx {
-                on_change(key, ctx);
+                on_change(ctx, key);
             } else if let Some(on_change) = &mut self.on_change {
                 on_change(key);
             }
@@ -3343,7 +3343,7 @@ mod tests {
         let selected_key = Rc::clone(&selected);
         let list = VirtualList::new("Rows", model, |_key, value| RowBox { value })
             .estimated_row_height(20.0)
-            .on_change_with_ctx(move |key, ctx| {
+            .on_change_with_ctx(move |ctx, key| {
                 selected_key.set(Some(key));
                 ctx.request_semantics();
             });

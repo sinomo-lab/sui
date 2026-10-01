@@ -377,7 +377,7 @@ fn segmented_control_keyboard_changes_selection() -> Result<(), String> {
     let (mut runtime, window_id) = build_runtime(
         SegmentedControl::new("Conversation view")
             .segments(["All", "Chats", "Channels"])
-            .on_change_with_ctx(move |index, label, ctx| {
+            .on_change_with_ctx(move |ctx, index, label| {
                 on_change.borrow_mut().push((index, label));
                 ctx.request_measure();
                 ctx.request_arrange();
@@ -6788,6 +6788,19 @@ fn context_menu_pointer_opens_submenu_and_activates_leaf_path() {
 }
 
 #[test]
+fn widgets_that_always_show_a_choice_treat_none_as_the_first() {
+    let tabs = TabBar::new("Sections").tabs(["One", "Two"]);
+    assert_eq!(tabs.selected(None).selected_index(), Some(0));
+    let tabs = TabBar::new("Sections").tabs(["One", "Two"]).selected(1);
+    assert_eq!(tabs.selected_index(), Some(1));
+    assert_eq!(TabBar::new("Empty").selected_index(), None);
+    let segments = SegmentedControl::new("Mode")
+        .segments(["A", "B"])
+        .selected(None);
+    assert_eq!(segments.selected_index(), Some(0));
+}
+
+#[test]
 fn a_submenu_covers_the_focus_ring_of_the_menu_it_opened_from() {
     let theme = DefaultTheme::default();
     let (mut runtime, window_id) = build_runtime(
@@ -7210,7 +7223,7 @@ fn context_menu_routes_copy_to_read_only_text_area() -> Result<(), String> {
         "Connection details menu",
         TextArea::new("Connection details")
             .value(value)
-            .read_only()
+            .read_only(true)
             .selectable(selection.clone()),
     );
     let text_area_id = menu.trigger_id();
@@ -7286,7 +7299,7 @@ fn context_menu_pointer_activation_escapes_tight_trigger_inside_scroll_view() ->
         "Connection details menu",
         TextArea::new("Connection details")
             .value("node = local\naddress = 127.0.0.1:21353")
-            .read_only(),
+            .read_only(true),
     )
     .items([MenuItem::new("Select all"), MenuItem::new("Copy")])
     .on_activate(move |index, _| {

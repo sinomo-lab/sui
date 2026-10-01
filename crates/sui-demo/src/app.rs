@@ -620,7 +620,7 @@ impl DevBrowserShell {
             })
             .on_change_with_ctx({
                 let select_state = state.clone();
-                move |tab_index, _, ctx| {
+                move |ctx, tab_index, _| {
                     if let Some(demo_index) = select_state.open_tabs().get(tab_index).copied() {
                         select_state.select_tab(demo_index);
                         request_window_refresh(ctx, true);
@@ -629,7 +629,7 @@ impl DevBrowserShell {
             })
             .on_close_with_ctx({
                 let close_state = state.clone();
-                move |tab_index, _, ctx| {
+                move |ctx, tab_index, _| {
                     if let Some(demo_index) = close_state.open_tabs().get(tab_index).copied() {
                         close_state.close_tab(demo_index);
                         request_window_refresh(ctx, true);

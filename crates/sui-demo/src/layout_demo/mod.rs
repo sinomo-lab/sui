@@ -187,8 +187,8 @@ fn frame_bar(theme_reader: &DevThemeReader, page: &PageState) -> impl Widget + u
         let write = page.show_sizes.clone();
         Switch::new(SHOW_SIZES_LABEL)
             .theme_when(clone_dev_theme_reader(theme_reader))
-            .on_when(move || read.get())
-            .on_toggle(move |on| {
+            .checked_when(move || read.get())
+            .on_change(move |on| {
                 write.set(on);
             })
     };
@@ -363,8 +363,8 @@ fn flex_section(theme_reader: &DevThemeReader, page: &PageState) -> impl Widget 
         let write = settings.clone();
         Switch::new(FLEX_WRAP_LABEL)
             .theme_when(clone_dev_theme_reader(theme_reader))
-            .on_when(move || read.get().wrap)
-            .on_toggle(move |on| {
+            .checked_when(move || read.get().wrap)
+            .on_change(move |on| {
                 write.update(|settings| settings.wrap = on);
             })
     };
@@ -902,8 +902,8 @@ fn safe_area_section(theme_reader: &DevThemeReader, page: &PageState) -> impl Wi
         let write = page.keyboard.clone();
         Switch::new(KEYBOARD_LABEL)
             .theme_when(clone_dev_theme_reader(theme_reader))
-            .on_when(move || read.get())
-            .on_toggle(move |on| {
+            .checked_when(move || read.get())
+            .on_change(move |on| {
                 write.set(on);
             })
     };
@@ -1007,7 +1007,7 @@ where
 }
 
 fn live_label(theme_reader: &DevThemeReader, text: &str) -> Label {
-    Label::new(text).style_when(demo_text_style_when(
+    Label::new(text).text_style_when(demo_text_style_when(
         theme_reader,
         DemoTextRole::Body,
         |theme| theme.palette.text,
@@ -1025,7 +1025,7 @@ fn tile(theme_reader: &DevThemeReader, label: &str, hue: DecorativeHue) -> Layou
         None::<fn() -> Color>,
         Align::center(Padding::all(
             8.0,
-            Label::new(label).style_when(demo_text_style_when(
+            Label::new(label).text_style_when(demo_text_style_when(
                 theme_reader,
                 DemoTextRole::Metadata,
                 move |theme| theme.decorative.get(hue).on_solid,

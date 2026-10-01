@@ -55,7 +55,7 @@ pub(super) fn section(state: MotionDemoState, theme_reader: DevThemeReader) -> i
                         .gap(10.0)
                         .align_items(Alignment::Center)
                         .with_item(
-                            Label::new("Drag the puck and let go").style_when(
+                            Label::new("Drag the puck and let go").text_style_when(
                                 demo_text_style_when(
                                     &theme_reader,
                                     DemoTextRole::Supporting,

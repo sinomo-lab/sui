@@ -343,8 +343,11 @@ impl PresetStrip {
         self
     }
 
-    pub fn selected(mut self, selected: usize) -> Self {
-        self.selected = Some(selected);
+    /// Select item `index`, or nothing with `None`; `selected(2)` and
+    /// `selected(None)` both work.
+    pub fn selected(mut self, selected: impl Into<Option<usize>>) -> Self {
+        let selected = selected.into();
+        self.selected = selected;
         self.selected_reader = None;
         self
     }
@@ -1226,7 +1229,7 @@ pub(super) fn status_bar_segment_id(parent: WidgetId, index: usize) -> WidgetId 
 }
 
 pub(super) type SegmentedControlChange = Box<dyn FnMut(usize, String)>;
-pub(super) type SegmentedControlContextChange = Box<dyn FnMut(usize, String, &mut EventCtx)>;
+pub(super) type SegmentedControlContextChange = Box<dyn FnMut(&mut EventCtx, usize, String)>;
 
 pub(super) fn segmented_control_item_id(parent: WidgetId, index: usize) -> WidgetId {
     const TAG: u64 = 3_u64 << 51;

@@ -173,7 +173,7 @@ fn foundation(state: ThemeEditorState, shell: DevThemeReader) -> impl Widget {
                         .segments(["Small", "Medium", "Large"])
                         .selected(size_index)
                         .theme_when(clone_dev_theme_reader(&shell))
-                        .on_change_with_ctx(move |index, _, _| {
+                        .on_change_with_ctx(move |_, index, _| {
                             size_state.set_control_size(match index {
                                 0 => ControlSize::Small,
                                 2 => ControlSize::Large,
@@ -319,7 +319,7 @@ fn color_editor(token: Token, state: ThemeEditorState, shell: DevThemeReader) ->
                 .segments(PickerMode::ALL.map(PickerMode::label))
                 .selected(mode.index())
                 .theme_when(clone_dev_theme_reader(&shell))
-                .on_change_with_ctx(move |index, _, _| {
+                .on_change_with_ctx(move |_, index, _| {
                     mode_state.set_picker_mode(PickerMode::ALL[index.min(2)]);
                 }),
         )

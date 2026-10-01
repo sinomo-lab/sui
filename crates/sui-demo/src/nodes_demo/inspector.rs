@@ -206,8 +206,8 @@ fn edge_inspector(page: &Page, id: &EdgeId) -> impl Widget + use<> {
         let write_id = id.clone();
         Switch::new(ANIMATED_LABEL)
             .theme_when(clone_dev_theme_reader(&page.theme_reader))
-            .on_when(move || read.edge(&read_id).is_some_and(|edge| edge.animated))
-            .on_toggle(move |on| {
+            .checked_when(move || read.edge(&read_id).is_some_and(|edge| edge.animated))
+            .on_change(move |on| {
                 let _ = write.update_edge(&write_id, |edge| edge.animated = on);
             })
     };

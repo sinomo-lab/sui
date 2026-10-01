@@ -819,7 +819,7 @@ fn card_menu(page: &Page, card: &Signal<Card>) -> impl Widget + use<> {
             .map(|column| {
                 let item = MenuItem::new(format!("Move to {}", column.name()));
                 if Some(column) == current {
-                    item.disabled()
+                    item.enabled(false)
                 } else {
                     item
                 }

@@ -111,7 +111,7 @@ fn list_view(ctx: &StoryCtx) -> Vec<Section> {
                         .accent(warm),
                     ListItem::new("Archive cache")
                         .detail("Read only")
-                        .disabled(),
+                        .enabled(false),
                 ])
                 .selected(1)
                 .theme(theme),

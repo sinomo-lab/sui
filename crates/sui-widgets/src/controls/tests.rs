@@ -694,6 +694,55 @@ fn label_paints_text_and_exposes_text_semantics() {
 }
 
 #[test]
+fn a_label_theme_supplies_defaults_whatever_the_builder_order() {
+    let theme = DefaultTheme::dark();
+    let red = Color::rgba(0.9, 0.1, 0.1, 1.0);
+    // A color set before or after the theme survives it.
+    for label in [
+        Label::new("Before").color(red).font_size(21.0).theme(theme),
+        Label::new("Before").theme(theme).color(red).font_size(21.0),
+    ] {
+        let run = first_text_run(&render(label));
+        assert_eq!(run.style.color, red);
+        assert_eq!(run.style.font_size, 21.0);
+    }
+    // A text style set on the label wins over the theme in either order.
+    let own = TextStyle {
+        font_size: 11.0,
+        line_height: 15.0,
+        color: red,
+        ..TextStyle::default()
+    };
+    for label in [
+        Label::new("Own").text_style(own.clone()).theme(theme),
+        Label::new("Own").theme(theme).text_style(own.clone()),
+    ] {
+        assert_eq!(first_text_run(&render(label)).style.font_size, 11.0);
+    }
+    // Without either, the label takes the theme's body style.
+    let run = first_text_run(&render(Label::new("Themed").theme(theme)));
+    assert_eq!(run.style.color, theme.body_text_style().color);
+}
+
+#[test]
+fn a_label_follows_a_live_theme() -> Result<()> {
+    let theme = Rc::new(Cell::new(DefaultTheme::default()));
+    let reader = Rc::clone(&theme);
+    let (mut runtime, window_id) =
+        build_runtime(Label::new("Live").theme_when(move || reader.get()));
+    let light = first_text_run(&runtime.render(window_id)?).style.color;
+    theme.set(DefaultTheme::dark());
+    runtime.handle_event(
+        window_id,
+        Event::Window(WindowEvent::Resized(Size::new(320.0, 120.0))),
+    )?;
+    let dark = first_text_run(&runtime.render(window_id)?).style.color;
+    assert_eq!(light, DefaultTheme::default().body_text_style().color);
+    assert_eq!(dark, DefaultTheme::dark().body_text_style().color);
+    Ok(())
+}
+
+#[test]
 fn label_style_when_reads_current_style_for_layout_and_paint() -> Result<()> {
     let initial_color = Color::rgba(0.2, 0.4, 0.8, 1.0);
     let updated_color = Color::rgba(0.8, 0.3, 0.2, 1.0);
@@ -705,7 +754,7 @@ fn label_style_when_reads_current_style_for_layout_and_paint() -> Result<()> {
     }));
     let style_reader = Rc::clone(&style);
     let (mut runtime, window_id) = build_runtime(
-        Label::new("Reactive style").style_when(move || style_reader.borrow().clone()),
+        Label::new("Reactive style").text_style_when(move || style_reader.borrow().clone()),
     );
 
     let initial = runtime.render(window_id)?;
@@ -752,8 +801,8 @@ fn label_style_builders_follow_last_whole_style_and_property_precedence() {
     };
 
     let dynamic_wins = Label::new("Dynamic")
-        .style(static_style.clone())
-        .style_when({
+        .text_style(static_style.clone())
+        .text_style_when({
             let dynamic_style = dynamic_style.clone();
             move || dynamic_style.clone()
         })
@@ -763,18 +812,18 @@ fn label_style_builders_follow_last_whole_style_and_property_precedence() {
     assert_eq!(dynamic_wins.color, dynamic_color);
 
     let static_wins = Label::new("Static")
-        .style_when({
+        .text_style_when({
             let dynamic_style = dynamic_style.clone();
             move || dynamic_style.clone()
         })
-        .style(static_style.clone())
+        .text_style(static_style.clone())
         .resolved_style();
     assert_eq!(static_wins.font_size, 13.0);
     assert_eq!(static_wins.line_height, 18.0);
     assert_eq!(static_wins.color, static_color);
 
     let property_overrides = Label::new("Overrides")
-        .style_when(move || dynamic_style.clone())
+        .text_style_when(move || dynamic_style.clone())
         .font_size(21.0)
         .line_height(29.0)
         .color(override_color)
@@ -1243,7 +1292,7 @@ fn label_preserves_tall_measurement_in_compact_line_box() {
         SizedBox::new()
             .width(160.0)
             .height(48.0)
-            .with_child(Label::new("Body").style(style.clone())),
+            .with_child(Label::new("Body").text_style(style.clone())),
     );
     let text = text_run_for(&output, "Body");
     let layout = shaped_text_layout_for(&output, "Body");
@@ -2133,6 +2182,171 @@ fn button_press_changes_color_without_moving_content() -> Result<()> {
 }
 
 #[test]
+fn a_disabled_input_ignores_input_until_an_observable_enables_it() -> Result<()> {
+    let changes = Rc::new(Cell::new(0));
+    let on_change = Rc::clone(&changes);
+    let enabled = Signal::named("checkbox enabled", false);
+    let (mut runtime, window_id) = build_runtime(
+        Checkbox::new("Visible")
+            .enabled_from(enabled.clone())
+            .on_change(move |_| on_change.set(on_change.get() + 1)),
+    );
+    let checkbox = |output: &RenderOutput| {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::CheckBox)
+            .cloned()
+            .expect("checkbox semantics present")
+    };
+
+    let disabled = checkbox(&runtime.render(window_id)?);
+    assert!(disabled.state.disabled);
+    assert!(disabled.actions.is_empty());
+    click(&mut runtime, window_id, Point::new(12.0, 12.0))?;
+    assert_eq!(changes.get(), 0, "a disabled checkbox ignores clicks");
+
+    enabled.set(true);
+    let enabled_node = checkbox(&runtime.render(window_id)?);
+    assert!(!enabled_node.state.disabled);
+    click(&mut runtime, window_id, Point::new(12.0, 12.0))?;
+    assert_eq!(changes.get(), 1);
+    Ok(())
+}
+
+#[test]
+fn disabled_inputs_draw_their_text_in_the_disabled_ink() {
+    let theme = DefaultTheme::default();
+    for output in [
+        render(Checkbox::new("Visible").enabled(false)),
+        render(Switch::new("Wifi").enabled(false)),
+        render(RadioButton::new("Automatic").enabled(false)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            first_text_run(&output.1).style.color,
+            theme.palette.text_disabled,
+            "control {}",
+            output.0
+        );
+    }
+    let field = render(TextInput::new("Name").value("Ada").enabled(false));
+    assert!(
+        text_run_for(&field, "Ada").style.color == theme.palette.text_disabled
+            || draws_text_in(&field, theme.palette.text_disabled),
+        "a disabled field draws its text in the disabled ink"
+    );
+}
+
+/// Whether `output` draws any text in `color`, including retained layouts
+/// drawn with a color override.
+fn draws_text_in(output: &RenderOutput, color: Color) -> bool {
+    let mut found = false;
+    output.frame.scene.visit_commands(&mut |command| {
+        if format!("{command:?}").contains(&format!("{color:?}")) {
+            found = true;
+        }
+    });
+    found
+}
+
+#[test]
+fn a_disabled_text_field_cannot_take_focus() -> Result<()> {
+    let (mut runtime, window_id) = build_runtime(TextInput::new("Name").enabled(false));
+    let _ = runtime.render(window_id)?;
+    click(&mut runtime, window_id, Point::new(20.0, 16.0))?;
+    let output = runtime.render(window_id)?;
+    let field = output
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::TextInput)
+        .expect("text input semantics present");
+    assert!(field.state.disabled);
+    assert!(!field.state.focused);
+    assert!(field.actions.is_empty());
+    Ok(())
+}
+
+#[test]
+fn checked_from_follows_its_observable() -> Result<()> {
+    let checked = Signal::named("switch checked", false);
+    let (mut runtime, window_id) = build_runtime(Switch::new("Wifi").checked_from(checked.clone()));
+    let state = |output: &RenderOutput| {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Switch)
+            .and_then(|node| node.state.checked)
+    };
+    assert_eq!(
+        state(&runtime.render(window_id)?),
+        Some(sui_core::ToggleState::Unchecked)
+    );
+    checked.set(true);
+    assert_eq!(
+        state(&runtime.render(window_id)?),
+        Some(sui_core::ToggleState::Checked)
+    );
+    Ok(())
+}
+
+#[test]
+fn flags_take_a_bool() {
+    assert!(TextInput::new("Name").read_only(true).is_read_only());
+    assert!(
+        !TextInput::new("Name")
+            .read_only(true)
+            .read_only(false)
+            .is_read_only()
+    );
+    assert!(!PasswordInput::new("Secret").enabled(false).is_enabled());
+}
+
+#[test]
+fn two_state_inputs_report_changes_through_on_change_and_its_ctx_twin() -> Result<()> {
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let with_ctx = Rc::new(RefCell::new(Vec::new()));
+    let (on_change, on_change_ctx) = (Rc::clone(&changes), Rc::clone(&with_ctx));
+    let (mut runtime, window_id) = build_runtime(
+        Switch::new("Wifi")
+            .checked(true)
+            .on_change(move |checked| on_change.borrow_mut().push(checked))
+            .on_change_with_ctx(move |ctx, checked| {
+                ctx.request_paint();
+                on_change_ctx.borrow_mut().push(checked);
+            }),
+    );
+    let _ = runtime.render(window_id)?;
+    click(&mut runtime, window_id, Point::new(12.0, 12.0))?;
+    click(&mut runtime, window_id, Point::new(12.0, 12.0))?;
+    assert_eq!(*changes.borrow(), [false, true]);
+    assert_eq!(*with_ctx.borrow(), [false, true]);
+    Ok(())
+}
+
+#[test]
+#[allow(deprecated)]
+fn a_radio_button_reports_a_change_only_when_it_becomes_checked() -> Result<()> {
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let selects = Rc::new(RefCell::new(0));
+    let (on_change, on_select) = (Rc::clone(&changes), Rc::clone(&selects));
+    let (mut runtime, window_id) = build_runtime(
+        RadioButton::new("Automatic")
+            .on_change(move |checked| on_change.borrow_mut().push(checked))
+            .on_select(move || *on_select.borrow_mut() += 1),
+    );
+    let _ = runtime.render(window_id)?;
+    click(&mut runtime, window_id, Point::new(12.0, 12.0))?;
+    click(&mut runtime, window_id, Point::new(12.0, 12.0))?;
+    // Checked once; the deprecated on_select still fires on every activation.
+    assert_eq!(*changes.borrow(), [true]);
+    assert_eq!(*selects.borrow(), 2);
+    Ok(())
+}
+
+#[test]
 fn switch_thumb_animation_tracks_progress_and_completion() -> Result<()> {
     let theme = slow_toggle_theme();
     let toggle_time = theme.motion.toggle_duration();
@@ -2171,7 +2385,7 @@ fn switch_track_hover_and_press_use_theme_motion() -> Result<()> {
     let theme = DefaultTheme::default();
     let hover_time = hover_duration();
     let press_time = press_duration();
-    let (mut runtime, window_id) = build_runtime(Switch::new("Wifi").on(true));
+    let (mut runtime, window_id) = build_runtime(Switch::new("Wifi").checked(true));
 
     let _ = runtime.render(window_id)?;
     let point = Point::new(12.0, 12.0);
@@ -2892,7 +3106,7 @@ fn radio_button_hover_and_press_use_theme_motion() -> Result<()> {
     let theme = DefaultTheme::default();
     let hover_time = hover_duration();
     let press_time = press_duration();
-    let (mut runtime, window_id) = build_runtime(RadioButton::new("Manual").selected(true));
+    let (mut runtime, window_id) = build_runtime(RadioButton::new("Manual").checked(true));
 
     let _ = runtime.render(window_id)?;
     let point = Point::new(10.0, 10.0);
@@ -3066,7 +3280,7 @@ fn checkbox_toggles_and_updates_semantics() -> Result<()> {
     let states = Rc::new(RefCell::new(Vec::new()));
     let on_toggle = Rc::clone(&states);
     let (mut runtime, window_id) =
-        build_runtime(Checkbox::new("Subscribe").on_toggle(move |checked| {
+        build_runtime(Checkbox::new("Subscribe").on_change(move |checked| {
             on_toggle.borrow_mut().push(checked);
         }));
 
@@ -3354,7 +3568,7 @@ fn read_only_text_area_paints_selection_and_copies_it() -> Result<()> {
     let (mut runtime, window_id) = build_runtime(
         TextArea::new("Connection details")
             .value("node = local\naddress = 127.0.0.1:21353")
-            .read_only()
+            .read_only(true)
             .selectable(selection.clone())
             .copy_to_clipboard(true),
     );
@@ -3759,7 +3973,7 @@ fn text_input_read_only_uses_muted_text_and_blocks_mutation() -> Result<()> {
         TextInput::new("Name")
             .value("Locked")
             .min_height(52.0)
-            .read_only()
+            .read_only(true)
             .on_change(move |value| on_change.borrow_mut().push(value)),
     );
 
@@ -3915,8 +4129,11 @@ fn text_area_click_while_focused_restores_hidden_caret() -> Result<()> {
 #[test]
 fn text_area_read_only_exposes_readonly_semantics_and_blocks_mutation() -> Result<()> {
     let theme = DefaultTheme::default();
-    let (mut runtime, window_id) =
-        build_runtime(TextArea::new("Notes").value("Pinned\nNotes").read_only());
+    let (mut runtime, window_id) = build_runtime(
+        TextArea::new("Notes")
+            .value("Pinned\nNotes")
+            .read_only(true),
+    );
 
     let _ = runtime.render(window_id)?;
     runtime.handle_event(
@@ -4014,7 +4231,7 @@ fn text_area_read_only_value_preserves_tall_measurement_and_muted_text() {
         TextArea::new("Notes")
             .theme(theme)
             .value("Pinned notes")
-            .read_only()
+            .read_only(true)
             .min_width(260.0)
             .min_height(96.0),
     );
@@ -4650,7 +4867,7 @@ fn switch_thumb_follows_the_toggle_state_in_every_scheme() {
         DefaultTheme::neutral_dark(),
     ] {
         let on = Switch::new("Wifi")
-            .on(true)
+            .checked(true)
             .theme(theme)
             .resolved_visuals(false);
         assert_eq!(on.thumb_color, theme.palette.accent_text);
@@ -4676,7 +4893,7 @@ fn switch_on_state_can_use_emissive_indicator_role() {
         .with_hdr(Color::linear_display_p3(1.30, 0.48, 0.32, 1.0));
 
     let visuals = Switch::new("Wifi")
-        .on(true)
+        .checked(true)
         .theme(theme)
         .resolved_visuals(false);
     let indicator_style = visuals
@@ -4699,7 +4916,7 @@ fn switch_label_readability_preserved_when_hdr_mode_disabled() {
         .with_hdr(Color::linear_display_p3(1.34, 0.40, 0.30, 1.0));
 
     let visuals = Switch::new("Wifi")
-        .on(true)
+        .checked(true)
         .theme(theme)
         .resolved_visuals(true);
 
@@ -4722,16 +4939,17 @@ fn switch_constrained_hdr_does_not_overshoot_full_hdr_limits() {
     full.hdr.mode = HdrThemeMode::FullHdr;
 
     let constrained_visuals = Switch::new("Wifi")
-        .on(true)
+        .checked(true)
         .theme(constrained)
         .resolved_visuals(false);
     let full_visuals = Switch::new("Wifi")
-        .on(true)
+        .checked(true)
         .theme(full)
         .resolved_visuals(false);
-    let constrained_track =
-        solid_fill_colors(&render(Switch::new("Wifi").on(true).theme(constrained)));
-    let full_track = solid_fill_colors(&render(Switch::new("Wifi").on(true).theme(full)));
+    let constrained_track = solid_fill_colors(&render(
+        Switch::new("Wifi").checked(true).theme(constrained),
+    ));
+    let full_track = solid_fill_colors(&render(Switch::new("Wifi").checked(true).theme(full)));
 
     let constrained_peak = constrained_visuals
         .indicator_style
@@ -4966,7 +5184,7 @@ fn switch_toggles_and_reports_switch_semantics() -> Result<()> {
     let states = Rc::new(RefCell::new(Vec::new()));
     let on_toggle = Rc::clone(&states);
     let (mut runtime, window_id) =
-        build_runtime(Switch::new("Airplane mode").on_toggle(move |checked| {
+        build_runtime(Switch::new("Airplane mode").on_change(move |checked| {
             on_toggle.borrow_mut().push(checked);
         }));
 
@@ -6194,8 +6412,8 @@ fn switch_on_when_follows_external_state_and_toggles_it() -> Result<()> {
     let writer = Rc::clone(&on);
     let (mut runtime, window_id) = build_runtime(
         Switch::new("Hinting")
-            .on_when(move || reader.get())
-            .on_toggle(move |value| writer.set(value)),
+            .checked_when(move || reader.get())
+            .on_change(move |value| writer.set(value)),
     );
     let checked = |runtime: &mut Runtime| -> Result<Option<ToggleState>> {
         let output = runtime.render(window_id)?;

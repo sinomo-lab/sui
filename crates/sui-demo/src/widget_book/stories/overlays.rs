@@ -66,7 +66,7 @@ fn command_items() -> [MenuItem; 4] {
     [
         MenuItem::new("New tab").shortcut("Ctrl+T"),
         MenuItem::new("Duplicate").shortcut("Ctrl+D"),
-        MenuItem::new("Bake preview").disabled(),
+        MenuItem::new("Bake preview").enabled(false),
         MenuItem::new("Delete layer")
             .shortcut("Del")
             .separator_before()

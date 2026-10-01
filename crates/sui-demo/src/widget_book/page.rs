@@ -215,18 +215,18 @@ fn category_header(category: Category, theme: DefaultTheme) -> impl Widget {
                     .spacing(10.0)
                     .alignment(Alignment::Center)
                     .with_child(ColorDot::new(10.0, move || hue))
-                    .with_child(Label::new(category.title()).style(demo_text_style(
+                    .with_child(Label::new(category.title()).text_style(demo_text_style(
                         theme,
                         DemoTextRole::SectionTitle,
                         theme.palette.text,
                     )))
-                    .with_child(Label::new(count_label).style(demo_text_style(
+                    .with_child(Label::new(count_label).text_style(demo_text_style(
                         theme,
                         DemoTextRole::Metadata,
                         theme.palette.text_muted,
                     ))),
             )
-            .with_child(Label::new(category.summary()).style(demo_text_style(
+            .with_child(Label::new(category.summary()).text_style(demo_text_style(
                 theme,
                 DemoTextRole::Supporting,
                 theme.palette.text_muted,
@@ -247,12 +247,12 @@ pub(crate) fn story_block(story: &'static Story, theme: DefaultTheme) -> impl Wi
                     .gap(12.0)
                     .wrap(FlexWrap::Wrap)
                     .align_items(Alignment::Center)
-                    .with_child(Label::new(story.title).style(demo_text_style(
+                    .with_child(Label::new(story.title).text_style(demo_text_style(
                         theme,
                         DemoTextRole::Emphasis,
                         theme.palette.text,
                     )))
-                    .with_child(Label::new(story.api).style(demo_mono_text_style(
+                    .with_child(Label::new(story.api).text_style(demo_mono_text_style(
                         theme,
                         DemoTextRole::Metadata,
                         theme.palette.text_muted,
@@ -260,7 +260,7 @@ pub(crate) fn story_block(story: &'static Story, theme: DefaultTheme) -> impl Wi
             )
             .with_child(MaximumWidth::new(
                 TEXT_MAX_WIDTH,
-                Label::new(story.summary).style(demo_text_style(
+                Label::new(story.summary).text_style(demo_text_style(
                     theme,
                     DemoTextRole::Supporting,
                     theme.palette.text_muted,
@@ -277,7 +277,7 @@ fn section_stack(sections: Vec<Section>, theme: DefaultTheme) -> Stack {
         |stack, section| {
             let mut column = Stack::vertical().spacing(12.0).alignment(Alignment::Start);
             if let Some(caption) = section.caption {
-                column = column.with_child(Label::new(caption).style(demo_text_style(
+                column = column.with_child(Label::new(caption).text_style(demo_text_style(
                     theme,
                     DemoTextRole::CardTitle,
                     theme.palette.text,

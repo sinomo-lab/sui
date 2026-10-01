@@ -79,9 +79,16 @@ impl MenuItem {
         self
     }
 
-    pub fn disabled(mut self) -> Self {
-        self.enabled = false;
+    /// Whether the item can be chosen. Items are enabled unless set
+    /// otherwise.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
         self
+    }
+
+    #[deprecated(note = "use `enabled(false)`")]
+    pub fn disabled(self) -> Self {
+        self.enabled(false)
     }
 
     pub fn destructive(mut self) -> Self {
@@ -911,9 +918,16 @@ impl ToolPaletteItem {
         }
     }
 
-    pub fn disabled(mut self) -> Self {
-        self.enabled = false;
+    /// Whether the item can be chosen. Items are enabled unless set
+    /// otherwise.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
         self
+    }
+
+    #[deprecated(note = "use `enabled(false)`")]
+    pub fn disabled(self) -> Self {
+        self.enabled(false)
     }
 
     pub fn label(&self) -> &str {
@@ -1011,8 +1025,11 @@ impl ToolPalette {
         self
     }
 
-    pub fn selected(mut self, selected: usize) -> Self {
-        self.selected = Some(selected);
+    /// Select item `index`, or nothing with `None`; `selected(2)` and
+    /// `selected(None)` both work.
+    pub fn selected(mut self, selected: impl Into<Option<usize>>) -> Self {
+        let selected = selected.into();
+        self.selected = selected;
         self.selected_reader = None;
         self
     }

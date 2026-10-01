@@ -169,7 +169,7 @@ fn header(state: MotionDemoState, theme_reader: DevThemeReader) -> impl Widget {
                         .position(|(preference, _)| *preference == current)
                 })
                 .theme_when(clone_dev_theme_reader(&theme_reader))
-                .on_change_with_ctx(|index, _, ctx| {
+                .on_change_with_ctx(|ctx, index, _| {
                     set_app_motion_preference(PREFERENCE_CHOICES[index].0);
                     refresh_page(ctx);
                 }),
@@ -181,23 +181,23 @@ fn header(state: MotionDemoState, theme_reader: DevThemeReader) -> impl Widget {
                 .segments(SPEED_CHOICES.map(|(_, label)| label))
                 .selected_when(|| Some(speed_index(motion_time_scale())))
                 .theme_when(clone_dev_theme_reader(&theme_reader))
-                .on_change_with_ctx(|index, _, ctx| {
+                .on_change_with_ctx(|ctx, index, _| {
                     set_motion_time_scale(SPEED_CHOICES[index].0);
                     refresh_page(ctx);
                 }),
         ))
         .with_child(
             Switch::new(SHOW_TRACES_LABEL)
-                .on(true)
+                .checked(true)
                 .theme_when(clone_dev_theme_reader(&theme_reader))
-                .on_toggle(move |on| traces_state.set_show_traces(on)),
+                .on_change(move |on| traces_state.set_show_traces(on)),
         );
 
     Stack::vertical()
         .spacing(8.0)
         .alignment(Alignment::Stretch)
         .with_child(
-            Label::new(ANIMATION_DEMO_TITLE).style_when(demo_text_style_when(
+            Label::new(ANIMATION_DEMO_TITLE).text_style_when(demo_text_style_when(
                 &theme_reader,
                 DemoTextRole::PageTitle,
                 |theme| theme.palette.text,
@@ -207,7 +207,7 @@ fn header(state: MotionDemoState, theme_reader: DevThemeReader) -> impl Widget {
             Label::new(
                 "Curves, springs, and timelines, and how SUI keeps them smooth, interruptible, and respectful of reduced motion.",
             )
-            .style_when(demo_text_style_when(
+            .text_style_when(demo_text_style_when(
                 &theme_reader,
                 DemoTextRole::Supporting,
                 |theme| theme.palette.text_muted,
@@ -217,7 +217,7 @@ fn header(state: MotionDemoState, theme_reader: DevThemeReader) -> impl Widget {
         .with_child(controls)
         .with_child(NamedSection::new(
             MOTION_STATUS_NAME,
-            Label::dynamic(policy_summary(), policy_summary).style_when(demo_text_style_when(
+            Label::dynamic(policy_summary(), policy_summary).text_style_when(demo_text_style_when(
                 &theme_reader,
                 DemoTextRole::Metadata,
                 |theme| theme.palette.text_muted,
@@ -268,7 +268,7 @@ where
     Stack::vertical()
         .spacing(6.0)
         .alignment(Alignment::Start)
-        .with_child(Label::new(label).style_when(demo_text_style_when(
+        .with_child(Label::new(label).text_style_when(demo_text_style_when(
             theme_reader,
             DemoTextRole::Metadata,
             |theme| theme.palette.text_muted,
@@ -291,12 +291,12 @@ where
         Stack::vertical()
             .spacing(8.0)
             .alignment(Alignment::Stretch)
-            .with_child(Label::new(title).style_when(demo_text_style_when(
+            .with_child(Label::new(title).text_style_when(demo_text_style_when(
                 theme_reader,
                 DemoTextRole::SectionTitle,
                 |theme| theme.palette.text,
             )))
-            .with_child(Label::new(summary).style_when(demo_text_style_when(
+            .with_child(Label::new(summary).text_style_when(demo_text_style_when(
                 theme_reader,
                 DemoTextRole::Supporting,
                 |theme| theme.palette.text_muted,

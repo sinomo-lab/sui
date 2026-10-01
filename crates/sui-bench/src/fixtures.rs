@@ -202,7 +202,11 @@ fn controls_grid(labels: &[Signal<String>], style: &TextStyle) -> Grid {
         grid.push(
             Stack::horizontal()
                 .spacing(4.0)
-                .with_child(Label::new("").text_from(text.clone()).style(style.clone()))
+                .with_child(
+                    Label::new("")
+                        .text_from(text.clone())
+                        .text_style(style.clone()),
+                )
                 .with_child(Button::new(format!("Action {i}"))),
         );
     }
@@ -254,8 +258,11 @@ pub fn build(config: &Config, input: Input) -> Result<(AppBuilder, Fixture), Str
         "nested-flex" => {
             let mut leaf = Flex::vertical().gap(2.0);
             for value in &labels {
-                leaf =
-                    leaf.with_child(Label::new("").text_from(value.clone()).style(style.clone()));
+                leaf = leaf.with_child(
+                    Label::new("")
+                        .text_from(value.clone())
+                        .text_style(style.clone()),
+                );
             }
             let mut child = boxed(leaf);
             for depth in 0..config.depth {
@@ -271,7 +278,11 @@ pub fn build(config: &Config, input: Input) -> Result<(AppBuilder, Fixture), Str
         "scrollbar-thresholds" => {
             let mut stack = Stack::vertical().spacing(1.0);
             for text in &labels {
-                stack.push(Label::new("").text_from(text.clone()).style(style.clone()));
+                stack.push(
+                    Label::new("")
+                        .text_from(text.clone())
+                        .text_style(style.clone()),
+                );
             }
             boxed(ScrollView::both(
                 SizedBox::new().width(config.width - 8.0).with_child(stack),
@@ -281,7 +292,7 @@ pub fn build(config: &Config, input: Input) -> Result<(AppBuilder, Fixture), Str
             VirtualList::new("Benchmark rows", collection.clone(), {
                 let style = style.clone();
                 move |_: &u64, value: Signal<String>| {
-                    Label::new("").text_from(value).style(style.clone())
+                    Label::new("").text_from(value).text_style(style.clone())
                 }
             })
             .estimated_row_height(24.0)

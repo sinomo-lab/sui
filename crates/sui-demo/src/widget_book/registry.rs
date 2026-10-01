@@ -152,7 +152,7 @@ impl StoryCtx {
     }
 
     pub(crate) fn text(&self, text: impl Into<String>) -> Label {
-        Label::new(text).style(demo_text_style(
+        Label::new(text).text_style(demo_text_style(
             self.theme,
             DemoTextRole::Body,
             self.theme.palette.text,
@@ -160,7 +160,7 @@ impl StoryCtx {
     }
 
     pub(crate) fn muted(&self, text: impl Into<String>) -> Label {
-        Label::new(text).style(demo_text_style(
+        Label::new(text).text_style(demo_text_style(
             self.theme,
             DemoTextRole::Supporting,
             self.theme.palette.text_muted,
@@ -168,11 +168,11 @@ impl StoryCtx {
     }
 
     pub(crate) fn styled(&self, text: impl Into<String>, role: DemoTextRole) -> Label {
-        Label::new(text).style(demo_text_style(self.theme, role, self.theme.palette.text))
+        Label::new(text).text_style(demo_text_style(self.theme, role, self.theme.palette.text))
     }
 
     pub(crate) fn mono(&self, text: impl Into<String>) -> Label {
-        Label::new(text).style(demo_mono_text_style(
+        Label::new(text).text_style(demo_mono_text_style(
             self.theme,
             DemoTextRole::Supporting,
             self.theme.palette.text,
