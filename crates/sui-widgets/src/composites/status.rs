@@ -291,6 +291,7 @@ pub struct PresetStrip {
     pub(super) label_measurements: Vec<TextMeasurement>,
     pub(super) item_widths: Vec<f32>,
     pub(super) on_change: Option<Box<dyn FnMut(usize, String)>>,
+    pub(super) on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
 }
 
 impl PresetStrip {
@@ -316,6 +317,7 @@ impl PresetStrip {
             label_measurements: Vec::new(),
             item_widths: Vec::new(),
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -429,6 +431,15 @@ impl PresetStrip {
         self
     }
 
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
     pub fn selected_index(&self) -> Option<usize> {
         self.current_selected()
     }
@@ -485,7 +496,7 @@ impl PresetStrip {
         })
     }
 
-    pub(super) fn activate(&mut self, index: usize) {
+    pub(super) fn activate(&mut self, ctx: &mut EventCtx, index: usize) {
         if self.presets.is_empty() {
             return;
         }
@@ -495,9 +506,12 @@ impl PresetStrip {
         if let Some(on_change) = &mut self.on_change {
             on_change(index, self.presets[index].clone());
         }
+        if let Some(on_change) = &mut self.on_change_with_ctx {
+            on_change(ctx, index, self.presets[index].clone());
+        }
     }
 
-    pub(super) fn move_selection(&mut self, delta: isize) {
+    pub(super) fn move_selection(&mut self, ctx: &mut EventCtx, delta: isize) {
         if self.presets.is_empty() {
             return;
         }
@@ -506,7 +520,7 @@ impl PresetStrip {
         let last = self.presets.len() as isize - 1;
         let next = (current + delta).clamp(0, last) as usize;
         self.hovered = Some(next);
-        self.activate(next);
+        self.activate(ctx, next);
     }
 
     pub(super) fn selected_text(&self) -> Option<String> {
@@ -608,7 +622,7 @@ impl Widget for PresetStrip {
                     .filter(|(left, right)| left == right)
                     .map(|(index, _)| index)
                 {
-                    self.activate(index);
+                    self.activate(ctx, index);
                 }
                 self.set_hovered(hovered, ctx);
                 self.set_pressed(None, ctx);
@@ -625,13 +639,13 @@ impl Widget for PresetStrip {
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
-                    "ArrowLeft" | "ArrowUp" => self.move_selection(-1),
-                    "ArrowRight" | "ArrowDown" => self.move_selection(1),
-                    "Home" => self.activate(0),
-                    "End" if !self.presets.is_empty() => self.activate(self.presets.len() - 1),
+                    "ArrowLeft" | "ArrowUp" => self.move_selection(ctx, -1),
+                    "ArrowRight" | "ArrowDown" => self.move_selection(ctx, 1),
+                    "Home" => self.activate(ctx, 0),
+                    "End" if !self.presets.is_empty() => self.activate(ctx, self.presets.len() - 1),
                     "Enter" | " " => {
                         if let Some(selected) = self.current_selected().or(Some(0)) {
-                            self.activate(selected);
+                            self.activate(ctx, selected);
                         }
                     }
                     _ => return,

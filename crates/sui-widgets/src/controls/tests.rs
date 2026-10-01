@@ -6187,6 +6187,79 @@ fn text_area_without_on_submit_inserts_newline_on_enter() -> Result<()> {
 }
 
 #[test]
+fn text_area_submits_with_only_the_ctx_callback() -> Result<()> {
+    let submits = Rc::new(RefCell::new(Vec::new()));
+    let on_submit = Rc::clone(&submits);
+    let (mut runtime, window_id) = build_runtime(
+        TextArea::new("Composer")
+            .value("hi")
+            .on_submit_with_ctx(move |_ctx, text| on_submit.borrow_mut().push(text.to_string())),
+    );
+    let _ = runtime.render(window_id)?;
+    runtime.handle_event(
+        window_id,
+        primary_pointer(PointerEventKind::Down, Point::new(18.0, 18.0), true),
+    )?;
+    runtime.handle_event(
+        window_id,
+        Event::Keyboard(KeyboardEvent::new("Enter", KeyState::Pressed)),
+    )?;
+    assert_eq!(submits.borrow().as_slice(), &["hi".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn text_inputs_submit_on_enter_and_report_focus() -> Result<()> {
+    let submits = Rc::new(RefCell::new(Vec::new()));
+    let focus = Rc::new(RefCell::new(Vec::new()));
+    let (on_submit, on_submit_with_ctx) = (Rc::clone(&submits), Rc::clone(&submits));
+    let (on_focus, on_focus_with_ctx) = (Rc::clone(&focus), Rc::clone(&focus));
+    let (mut runtime, window_id) = build_runtime(
+        Stack::vertical()
+            .with_child(
+                TextInput::new("Search")
+                    .value("query")
+                    .on_submit(move |text| on_submit.borrow_mut().push(format!("plain {text}"))),
+            )
+            .with_child(
+                PasswordInput::new("Password")
+                    .value("secret")
+                    .on_submit_with_ctx(move |_ctx, text| {
+                        on_submit_with_ctx.borrow_mut().push(format!("ctx {text}"))
+                    })
+                    .on_focus_change(move |focused| on_focus.borrow_mut().push(focused))
+                    .on_focus_change_with_ctx(move |_ctx, focused| {
+                        on_focus_with_ctx.borrow_mut().push(focused)
+                    }),
+            ),
+    );
+    let output = runtime.render(window_id)?;
+    let center = |name: &str| {
+        let node = output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name} has semantics"));
+        super::rect_center(node.bounds)
+    };
+    let (search, password) = (center("Search"), center("Password"));
+    let enter = || Event::Keyboard(KeyboardEvent::new("Enter", KeyState::Pressed));
+
+    click(&mut runtime, window_id, search)?;
+    runtime.handle_event(window_id, enter())?;
+    click(&mut runtime, window_id, password)?;
+    runtime.handle_event(window_id, enter())?;
+    click(&mut runtime, window_id, search)?;
+
+    assert_eq!(
+        submits.borrow().as_slice(),
+        &["plain query".to_string(), "ctx secret".to_string()]
+    );
+    assert_eq!(focus.borrow().as_slice(), &[true, true, false, false]);
+    Ok(())
+}
+
+#[test]
 fn text_area_uses_shared_editor_commands_and_semantics() -> Result<()> {
     let changes = Rc::new(RefCell::new(Vec::new()));
     let on_change = Rc::clone(&changes);

@@ -1443,6 +1443,7 @@ pub struct Popover {
     pub(super) open: bool,
     pub(super) open_reader: Option<Box<dyn Fn() -> bool>>,
     pub(super) on_open_change: Option<Box<dyn FnMut(bool)>>,
+    pub(super) on_open_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, bool)>>,
     pub(super) alignment: PopoverAlignment,
     pub(super) gap: f32,
     pub(super) arrival_timer: Option<TimerToken>,
@@ -1464,6 +1465,7 @@ impl Popover {
             open: false,
             open_reader: None,
             on_open_change: None,
+            on_open_change_with_ctx: None,
             alignment: PopoverAlignment::Start,
             gap: DefaultTheme::default().metrics.popover_gap,
             arrival_timer: None,
@@ -1500,6 +1502,15 @@ impl Popover {
         F: FnMut(bool) + 'static,
     {
         self.on_open_change = Some(Box::new(on_open_change));
+        self
+    }
+
+    /// [`Self::on_open_change`], with the event context first.
+    pub fn on_open_change_with_ctx<F>(mut self, on_open_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, bool) + 'static,
+    {
+        self.on_open_change_with_ctx = Some(Box::new(on_open_change));
         self
     }
 
@@ -1595,6 +1606,9 @@ impl Popover {
         self.open = open;
         if let Some(on_open_change) = &mut self.on_open_change {
             on_open_change(open);
+        }
+        if let Some(on_open_change) = &mut self.on_open_change_with_ctx {
+            on_open_change(ctx, open);
         }
         let surface_id = self.surface.child().id();
         let focus_surface_id = self.focus_surface.child().id();

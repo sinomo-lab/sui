@@ -1348,20 +1348,39 @@ impl LayerList {
         self
     }
 
-    pub fn on_select<F>(mut self, on_select: F) -> Self
+    /// Call `on_change` with the index and label of the layer the user
+    /// selects.
+    pub fn on_change<F>(mut self, on_change: F) -> Self
     where
         F: FnMut(usize, String) + 'static,
     {
-        self.on_select = Some(Box::new(on_select));
+        self.on_select = Some(Box::new(on_change));
         self
     }
 
-    pub fn on_select_with_ctx<F>(mut self, on_select: F) -> Self
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
     where
         F: FnMut(&mut EventCtx, usize, String) + 'static,
     {
-        self.on_select_with_ctx = Some(Box::new(on_select));
+        self.on_select_with_ctx = Some(Box::new(on_change));
         self
+    }
+
+    #[deprecated(note = "use `on_change`")]
+    pub fn on_select<F>(self, on_select: F) -> Self
+    where
+        F: FnMut(usize, String) + 'static,
+    {
+        self.on_change(on_select)
+    }
+
+    #[deprecated(note = "use `on_change_with_ctx`")]
+    pub fn on_select_with_ctx<F>(self, on_select: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
+    {
+        self.on_change_with_ctx(on_select)
     }
 
     pub fn on_visibility_change<F>(mut self, on_visibility_change: F) -> Self
@@ -2383,6 +2402,7 @@ pub struct TreeView {
     row_offsets: Vec<f32>,
     content_height: f32,
     on_change: Option<Box<dyn FnMut(Vec<usize>, String)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, Vec<usize>, String)>>,
 }
 
 impl TreeView {
@@ -2408,6 +2428,7 @@ impl TreeView {
             row_offsets: Vec::new(),
             content_height: 0.0,
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -2514,6 +2535,15 @@ impl TreeView {
         F: FnMut(Vec<usize>, String) + 'static,
     {
         self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, Vec<usize>, String) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -2627,7 +2657,7 @@ impl TreeView {
             .is_some_and(|item| item.content.is_some() && item.activate_with_content)
     }
 
-    fn select_path(&mut self, path: &[usize]) {
+    fn select_path(&mut self, ctx: &mut EventCtx, path: &[usize]) {
         let Some(item) = tree_item(&self.items, path) else {
             return;
         };
@@ -2637,6 +2667,9 @@ impl TreeView {
         self.selected = Some(path.to_vec());
         if let Some(on_change) = &mut self.on_change {
             on_change(path.to_vec(), item.label.clone());
+        }
+        if let Some(on_change) = &mut self.on_change_with_ctx {
+            on_change(ctx, path.to_vec(), item.label.clone());
         }
     }
 
@@ -2780,7 +2813,7 @@ impl Widget for TreeView {
                             ctx.request_measure();
                         }
                     } else {
-                        self.select_path(&row.path);
+                        self.select_path(ctx, &row.path);
                     }
                 }
                 self.set_hovered(hovered_row.map(|row| row.path), ctx);
@@ -2814,12 +2847,12 @@ impl Widget for TreeView {
                 match key.key.as_str() {
                     "ArrowUp" => {
                         let next = current.saturating_sub(1);
-                        self.select_path(&rows[next].path);
+                        self.select_path(ctx, &rows[next].path);
                         self.ensure_visible(viewport.height(), &rows[next].path);
                     }
                     "ArrowDown" => {
                         let next = (current + 1).min(rows.len() - 1);
-                        self.select_path(&rows[next].path);
+                        self.select_path(ctx, &rows[next].path);
                         self.ensure_visible(viewport.height(), &rows[next].path);
                     }
                     "ArrowRight" => {
@@ -2831,7 +2864,7 @@ impl Widget for TreeView {
                         } else if row.has_children {
                             let mut child = row.path.clone();
                             child.push(0);
-                            self.select_path(&child);
+                            self.select_path(ctx, &child);
                             self.ensure_visible(viewport.height(), &child);
                         }
                     }
@@ -2844,17 +2877,17 @@ impl Widget for TreeView {
                         } else if !row.path.is_empty() {
                             let mut parent = row.path.clone();
                             parent.pop();
-                            self.select_path(&parent);
+                            self.select_path(ctx, &parent);
                             self.ensure_visible(viewport.height(), &parent);
                         }
                     }
                     "Home" => {
-                        self.select_path(&rows[0].path);
+                        self.select_path(ctx, &rows[0].path);
                         self.ensure_visible(viewport.height(), &rows[0].path);
                     }
                     "End" => {
                         let last = rows.len() - 1;
-                        self.select_path(&rows[last].path);
+                        self.select_path(ctx, &rows[last].path);
                         self.ensure_visible(viewport.height(), &rows[last].path);
                     }
                     _ => return,
@@ -2900,7 +2933,7 @@ impl Widget for TreeView {
                 match semantics.action {
                     sui_core::SemanticsActionRequest::Activate
                     | sui_core::SemanticsActionRequest::Focus => {
-                        self.select_path(&row.path);
+                        self.select_path(ctx, &row.path);
                         self.ensure_visible(viewport.height(), &row.path);
                         ctx.request_focus();
                         ctx.request_arrange();
@@ -3401,6 +3434,7 @@ pub struct Table {
     scroll_y: f32,
     column_widths: Vec<f32>,
     on_change: Option<Box<dyn FnMut(usize)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize)>>,
 }
 
 impl Table {
@@ -3425,6 +3459,7 @@ impl Table {
             scroll_y: 0.0,
             column_widths: Vec::new(),
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -3540,6 +3575,15 @@ impl Table {
         F: FnMut(usize) + 'static,
     {
         self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -3661,13 +3705,16 @@ impl Table {
         }
     }
 
-    fn activate(&mut self, index: usize) {
+    fn activate(&mut self, ctx: &mut EventCtx, index: usize) {
         if index >= self.rows.len() {
             return;
         }
         self.selected = Some(index);
         if let Some(on_change) = &mut self.on_change {
             on_change(index);
+        }
+        if let Some(on_change) = &mut self.on_change_with_ctx {
+            on_change(ctx, index);
         }
     }
 
@@ -3753,7 +3800,7 @@ impl Widget for Table {
                     .filter(|(pressed, hovered)| pressed == hovered)
                     .map(|(index, _)| index)
                 {
-                    self.activate(index);
+                    self.activate(ctx, index);
                 }
                 self.set_hovered(hovered, ctx);
                 self.set_pressed(None, ctx);
@@ -3778,10 +3825,10 @@ impl Widget for Table {
 
                 let current = self.current_selected().unwrap_or(0);
                 match key.key.as_str() {
-                    "ArrowUp" => self.activate(current.saturating_sub(1)),
-                    "ArrowDown" => self.activate((current + 1).min(self.rows.len() - 1)),
-                    "Home" => self.activate(0),
-                    "End" => self.activate(self.rows.len() - 1),
+                    "ArrowUp" => self.activate(ctx, current.saturating_sub(1)),
+                    "ArrowDown" => self.activate(ctx, (current + 1).min(self.rows.len() - 1)),
+                    "Home" => self.activate(ctx, 0),
+                    "End" => self.activate(ctx, self.rows.len() - 1),
                     _ => return,
                 }
                 ctx.request_paint();
@@ -4193,6 +4240,8 @@ type VirtualTableRowName = Box<dyn Fn(usize) -> String>;
 type VirtualTableRowDescription = Box<dyn Fn(usize) -> String>;
 type VirtualTableCellActivation =
     Box<dyn FnMut(usize, usize, VirtualTableRowActivationKind) -> bool>;
+type VirtualTableCellActivationWithCtx =
+    Box<dyn FnMut(&mut EventCtx, usize, usize, VirtualTableRowActivationKind) -> bool>;
 
 #[derive(Clone, Copy)]
 struct VirtualTableColumnResize {
@@ -4229,11 +4278,19 @@ pub struct VirtualTable {
     row_painter: Option<VirtualTableRowPainter>,
     row_name: Option<VirtualTableRowName>,
     row_description: Option<VirtualTableRowDescription>,
+    on_change: Option<Box<dyn FnMut(usize)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize)>>,
     on_row_activate: Option<Box<dyn FnMut(usize, VirtualTableRowActivationKind)>>,
+    on_row_activate_with_ctx:
+        Option<Box<dyn FnMut(&mut EventCtx, usize, VirtualTableRowActivationKind)>>,
     on_cell_activate: Option<VirtualTableCellActivation>,
+    on_cell_activate_with_ctx: Option<VirtualTableCellActivationWithCtx>,
     on_header_activate: Option<Box<dyn FnMut(usize)>>,
+    on_header_activate_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize)>>,
     on_column_resize: Option<Box<dyn FnMut(usize, f32)>>,
+    on_column_resize_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, f32)>>,
     on_near_end: Option<Box<dyn FnMut()>>,
+    on_near_end_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
     last_click: Option<(usize, Instant)>,
     column_resize: Option<VirtualTableColumnResize>,
 }
@@ -4269,11 +4326,18 @@ impl VirtualTable {
             row_painter: None,
             row_name: None,
             row_description: None,
+            on_change: None,
+            on_change_with_ctx: None,
             on_row_activate: None,
+            on_row_activate_with_ctx: None,
             on_cell_activate: None,
+            on_cell_activate_with_ctx: None,
             on_header_activate: None,
+            on_header_activate_with_ctx: None,
             on_column_resize: None,
+            on_column_resize_with_ctx: None,
             on_near_end: None,
+            on_near_end_with_ctx: None,
             last_click: None,
             column_resize: None,
         }
@@ -4401,11 +4465,39 @@ impl VirtualTable {
         self
     }
 
+    /// Call `on_change` with the row the user selects, by clicking it or
+    /// moving to it with the keyboard.
+    pub fn on_change<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(usize) + 'static,
+    {
+        self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
     pub fn on_row_activate<F>(mut self, on_activate: F) -> Self
     where
         F: FnMut(usize, VirtualTableRowActivationKind) + 'static,
     {
         self.on_row_activate = Some(Box::new(on_activate));
+        self
+    }
+
+    /// [`Self::on_row_activate`], with the event context first.
+    pub fn on_row_activate_with_ctx<F>(mut self, on_activate: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, VirtualTableRowActivationKind) + 'static,
+    {
+        self.on_row_activate_with_ctx = Some(Box::new(on_activate));
         self
     }
 
@@ -4417,11 +4509,29 @@ impl VirtualTable {
         self
     }
 
+    /// [`Self::on_cell_activate`], with the event context first.
+    pub fn on_cell_activate_with_ctx<F>(mut self, on_activate: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, usize, VirtualTableRowActivationKind) -> bool + 'static,
+    {
+        self.on_cell_activate_with_ctx = Some(Box::new(on_activate));
+        self
+    }
+
     pub fn on_header_activate<F>(mut self, on_activate: F) -> Self
     where
         F: FnMut(usize) + 'static,
     {
         self.on_header_activate = Some(Box::new(on_activate));
+        self
+    }
+
+    /// [`Self::on_header_activate`], with the event context first.
+    pub fn on_header_activate_with_ctx<F>(mut self, on_activate: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize) + 'static,
+    {
+        self.on_header_activate_with_ctx = Some(Box::new(on_activate));
         self
     }
 
@@ -4433,11 +4543,29 @@ impl VirtualTable {
         self
     }
 
+    /// [`Self::on_column_resize`], with the event context first.
+    pub fn on_column_resize_with_ctx<F>(mut self, on_resize: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, f32) + 'static,
+    {
+        self.on_column_resize_with_ctx = Some(Box::new(on_resize));
+        self
+    }
+
     pub fn on_near_end<F>(mut self, on_near_end: F) -> Self
     where
         F: FnMut() + 'static,
     {
         self.on_near_end = Some(Box::new(on_near_end));
+        self
+    }
+
+    /// [`Self::on_near_end`], with the event context first.
+    pub fn on_near_end_with_ctx<F>(mut self, on_near_end: F) -> Self
+    where
+        F: FnMut(&mut EventCtx) + 'static,
+    {
+        self.on_near_end_with_ctx = Some(Box::new(on_near_end));
         self
     }
 
@@ -4890,7 +5018,12 @@ impl VirtualTable {
         None
     }
 
-    fn resize_column(&mut self, resize: VirtualTableColumnResize, position_x: f32) -> bool {
+    fn resize_column(
+        &mut self,
+        ctx: &mut EventCtx,
+        resize: VirtualTableColumnResize,
+        position_x: f32,
+    ) -> bool {
         let Some(column) = self.columns.get_mut(resize.column_index) else {
             return false;
         };
@@ -4910,35 +5043,61 @@ impl VirtualTable {
         if let Some(on_resize) = &mut self.on_column_resize {
             on_resize(resize.column_index, width);
         }
+        if let Some(on_resize) = &mut self.on_column_resize_with_ctx {
+            on_resize(ctx, resize.column_index, width);
+        }
         true
     }
 
-    fn activate_row(&mut self, row_index: usize, column_index: Option<usize>) {
+    fn activate_row(&mut self, ctx: &mut EventCtx, row_index: usize, column_index: Option<usize>) {
         if row_index >= self.row_count {
             return;
         }
+        let changed = self.selected != Some(row_index);
         self.selected = Some(row_index);
         if let Some(state) = &self.state {
             let _ = state.select_key(Some(self.resolved_row_key(row_index)));
         }
+        if changed {
+            if let Some(on_change) = &mut self.on_change {
+                on_change(row_index);
+            }
+            if let Some(on_change) = &mut self.on_change_with_ctx {
+                on_change(ctx, row_index);
+            }
+        }
         let kind = self.row_activation_kind(row_index);
-        if let Some(column_index) = column_index
-            && let Some(on_activate) = &mut self.on_cell_activate
-            && on_activate(row_index, column_index, kind)
-        {
-            return;
+        if let Some(column_index) = column_index {
+            // A cell handler that returns true has handled the activation.
+            if let Some(on_activate) = &mut self.on_cell_activate
+                && on_activate(row_index, column_index, kind)
+            {
+                return;
+            }
+            if let Some(on_activate) = &mut self.on_cell_activate_with_ctx
+                && on_activate(ctx, row_index, column_index, kind)
+            {
+                return;
+            }
         }
         if let Some(on_activate) = &mut self.on_row_activate {
             on_activate(row_index, kind);
         }
+        if let Some(on_activate) = &mut self.on_row_activate_with_ctx {
+            on_activate(ctx, row_index, kind);
+        }
     }
 
-    fn maybe_notify_near_end(&mut self, viewport_height: f32) {
+    fn maybe_notify_near_end(&mut self, ctx: &mut EventCtx, viewport_height: f32) {
         let remaining = (self.content_height() - viewport_height - self.scroll_y).max(0.0);
-        if remaining <= self.resolved_row_height() * 12.0
-            && let Some(on_near_end) = &mut self.on_near_end
-        {
+        if remaining > self.resolved_row_height() * 12.0 {
+            return;
+        }
+        if let Some(on_near_end) = &mut self.on_near_end {
             on_near_end();
+        }
+        if let Some(on_near_end) = &mut self.on_near_end_with_ctx {
+            on_near_end(ctx);
         }
     }
 }
@@ -4964,7 +5123,7 @@ impl Widget for VirtualTable {
                         .is_some_and(|resize| resize.pointer_id == pointer.pointer_id) =>
             {
                 let resize = self.column_resize.expect("checked resize gesture");
-                if self.resize_column(resize, pointer.position.x) {
+                if self.resize_column(ctx, resize, pointer.position.x) {
                     ctx.request_measure();
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -4995,7 +5154,7 @@ impl Widget for VirtualTable {
                     self.scroll_x = next_x;
                     self.sync_retained_offset();
                     self.publish_retained_viewport(body);
-                    self.maybe_notify_near_end(body.height());
+                    self.maybe_notify_near_end(ctx, body.height());
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
@@ -5060,6 +5219,9 @@ impl Widget for VirtualTable {
                     if let Some(on_activate) = &mut self.on_header_activate {
                         on_activate(index);
                     }
+                    if let Some(on_activate) = &mut self.on_header_activate_with_ctx {
+                        on_activate(ctx, index);
+                    }
                 } else {
                     let hovered = self.row_at_position(bounds, pointer.position);
                     if let Some(index) = self
@@ -5069,7 +5231,7 @@ impl Widget for VirtualTable {
                         .map(|(index, _)| index)
                     {
                         let column = self.body_column_at_position(bounds, pointer.position);
-                        self.activate_row(index, column);
+                        self.activate_row(ctx, index, column);
                     }
                     self.hovered_row = hovered;
                 }
@@ -5108,21 +5270,21 @@ impl Widget for VirtualTable {
                 match key.key.as_str() {
                     "ArrowUp" => {
                         let next = current.saturating_sub(1);
-                        self.activate_row(next, None);
+                        self.activate_row(ctx, next, None);
                         self.ensure_row_visible(body.height(), next);
                     }
                     "ArrowDown" => {
                         let next = (current + 1).min(self.row_count - 1);
-                        self.activate_row(next, None);
+                        self.activate_row(ctx, next, None);
                         self.ensure_row_visible(body.height(), next);
                     }
                     "Home" => {
-                        self.activate_row(0, None);
+                        self.activate_row(ctx, 0, None);
                         self.ensure_row_visible(body.height(), 0);
                     }
                     "End" => {
                         let last = self.row_count - 1;
-                        self.activate_row(last, None);
+                        self.activate_row(ctx, last, None);
                         self.ensure_row_visible(body.height(), last);
                     }
                     "PageUp" => {
@@ -5474,6 +5636,7 @@ pub struct Breadcrumb {
     drag_anchor: Option<(Point, f32)>,
     drag_moved: bool,
     on_activate: Option<Box<dyn FnMut(usize, String)>>,
+    on_activate_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
 }
 
 impl Breadcrumb {
@@ -5499,6 +5662,7 @@ impl Breadcrumb {
             drag_anchor: None,
             drag_moved: false,
             on_activate: None,
+            on_activate_with_ctx: None,
         }
     }
 
@@ -5560,6 +5724,15 @@ impl Breadcrumb {
         self
     }
 
+    /// [`Self::on_activate`], with the event context first.
+    pub fn on_activate_with_ctx<F>(mut self, on_activate: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
+    {
+        self.on_activate_with_ctx = Some(Box::new(on_activate));
+        self
+    }
+
     fn normalized_current(&self) -> usize {
         let current = self
             .current_reader
@@ -5587,7 +5760,7 @@ impl Breadcrumb {
             .unwrap_or(*self.theme)
     }
 
-    fn activate(&mut self, index: usize) {
+    fn activate(&mut self, ctx: &mut EventCtx, index: usize) {
         if index >= self.items.len() {
             return;
         }
@@ -5595,6 +5768,9 @@ impl Breadcrumb {
         self.focused_index = index;
         if let Some(on_activate) = &mut self.on_activate {
             on_activate(index, self.items[index].label.clone());
+        }
+        if let Some(on_activate) = &mut self.on_activate_with_ctx {
+            on_activate(ctx, index, self.items[index].label.clone());
         }
     }
 
@@ -5764,7 +5940,7 @@ impl Widget for Breadcrumb {
                         .filter(|(pressed, hovered)| pressed == hovered)
                         .map(|(index, _)| index)
                 {
-                    self.activate(index);
+                    self.activate(ctx, index);
                 }
                 self.set_hovered(hovered, ctx);
                 self.set_pressed(None, ctx);
@@ -5799,7 +5975,7 @@ impl Widget for Breadcrumb {
                     "ArrowRight" => {
                         self.focused_index = (self.focused_index + 1).min(self.items.len() - 1);
                     }
-                    "Enter" | " " => self.activate(self.focused_index),
+                    "Enter" | " " => self.activate(ctx, self.focused_index),
                     "Home" => self.focused_index = 0,
                     "End" => self.focused_index = self.items.len() - 1,
                     _ => return,
@@ -8540,7 +8716,7 @@ mod tests {
                             .thumbnail(Color::rgba(0.89, 0.91, 0.94, 1.0)),
                     ])
                     .selected(0)
-                    .on_select(move |index, label| {
+                    .on_change(move |index, label| {
                         on_select.borrow_mut().push((index, label));
                     })
                     .on_visibility_change(move |index, visible| {
@@ -8634,7 +8810,7 @@ mod tests {
                             .thumbnail(Color::rgba(0.89, 0.91, 0.94, 1.0)),
                     ])
                     .selected(0)
-                    .on_select(move |index, label| {
+                    .on_change(move |index, label| {
                         on_select.borrow_mut().push((index, label));
                     })
                     .on_lock_change(move |index, locked| {
@@ -9473,6 +9649,46 @@ mod tests {
                 .filter(|node| node.role == SemanticsRole::ListItem)
                 .all(|node| !node.state.selected)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn virtual_table_reports_selection_changes_through_on_change() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let ctx_changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change_with_ctx = Rc::clone(&ctx_changes);
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(360.0).height(160.0).with_child(
+                VirtualTable::new("Selectable rows")
+                    .columns([VirtualTableColumn::new("Name")])
+                    .row_count(3)
+                    .row_name(|index| format!("Row {index}"))
+                    .on_change(move |index| on_change.borrow_mut().push(index))
+                    .on_change_with_ctx(move |_ctx, index| {
+                        on_change_with_ctx.borrow_mut().push(index)
+                    }),
+            ),
+        );
+
+        let output = runtime.render(window_id)?;
+        let row = semantic_bounds(&output, SemanticsRole::ListItem, "Row 0");
+        let at = Point::new(row.x() + 8.0, crate::draw::rect_center(row).y);
+        for _ in 0..2 {
+            runtime.handle_event(window_id, primary_pointer(PointerEventKind::Down, at, true))?;
+            runtime.handle_event(window_id, primary_pointer(PointerEventKind::Up, at, false))?;
+        }
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new("ArrowDown", KeyState::Pressed)),
+        )?;
+
+        assert_eq!(
+            changes.borrow().as_slice(),
+            &[0, 1],
+            "clicking the selected row again is not a change"
+        );
+        assert_eq!(ctx_changes.borrow().as_slice(), &[0, 1]);
         Ok(())
     }
 

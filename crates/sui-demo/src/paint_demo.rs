@@ -1237,7 +1237,7 @@ fn build_paint_layers_panel(
                     .selected(selected_layer)
                     .selected_when(move || Some(selected_state.selected_layer_visual_index()))
                     .row_height(46.0)
-                    .on_select_with_ctx(move |ctx, index, _| {
+                    .on_change_with_ctx(move |ctx, index, _| {
                         selection_state.set_selected_visual_layer(index);
                         selection_state.sync_canvas_editable(&selection_paint_state);
                         request_window_refresh(ctx, true);

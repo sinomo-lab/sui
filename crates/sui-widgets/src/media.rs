@@ -2061,6 +2061,7 @@ pub struct ColorPicker {
     focus_animation: AnimatedScalar,
     color_reader: Option<Box<dyn Fn() -> Color>>,
     on_change: Option<Box<dyn FnMut(Color)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, Color)>>,
     appearance: ColorPickerAppearance,
 }
 
@@ -2138,6 +2139,7 @@ impl ColorPicker {
             focus_animation: AnimatedScalar::new(0.0),
             color_reader: None,
             on_change: None,
+            on_change_with_ctx: None,
             appearance: ColorPickerAppearance::default(),
         }
     }
@@ -2218,6 +2220,15 @@ impl ColorPicker {
         F: FnMut(Color) + 'static,
     {
         self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, Color) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -2535,7 +2546,22 @@ impl ColorPicker {
         )
     }
 
-    fn update_from_position(&mut self, bounds: Rect, channel: ActiveChannel, position: Point) {
+    /// Move `channel` to `position` and report the new color to the change
+    /// callbacks.
+    fn update_from_position(
+        &mut self,
+        ctx: &mut EventCtx,
+        bounds: Rect,
+        channel: ActiveChannel,
+        position: Point,
+    ) {
+        if self.apply_position(bounds, channel, position) {
+            self.emit_change(ctx);
+        }
+    }
+
+    /// Move `channel` to `position`, returning whether the color changed.
+    fn apply_position(&mut self, bounds: Rect, channel: ActiveChannel, position: Point) -> bool {
         match channel {
             ActiveChannel::ColorWheel => {
                 let rect = self.color_wheel_rect(bounds);
@@ -2547,7 +2573,7 @@ impl ColorPicker {
                 let dy = position.y - center.y;
                 let angle = dy.atan2(dx);
                 self.hue = ((angle / std::f32::consts::TAU) + 1.0).rem_euclid(1.0);
-                self.emit_change();
+                true
             }
             ActiveChannel::SaturationValue => {
                 let rect = self.saturation_value_rect(bounds);
@@ -2558,15 +2584,15 @@ impl ColorPicker {
                 } else {
                     t
                 };
-                self.emit_change();
+                true
             }
             ActiveChannel::Hue => {
                 self.hue = self.slider_position(self.left_slider_rect(bounds, 0), position);
-                self.emit_change();
+                true
             }
             ActiveChannel::Saturation => {
                 self.saturation = self.slider_position(self.left_slider_rect(bounds, 1), position);
-                self.emit_change();
+                true
             }
             ActiveChannel::Value => {
                 let t = self.slider_position(self.left_slider_rect(bounds, 2), position);
@@ -2575,23 +2601,35 @@ impl ColorPicker {
                 } else {
                     t
                 };
-                self.emit_change();
+                true
             }
             ActiveChannel::Alpha => {
                 self.alpha = self.slider_position(self.left_slider_rect(bounds, 3), position);
-                self.emit_change();
+                true
             }
-            ActiveChannel::EncodingSelector | ActiveChannel::EncodingOption(_) => {}
-            ActiveChannel::RgbRed => self.update_rgb_channel_from_position(bounds, 0, position),
-            ActiveChannel::RgbGreen => self.update_rgb_channel_from_position(bounds, 1, position),
-            ActiveChannel::RgbBlue => self.update_rgb_channel_from_position(bounds, 2, position),
+            ActiveChannel::EncodingSelector | ActiveChannel::EncodingOption(_) => false,
+            ActiveChannel::RgbRed => {
+                self.apply_rgb_channel_from_position(bounds, 0, position);
+                true
+            }
+            ActiveChannel::RgbGreen => {
+                self.apply_rgb_channel_from_position(bounds, 1, position);
+                true
+            }
+            ActiveChannel::RgbBlue => {
+                self.apply_rgb_channel_from_position(bounds, 2, position);
+                true
+            }
         }
     }
 
-    fn emit_change(&mut self) {
+    fn emit_change(&mut self, ctx: &mut EventCtx) {
         let color = self.color();
         if let Some(on_change) = &mut self.on_change {
             on_change(color);
+        }
+        if let Some(on_change) = &mut self.on_change_with_ctx {
+            on_change(ctx, color);
         }
     }
 
@@ -2609,7 +2647,7 @@ impl ColorPicker {
         self.alpha = color.alpha;
     }
 
-    fn set_editing_space(&mut self, next_space: ColorSpace) {
+    fn set_editing_space(&mut self, ctx: &mut EventCtx, next_space: ColorSpace) {
         if self.editing_space == next_space {
             return;
         }
@@ -2622,10 +2660,10 @@ impl ColorPicker {
             current.blue,
             current.alpha,
         ));
-        self.emit_change();
+        self.emit_change(ctx);
     }
 
-    fn update_rgb_channel_from_position(
+    fn apply_rgb_channel_from_position(
         &mut self,
         bounds: Rect,
         channel_index: usize,
@@ -2641,7 +2679,6 @@ impl ColorPicker {
             channels[2],
             self.alpha,
         ));
-        self.emit_change();
     }
 
     fn hit_channel(&self, bounds: Rect, position: Point) -> Option<ActiveChannel> {
@@ -3652,7 +3689,7 @@ impl Widget for ColorPicker {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 if let Some(active) = self.active {
-                    self.update_from_position(ctx.bounds(), active, pointer.position);
+                    self.update_from_position(ctx, ctx.bounds(), active, pointer.position);
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
@@ -3679,7 +3716,7 @@ impl Widget for ColorPicker {
                         self.encoding_dropdown_open = !self.encoding_dropdown_open;
                     } else {
                         self.encoding_dropdown_open = false;
-                        self.update_from_position(ctx.bounds(), active, pointer.position);
+                        self.update_from_position(ctx, ctx.bounds(), active, pointer.position);
                     }
                     ctx.request_focus();
                     ctx.request_pointer_capture(pointer.pointer_id);
@@ -3702,7 +3739,7 @@ impl Widget for ColorPicker {
                             .encoding_option_rect(ctx.bounds(), index)
                             .contains(pointer.position)
                         {
-                            self.set_editing_space(Self::ENCODING_OPTIONS[index]);
+                            self.set_editing_space(ctx, Self::ENCODING_OPTIONS[index]);
                         }
                         self.encoding_dropdown_open = false;
                     }
@@ -3739,7 +3776,7 @@ impl Widget for ColorPicker {
                     }
                     _ => return,
                 }
-                self.emit_change();
+                self.emit_change(ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -6812,7 +6849,7 @@ mod tests {
         let bounds = Rect::new(0.0, 0.0, 434.0, 448.0);
         let map = picker.saturation_value_rect(bounds);
 
-        picker.update_from_position(
+        picker.apply_position(
             bounds,
             ActiveChannel::SaturationValue,
             Point::new(map.x() + map.width() * 0.5, map.y() + map.height() * 0.25),

@@ -66,9 +66,17 @@ let files = ListView::new("Files")
     .on_change_with_ctx(|ctx, _index, _label| ctx.request_paint());
 ```
 
-Every `on_<event>` has a `_with_ctx` twin. Drag and drop handlers are the one
-exception: answering a drag needs the context, so `on_drag_start`, `on_drop`,
-and the other drag events take it directly, first.
+Every `on_<event>` has a `_with_ctx` twin, with two exceptions. Drag and drop
+handlers need the context to answer a drag, so `on_drag_start`, `on_drop`, and
+the other drag events take it directly, first. Callbacks that fire while the
+widget lays out, such as `AdaptiveView::on_class_change` and
+`ResponsiveSidebar::on_mode_change`, have no event context to pass, so they
+have no twin.
+
+A widget keeps both callbacks of a pair and calls both, the plain one first.
+`RichDocumentView` is the exception: its `on_link`, `on_image`, and
+`on_attachment` share one slot with their twins, so setting either replaces
+the other.
 
 The `on_` prefix is reserved for callbacks. Events use these names:
 

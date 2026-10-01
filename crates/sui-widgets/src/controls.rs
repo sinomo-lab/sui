@@ -4061,6 +4061,7 @@ pub struct RadioGroup {
     label_measurements: Vec<TextMeasurement>,
     spacing: f32,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
 }
 
 impl RadioGroup {
@@ -4085,6 +4086,7 @@ impl RadioGroup {
             label_measurements: Vec::new(),
             spacing: 6.0,
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -4189,6 +4191,15 @@ impl RadioGroup {
         self
     }
 
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
     fn row_height(&self) -> f32 {
         default_form_control_height(&self.resolved_theme())
     }
@@ -4230,6 +4241,9 @@ impl RadioGroup {
         }
         if let Some(on_change) = &mut self.on_change {
             on_change(selected, self.options[selected].clone());
+        }
+        if let Some(on_change) = &mut self.on_change_with_ctx {
+            on_change(ctx, selected, self.options[selected].clone());
         }
     }
 
@@ -5089,6 +5103,7 @@ pub struct NumberInput {
     editing: bool,
     value_reader: Option<Box<dyn Fn() -> f64>>,
     on_change: Option<Box<dyn FnMut(f64)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, f64)>>,
     preview: InteractionPreview,
 }
 
@@ -5117,6 +5132,7 @@ impl NumberInput {
             editing: false,
             value_reader: None,
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -5230,6 +5246,15 @@ impl NumberInput {
         self
     }
 
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, f64) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
     fn resolved_theme(&self) -> DefaultTheme {
         self.theme_reader
             .as_ref()
@@ -5273,7 +5298,7 @@ impl NumberInput {
         }
     }
 
-    fn commit_buffer(&mut self) {
+    fn commit_buffer(&mut self, ctx: &mut EventCtx) {
         if let Ok(parsed) = self.buffer.trim().parse::<f64>() {
             let next = clamp_and_snap_value(parsed, self.min, self.max, self.step);
             if (next - self.value).abs() > f64::EPSILON {
@@ -5281,12 +5306,15 @@ impl NumberInput {
                 if let Some(on_change) = &mut self.on_change {
                     on_change(self.value);
                 }
+                if let Some(on_change) = &mut self.on_change_with_ctx {
+                    on_change(ctx, self.value);
+                }
             }
             self.buffer = format_number(self.value, self.precision);
         }
     }
 
-    fn apply_edit_buffer(&mut self) {
+    fn apply_edit_buffer(&mut self, ctx: &mut EventCtx) {
         let Ok(parsed) = self.buffer.trim().parse::<f64>() else {
             return;
         };
@@ -5298,16 +5326,22 @@ impl NumberInput {
             if let Some(on_change) = &mut self.on_change {
                 on_change(self.value);
             }
+            if let Some(on_change) = &mut self.on_change_with_ctx {
+                on_change(ctx, self.value);
+            }
         }
     }
 
-    fn nudge(&mut self, delta: f64) {
+    fn nudge(&mut self, ctx: &mut EventCtx, delta: f64) {
         let next = clamp_and_snap_value(self.value + delta, self.min, self.max, self.step);
         if (next - self.value).abs() > f64::EPSILON {
             self.value = next;
             self.buffer = format_number(self.value, self.precision);
             if let Some(on_change) = &mut self.on_change {
                 on_change(self.value);
+            }
+            if let Some(on_change) = &mut self.on_change_with_ctx {
+                on_change(ctx, self.value);
             }
         }
     }
@@ -5425,8 +5459,8 @@ impl Widget for NumberInput {
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
                 match stepper_part {
-                    Some(NumberInputStepperPart::Increment) => self.nudge(self.step),
-                    Some(NumberInputStepperPart::Decrement) => self.nudge(-self.step),
+                    Some(NumberInputStepperPart::Increment) => self.nudge(ctx, self.step),
+                    Some(NumberInputStepperPart::Decrement) => self.nudge(ctx, -self.step),
                     None => {}
                 }
                 ctx.request_paint();
@@ -5478,6 +5512,9 @@ impl Widget for NumberInput {
                     if let Some(on_change) = &mut self.on_change {
                         on_change(self.value);
                     }
+                    if let Some(on_change) = &mut self.on_change_with_ctx {
+                        on_change(ctx, self.value);
+                    }
                 }
                 ctx.request_measure();
                 ctx.request_paint();
@@ -5486,20 +5523,20 @@ impl Widget for NumberInput {
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 match key.key.as_str() {
-                    "ArrowUp" => self.nudge(self.step),
-                    "ArrowDown" => self.nudge(-self.step),
-                    "Enter" => self.commit_buffer(),
+                    "ArrowUp" => self.nudge(ctx, self.step),
+                    "ArrowDown" => self.nudge(ctx, -self.step),
+                    "Enter" => self.commit_buffer(ctx),
                     "Escape" => self.buffer = format_number(self.value, self.precision),
                     "Backspace" => {
                         self.buffer.pop();
-                        self.apply_edit_buffer();
+                        self.apply_edit_buffer(ctx);
                     }
                     _ => {
                         if let Some(text) = keyboard_text(key)
                             && text.chars().all(is_numeric_input_char)
                         {
                             self.buffer.push_str(text);
-                            self.apply_edit_buffer();
+                            self.apply_edit_buffer(ctx);
                         }
                     }
                 }
@@ -5703,7 +5740,7 @@ impl Widget for NumberInput {
         }
         self.editing = focused;
         if !focused {
-            self.commit_buffer();
+            self.commit_buffer(ctx);
             self.sync_external_value();
         }
         let theme = self.resolved_theme();
@@ -5737,7 +5774,9 @@ pub struct TextArea {
     input_layout: Option<PersistentTextLayout>,
     changes: TextChangeCallbacks,
     on_submit: Option<Box<dyn FnMut(&str)>>,
+    on_submit_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, &str)>>,
     on_focus_change: Option<Box<dyn FnMut(bool)>>,
+    on_focus_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, bool)>>,
     preview: InteractionPreview,
 }
 
@@ -5767,7 +5806,9 @@ impl TextArea {
             input_layout: None,
             changes: TextChangeCallbacks::default(),
             on_submit: None,
+            on_submit_with_ctx: None,
             on_focus_change: None,
+            on_focus_change_with_ctx: None,
         }
     }
 
@@ -5944,11 +5985,29 @@ impl TextArea {
         self
     }
 
+    /// [`Self::on_submit`], with the event context first.
+    pub fn on_submit_with_ctx<F>(mut self, on_submit: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, &str) + 'static,
+    {
+        self.on_submit_with_ctx = Some(Box::new(on_submit));
+        self
+    }
+
     pub fn on_focus_change<F>(mut self, on_focus_change: F) -> Self
     where
         F: FnMut(bool) + 'static,
     {
         self.on_focus_change = Some(Box::new(on_focus_change));
+        self
+    }
+
+    /// [`Self::on_focus_change`], with the event context first.
+    pub fn on_focus_change_with_ctx<F>(mut self, on_focus_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, bool) + 'static,
+    {
+        self.on_focus_change_with_ctx = Some(Box::new(on_focus_change));
         self
     }
 
@@ -6263,10 +6322,14 @@ impl Widget for TextArea {
                 // inserts a newline (backward-compatible).
                 let plain_enter =
                     !key.modifiers.shift && !key.modifiers.control && !key.modifiers.meta;
-                if self.on_submit.is_some() && plain_enter {
+                let has_submit = self.on_submit.is_some() || self.on_submit_with_ctx.is_some();
+                if has_submit && plain_enter {
                     let text = self.current_value().to_string();
                     if let Some(on_submit) = &mut self.on_submit {
                         on_submit(&text);
+                    }
+                    if let Some(on_submit) = &mut self.on_submit_with_ctx {
+                        on_submit(ctx, &text);
                     }
                     ctx.set_handled();
                 } else if let Some(command) = self.editor.keyboard_command(
@@ -6525,6 +6588,9 @@ impl Widget for TextArea {
         set_focus_animation_target(&mut self.focus_animation, focused as u8 as f32, &theme, ctx);
         if let Some(on_focus_change) = &mut self.on_focus_change {
             on_focus_change(focused);
+        }
+        if let Some(on_focus_change) = &mut self.on_focus_change_with_ctx {
+            on_focus_change(ctx, focused);
         }
         ctx.request_paint();
         ctx.request_semantics();
@@ -7670,7 +7736,10 @@ pub struct TextInput {
     display_layout: Option<PersistentTextLayout>,
     input_layout: Option<PersistentTextLayout>,
     changes: TextChangeCallbacks,
+    on_submit: Option<Box<dyn FnMut(&str)>>,
+    on_submit_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, &str)>>,
     on_focus_change: Option<Box<dyn FnMut(bool)>>,
+    on_focus_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, bool)>>,
     preview: InteractionPreview,
 }
 
@@ -7703,7 +7772,10 @@ impl TextInput {
             display_layout: None,
             input_layout: None,
             changes: TextChangeCallbacks::default(),
+            on_submit: None,
+            on_submit_with_ctx: None,
             on_focus_change: None,
+            on_focus_change_with_ctx: None,
         }
     }
 
@@ -7879,11 +7951,41 @@ impl TextInput {
         self
     }
 
+    /// Call `on_submit` with the current text when the user presses a plain
+    /// `Enter` while the field is focused. The key is consumed only while a
+    /// submit callback is set, so an unwired field still lets `Enter` reach
+    /// its ancestors (a dialog's default action, for example).
+    pub fn on_submit<F>(mut self, on_submit: F) -> Self
+    where
+        F: FnMut(&str) + 'static,
+    {
+        self.on_submit = Some(Box::new(on_submit));
+        self
+    }
+
+    /// [`Self::on_submit`], with the event context first.
+    pub fn on_submit_with_ctx<F>(mut self, on_submit: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, &str) + 'static,
+    {
+        self.on_submit_with_ctx = Some(Box::new(on_submit));
+        self
+    }
+
     pub fn on_focus_change<F>(mut self, on_focus_change: F) -> Self
     where
         F: FnMut(bool) + 'static,
     {
         self.on_focus_change = Some(Box::new(on_focus_change));
+        self
+    }
+
+    /// [`Self::on_focus_change`], with the event context first.
+    pub fn on_focus_change_with_ctx<F>(mut self, on_focus_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, bool) + 'static,
+    {
+        self.on_focus_change_with_ctx = Some(Box::new(on_focus_change));
         self
     }
 
@@ -8272,6 +8374,24 @@ impl Widget for TextInput {
                     self.execute_editor_command(ctx, EditorCommand::EndComposition);
                 }
             }
+            Event::Keyboard(key)
+                if key.state == KeyState::Pressed
+                    && ctx.is_focused()
+                    && key.key == "Enter"
+                    && !key.modifiers.shift
+                    && !key.modifiers.control
+                    && !key.modifiers.meta
+                    && (self.on_submit.is_some() || self.on_submit_with_ctx.is_some()) =>
+            {
+                let text = self.current_value().to_string();
+                if let Some(on_submit) = &mut self.on_submit {
+                    on_submit(&text);
+                }
+                if let Some(on_submit) = &mut self.on_submit_with_ctx {
+                    on_submit(ctx, &text);
+                }
+                ctx.set_handled();
+            }
             Event::Keyboard(key) if key.state == KeyState::Pressed && ctx.is_focused() => {
                 if let Some(command) = self.editor.keyboard_command(
                     ctx,
@@ -8573,6 +8693,9 @@ impl Widget for TextInput {
         if let Some(on_focus_change) = &mut self.on_focus_change {
             on_focus_change(focused);
         }
+        if let Some(on_focus_change) = &mut self.on_focus_change_with_ctx {
+            on_focus_change(ctx, focused);
+        }
         ctx.request_paint();
         ctx.request_semantics();
     }
@@ -8679,6 +8802,18 @@ impl PasswordInput {
         self
     }
 
+    /// The text style; see [`TextInput::text_style`].
+    pub fn text_style(mut self, text_style: TextStyle) -> Self {
+        self.inner = self.inner.text_style(text_style);
+        self
+    }
+
+    /// The field chrome; see [`TextInput::appearance`].
+    pub fn appearance(mut self, appearance: FieldAppearance) -> Self {
+        self.inner = self.inner.appearance(appearance);
+        self
+    }
+
     pub fn on_change<F>(mut self, on_change: F) -> Self
     where
         F: FnMut(String) + 'static,
@@ -8692,6 +8827,42 @@ impl PasswordInput {
         F: FnMut(&mut EventCtx, String) + 'static,
     {
         self.inner = self.inner.on_change_with_ctx(on_change);
+        self
+    }
+
+    /// Call `on_submit` when the user presses `Enter`; see
+    /// [`TextInput::on_submit`].
+    pub fn on_submit<F>(mut self, on_submit: F) -> Self
+    where
+        F: FnMut(&str) + 'static,
+    {
+        self.inner = self.inner.on_submit(on_submit);
+        self
+    }
+
+    /// [`Self::on_submit`], with the event context first.
+    pub fn on_submit_with_ctx<F>(mut self, on_submit: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, &str) + 'static,
+    {
+        self.inner = self.inner.on_submit_with_ctx(on_submit);
+        self
+    }
+
+    pub fn on_focus_change<F>(mut self, on_focus_change: F) -> Self
+    where
+        F: FnMut(bool) + 'static,
+    {
+        self.inner = self.inner.on_focus_change(on_focus_change);
+        self
+    }
+
+    /// [`Self::on_focus_change`], with the event context first.
+    pub fn on_focus_change_with_ctx<F>(mut self, on_focus_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, bool) + 'static,
+    {
+        self.inner = self.inner.on_focus_change_with_ctx(on_focus_change);
         self
     }
 
@@ -8851,6 +9022,18 @@ impl DateTimeInput {
         self
     }
 
+    /// The text style; see [`TextInput::text_style`].
+    pub fn text_style(mut self, text_style: TextStyle) -> Self {
+        self.inner = self.inner.text_style(text_style);
+        self
+    }
+
+    /// The field chrome; see [`TextInput::appearance`].
+    pub fn appearance(mut self, appearance: FieldAppearance) -> Self {
+        self.inner = self.inner.appearance(appearance);
+        self
+    }
+
     pub fn on_change<F>(mut self, on_change: F) -> Self
     where
         F: FnMut(String) + 'static,
@@ -8864,6 +9047,42 @@ impl DateTimeInput {
         F: FnMut(&mut EventCtx, String) + 'static,
     {
         self.inner = self.inner.on_change_with_ctx(on_change);
+        self
+    }
+
+    /// Call `on_submit` when the user presses `Enter`; see
+    /// [`TextInput::on_submit`].
+    pub fn on_submit<F>(mut self, on_submit: F) -> Self
+    where
+        F: FnMut(&str) + 'static,
+    {
+        self.inner = self.inner.on_submit(on_submit);
+        self
+    }
+
+    /// [`Self::on_submit`], with the event context first.
+    pub fn on_submit_with_ctx<F>(mut self, on_submit: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, &str) + 'static,
+    {
+        self.inner = self.inner.on_submit_with_ctx(on_submit);
+        self
+    }
+
+    pub fn on_focus_change<F>(mut self, on_focus_change: F) -> Self
+    where
+        F: FnMut(bool) + 'static,
+    {
+        self.inner = self.inner.on_focus_change(on_focus_change);
+        self
+    }
+
+    /// [`Self::on_focus_change`], with the event context first.
+    pub fn on_focus_change_with_ctx<F>(mut self, on_focus_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, bool) + 'static,
+    {
+        self.inner = self.inner.on_focus_change_with_ctx(on_focus_change);
         self
     }
 

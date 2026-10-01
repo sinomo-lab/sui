@@ -199,6 +199,7 @@ pub struct Dialog {
     pub(super) focus_surface: SingleChild,
     pub(super) entrance_started: bool,
     pub(super) on_dismiss: Option<Box<dyn FnMut()>>,
+    pub(super) on_dismiss_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
     pub(super) overlay_kind: OverlayKind,
     /// Laid out in flow at its content size; see [`Dialog::show_inline`].
     pub(super) inline: bool,
@@ -231,6 +232,7 @@ impl Dialog {
             focus_state,
             entrance_started: false,
             on_dismiss: None,
+            on_dismiss_with_ctx: None,
             overlay_kind: OverlayKind::Dialog,
             inline: false,
         }
@@ -317,6 +319,15 @@ impl Dialog {
         self
     }
 
+    /// [`Self::on_dismiss`], with the event context first.
+    pub fn on_dismiss_with_ctx<F>(mut self, on_dismiss: F) -> Self
+    where
+        F: FnMut(&mut EventCtx) + 'static,
+    {
+        self.on_dismiss_with_ctx = Some(Box::new(on_dismiss));
+        self
+    }
+
     /// Place a compact control beside the title, such as a close button.
     pub fn header_action<W: Widget + 'static>(mut self, action: W) -> Self {
         self.header_action = Some(SingleChild::new(action));
@@ -365,12 +376,15 @@ impl Dialog {
         text_token_style(&theme, theme.text.lg, theme.palette.text)
     }
 
-    pub(super) fn dismiss(&mut self) {
+    pub(super) fn dismiss(&mut self, ctx: &mut EventCtx) {
         if self.inline {
             return;
         }
         if let Some(on_dismiss) = &mut self.on_dismiss {
             on_dismiss();
+        }
+        if let Some(on_dismiss) = &mut self.on_dismiss_with_ctx {
+            on_dismiss(ctx);
         }
     }
 
@@ -395,7 +409,7 @@ impl Dialog {
 impl Widget for Dialog {
     fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
         if command.get(OVERLAY_DISMISS_REQUEST).is_some() && self.shown {
-            self.dismiss();
+            self.dismiss(ctx);
             ctx.request_semantics();
             ctx.set_handled();
         }
@@ -427,7 +441,7 @@ impl Widget for Dialog {
                         .contains(pointer.position) =>
             {
                 if self.dismiss_on_scrim {
-                    self.dismiss();
+                    self.dismiss(ctx);
                 }
                 if self.modal || self.dismiss_on_scrim {
                     ctx.set_handled();
@@ -438,7 +452,7 @@ impl Widget for Dialog {
             Event::Keyboard(key)
                 if ctx.is_focused() && key.state == KeyState::Pressed && key.key == "Escape" =>
             {
-                self.dismiss();
+                self.dismiss(ctx);
                 ctx.request_paint();
                 ctx.request_semantics();
                 ctx.set_handled();
@@ -893,6 +907,15 @@ impl CommandPalette {
         self.inner = self.inner.on_dismiss(on_dismiss);
         self
     }
+
+    /// [`Self::on_dismiss`], with the event context first.
+    pub fn on_dismiss_with_ctx<F>(mut self, on_dismiss: F) -> Self
+    where
+        F: FnMut(&mut EventCtx) + 'static,
+    {
+        self.inner = self.inner.on_dismiss_with_ctx(on_dismiss);
+        self
+    }
 }
 
 impl Widget for CommandPalette {
@@ -1033,6 +1056,7 @@ pub struct SideSheet {
     pub(super) focus_requested: bool,
     pub(super) previous_focus: Option<WidgetId>,
     pub(super) on_dismiss: Option<Box<dyn FnMut()>>,
+    pub(super) on_dismiss_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
 }
 
 impl SideSheet {
@@ -1065,6 +1089,7 @@ impl SideSheet {
             focus_requested: false,
             previous_focus: None,
             on_dismiss: None,
+            on_dismiss_with_ctx: None,
         }
     }
 
@@ -1197,6 +1222,15 @@ impl SideSheet {
         self
     }
 
+    /// [`Self::on_dismiss`], with the event context first.
+    pub fn on_dismiss_with_ctx<F>(mut self, on_dismiss: F) -> Self
+    where
+        F: FnMut(&mut EventCtx) + 'static,
+    {
+        self.on_dismiss_with_ctx = Some(Box::new(on_dismiss));
+        self
+    }
+
     pub(super) fn resolved_theme(&self) -> DefaultTheme {
         self.theme.resolve()
     }
@@ -1230,6 +1264,9 @@ impl SideSheet {
         }
         if let Some(on_dismiss) = &mut self.on_dismiss {
             on_dismiss();
+        }
+        if let Some(on_dismiss) = &mut self.on_dismiss_with_ctx {
+            on_dismiss(ctx);
         }
         if let Some(previous_focus) = self.previous_focus.take() {
             ctx.request_focus_for(previous_focus);
@@ -1827,6 +1864,15 @@ impl BottomSheet {
         F: FnMut() + 'static,
     {
         self.inner = self.inner.on_dismiss(on_dismiss);
+        self
+    }
+
+    /// [`Self::on_dismiss`], with the event context first.
+    pub fn on_dismiss_with_ctx<F>(mut self, on_dismiss: F) -> Self
+    where
+        F: FnMut(&mut EventCtx) + 'static,
+    {
+        self.inner = self.inner.on_dismiss_with_ctx(on_dismiss);
         self
     }
 }

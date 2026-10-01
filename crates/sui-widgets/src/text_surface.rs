@@ -193,6 +193,7 @@ pub struct TextSurface {
     line_layout_revision: u64,
     line_layout_style_revision: u64,
     on_change: Option<Box<dyn FnMut(String)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, String)>>,
     status: Option<Signal<TextSurfaceStatus>>,
     /// The height lines are shown in, as of the last measure.
     viewport_height: f32,
@@ -237,6 +238,7 @@ impl TextSurface {
             line_layout_revision: u64::MAX,
             line_layout_style_revision: u64::MAX,
             on_change: None,
+            on_change_with_ctx: None,
             status: None,
             viewport_height: 0.0,
             reveal_caret: false,
@@ -436,6 +438,15 @@ impl TextSurface {
         F: FnMut(String) + 'static,
     {
         self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, String) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -1324,10 +1335,13 @@ impl TextSurface {
         self.content_rect(bounds).size
     }
 
-    fn commit_text_change(&mut self) {
+    fn commit_text_change(&mut self, ctx: &mut EventCtx) {
         let value = self.current_value().to_string();
         if let Some(on_change) = &mut self.on_change {
-            on_change(value);
+            on_change(value.clone());
+        }
+        if let Some(on_change) = &mut self.on_change_with_ctx {
+            on_change(ctx, value);
         }
     }
 
@@ -1337,7 +1351,7 @@ impl TextSurface {
             if let Some(edit) = self.editor.take_text_edit() {
                 self.rebase_style_ranges_after_edit(&edit);
             }
-            self.commit_text_change();
+            self.commit_text_change(ctx);
         }
         if result.layout_changed() {
             ctx.request_text();

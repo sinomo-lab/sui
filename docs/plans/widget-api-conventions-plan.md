@@ -59,6 +59,8 @@ Status: done.
 
 ## Phase 3: Events Everywhere
 
+Status: done.
+
 - Every `on_<event>` gains its `_with_ctx` twin. Missing today on `RadioGroup`,
   `NumberInput`, `TreeView`, `Table`, `VirtualTable`, `Breadcrumb`, `TabBar`,
   `Tabs`, `PresetStrip`, `SplitView`, `TextSurface`, `Popover`, `ColorPicker`,

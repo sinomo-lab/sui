@@ -1075,7 +1075,7 @@ fn build_vector_objects_panel(state: VectorDemoState, theme_reader: DevThemeRead
             .selected(state.selected_object_visual_index())
             .selected_when(move || Some(selected_state.selected_object_visual_index()))
             .row_height(46.0)
-            .on_select_with_ctx(move |ctx, index, _| {
+            .on_change_with_ctx(move |ctx, index, _| {
                 state.set_selected_visual_object(index);
                 request_vector_structure_refresh(ctx);
             })

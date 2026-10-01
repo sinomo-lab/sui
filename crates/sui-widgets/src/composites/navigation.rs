@@ -125,6 +125,7 @@ pub struct TabBar {
     pub(super) content_widths: Vec<f32>,
     pub(super) widths: Vec<f32>,
     pub(super) on_change: Option<Box<dyn FnMut(usize, String)>>,
+    pub(super) on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
 }
 
 impl TabBar {
@@ -152,6 +153,7 @@ impl TabBar {
             content_widths: Vec::new(),
             widths: Vec::new(),
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -294,6 +296,15 @@ impl TabBar {
         self
     }
 
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
+        self
+    }
+
     /// The selected item, or `None` when there are no items.
     pub fn selected_index(&self) -> Option<usize> {
         (!self.tabs.is_empty()).then(|| self.normalized_selected())
@@ -330,6 +341,9 @@ impl TabBar {
             self.selected = index;
             if let Some(on_change) = &mut self.on_change {
                 on_change(index, self.tabs[index].label.clone());
+            }
+            if let Some(on_change) = &mut self.on_change_with_ctx {
+                on_change(ctx, index, self.tabs[index].label.clone());
             }
             let target = self.normalized_selected();
             self.selected = target;
@@ -2281,6 +2295,7 @@ pub struct Tabs {
     pub(super) gap: Option<f32>,
     pub(super) panel_frame: Rect,
     pub(super) on_change: Option<Box<dyn FnMut(usize, String)>>,
+    pub(super) on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
 }
 
 impl Tabs {
@@ -2307,6 +2322,7 @@ impl Tabs {
             gap: None,
             panel_frame: Rect::ZERO,
             on_change: None,
+            on_change_with_ctx: None,
         }
     }
 
@@ -2381,6 +2397,15 @@ impl Tabs {
         F: FnMut(usize, String) + 'static,
     {
         self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, usize, String) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -2482,6 +2507,9 @@ impl Tabs {
             );
             if let Some(on_change) = &mut self.on_change {
                 on_change(index, self.labels[index].clone());
+            }
+            if let Some(on_change) = &mut self.on_change_with_ctx {
+                on_change(ctx, index, self.labels[index].clone());
             }
         }
     }

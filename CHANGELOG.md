@@ -94,6 +94,22 @@ Versioning, with the usual expectation that the API may change during the
   `read_only()` takes a `bool` on `TextInput`, `TextArea`, `PasswordInput`,
   `DateTimeInput`, `ColorSwatch`, and `TextSurface`, which also gain
   `is_read_only()`.
+- Every callback has a `_with_ctx` twin. New twins: `RadioGroup`,
+  `NumberInput`, `TreeView`, `Table`, `Breadcrumb`, `TabBar`, `Tabs`,
+  `PresetStrip`, `SplitView`, `TextSurface`, and `ColorPicker`
+  `on_change`; `Popover::on_open_change`; the `on_dismiss` of `Dialog`,
+  `SideSheet`, `BottomSheet`, and `CommandPalette`; `TextInput` and
+  `TextArea::on_focus_change`; `TextArea::on_submit`; `DropTarget` hover
+  callbacks; `RichDocumentView` link, image, and attachment callbacks; and
+  every `VirtualTable` callback.
+- `LayerList::on_select` and `on_select_with_ctx` are deprecated in favor of
+  `on_change` and `on_change_with_ctx`. `VirtualTable` reports selection
+  changes through `on_change(usize)` when the user clicks or arrows to a
+  different row.
+- `TextInput` gains `on_submit`, fired by `Enter`. `PasswordInput` and
+  `DateTimeInput` gain `on_submit`, `on_focus_change`, `text_style`, and
+  `appearance`. `TextArea` submits when only `on_submit_with_ctx` is set;
+  before, `Enter` inserted a newline unless `on_submit` was set too.
 
 ### Breaking: a clearer `sui` facade
 

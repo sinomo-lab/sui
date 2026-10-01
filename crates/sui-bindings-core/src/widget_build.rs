@@ -616,7 +616,7 @@ impl BindingWidget {
                 if state.is_some() || action.is_some() {
                     let action = action.clone();
                     let errors = errors.clone();
-                    layer_list = layer_list.on_select(move |index, value| {
+                    layer_list = layer_list.on_change(move |index, value| {
                         if let Some(state) = &state {
                             state.set(index as f64);
                         }

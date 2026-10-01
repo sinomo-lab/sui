@@ -40,8 +40,9 @@ const SYNTHETIC_RICH_DOCUMENT_TAG: u64 = 0x2d << 46;
 static NEXT_SYNTHETIC_ID: AtomicU64 = AtomicU64::new(1);
 
 type Renderer = Rc<dyn Fn(RichDocumentRenderContext) -> WidgetPod>;
-type StringAction = Rc<RefCell<Box<dyn FnMut(&str)>>>;
-type BlockAction = Rc<RefCell<Box<dyn FnMut(RichBlockId)>>>;
+// Shared with block views, which pass their event context on.
+type StringAction = Rc<RefCell<Box<dyn FnMut(&mut EventCtx, &str)>>>;
+type BlockAction = Rc<RefCell<Box<dyn FnMut(&mut EventCtx, RichBlockId)>>>;
 type ImageResolver = Rc<dyn Fn(&RichInlineImage) -> Option<ImageHandle>>;
 
 /// Context passed to an application-defined rich-document block renderer.
@@ -355,17 +356,41 @@ impl RichDocumentView {
         self
     }
 
-    pub fn on_link<F>(mut self, callback: F) -> Self
+    pub fn on_link<F>(mut self, mut callback: F) -> Self
     where
         F: FnMut(&str) + 'static,
+    {
+        self.on_link = Some(Rc::new(RefCell::new(Box::new(
+            move |_: &mut EventCtx, value: &str| callback(value),
+        ))));
+        self
+    }
+
+    /// [`Self::on_link`], with the event context first. Setting either
+    /// replaces the other.
+    pub fn on_link_with_ctx<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, &str) + 'static,
     {
         self.on_link = Some(Rc::new(RefCell::new(Box::new(callback))));
         self
     }
 
-    pub fn on_image<F>(mut self, callback: F) -> Self
+    pub fn on_image<F>(mut self, mut callback: F) -> Self
     where
         F: FnMut(&str) + 'static,
+    {
+        self.on_image = Some(Rc::new(RefCell::new(Box::new(
+            move |_: &mut EventCtx, value: &str| callback(value),
+        ))));
+        self
+    }
+
+    /// [`Self::on_image`], with the event context first. Setting either
+    /// replaces the other.
+    pub fn on_image_with_ctx<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, &str) + 'static,
     {
         self.on_image = Some(Rc::new(RefCell::new(Box::new(callback))));
         self
@@ -383,9 +408,21 @@ impl RichDocumentView {
         self
     }
 
-    pub fn on_attachment<F>(mut self, callback: F) -> Self
+    pub fn on_attachment<F>(mut self, mut callback: F) -> Self
     where
         F: FnMut(RichBlockId) + 'static,
+    {
+        self.on_attachment = Some(Rc::new(RefCell::new(Box::new(
+            move |_: &mut EventCtx, value: RichBlockId| callback(value),
+        ))));
+        self
+    }
+
+    /// [`Self::on_attachment`], with the event context first. Setting either
+    /// replaces the other.
+    pub fn on_attachment_with_ctx<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, RichBlockId) + 'static,
     {
         self.on_attachment = Some(Rc::new(RefCell::new(Box::new(callback))));
         self
@@ -650,12 +687,12 @@ impl Widget for RichDocumentView {
                     match activate {
                         Some(PressedInline::Link(destination)) => {
                             if let Some(callback) = &self.on_link {
-                                (callback.borrow_mut())(&destination);
+                                (callback.borrow_mut())(ctx, &destination);
                             }
                         }
                         Some(PressedInline::Image(source)) => {
                             if let Some(callback) = &self.on_image {
-                                (callback.borrow_mut())(&source);
+                                (callback.borrow_mut())(ctx, &source);
                             }
                         }
                         None => {}
@@ -1022,7 +1059,7 @@ impl DefaultBlockView {
             match inline {
                 InlineTarget::Link { destination, .. } => {
                     if let Some(callback) = &self.on_link {
-                        (callback.borrow_mut())(&destination);
+                        (callback.borrow_mut())(ctx, &destination);
                     }
                 }
                 InlineTarget::Image {
@@ -1030,7 +1067,7 @@ impl DefaultBlockView {
                     ..
                 } => {
                     if let Some(callback) = &self.on_image {
-                        (callback.borrow_mut())(&inline_image.source);
+                        (callback.borrow_mut())(ctx, &inline_image.source);
                     }
                 }
             }
@@ -1090,7 +1127,7 @@ impl Widget for DefaultBlockView {
                     && ctx.bounds().contains(pointer.position) =>
             {
                 if let Some(callback) = &self.on_attachment {
-                    (callback.borrow_mut())(block.id);
+                    (callback.borrow_mut())(ctx, block.id);
                 }
                 ctx.set_handled();
             }
@@ -1124,7 +1161,7 @@ impl Widget for DefaultBlockView {
                             SemanticsActionRequest::Activate,
                         ) => {
                             if let Some(callback) = &self.on_attachment {
-                                (callback.borrow_mut())(block.id);
+                                (callback.borrow_mut())(ctx, block.id);
                             }
                             true
                         }

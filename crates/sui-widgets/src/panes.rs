@@ -1517,6 +1517,7 @@ pub struct SplitView {
     drag_pointer: Option<u64>,
     divider_bounds: Rect,
     on_change: Option<Box<dyn FnMut(f32)>>,
+    on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, f32)>>,
     first_last_focus: Cell<Option<WidgetId>>,
     second_last_focus: Cell<Option<WidgetId>>,
     pending_focus_restore: Cell<Option<SplitPaneSide>>,
@@ -1548,6 +1549,7 @@ impl SplitView {
             drag_pointer: None,
             divider_bounds: Rect::ZERO,
             on_change: None,
+            on_change_with_ctx: None,
             first_last_focus: Cell::new(None),
             second_last_focus: Cell::new(None),
             pending_focus_restore: Cell::new(None),
@@ -1643,6 +1645,15 @@ impl SplitView {
         F: FnMut(f32) + 'static,
     {
         self.on_change = Some(Box::new(on_change));
+        self
+    }
+
+    /// [`Self::on_change`], with the event context first.
+    pub fn on_change_with_ctx<F>(mut self, on_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, f32) + 'static,
+    {
+        self.on_change_with_ctx = Some(Box::new(on_change));
         self
     }
 
@@ -1807,7 +1818,7 @@ impl SplitView {
         ctx.request_semantics();
     }
 
-    fn set_ratio_from_position(&mut self, bounds: Rect, position: Point) {
+    fn set_ratio_from_position(&mut self, ctx: &mut EventCtx, bounds: Rect, position: Point) {
         let divider = self.resolved_divider_thickness();
         let total = (axis_main(self.axis, bounds.size) - divider).max(0.0);
         if total <= 0.0 {
@@ -1817,23 +1828,29 @@ impl SplitView {
         let pointer_main = axis_position(self.axis, position) - axis_origin(self.axis, bounds);
         let (lower, upper) = self.allowed_first_main_range(total);
         let clamped = pointer_main.clamp(lower, upper);
-        if self.update_extent_from_first_main(clamped, total)
-            && let Some(on_change) = &mut self.on_change
-        {
-            on_change(self.ratio);
+        if self.update_extent_from_first_main(clamped, total) {
+            self.notify_change(ctx);
         }
     }
 
-    fn nudge_ratio(&mut self, delta: f32, available: f32) {
+    fn nudge_ratio(&mut self, ctx: &mut EventCtx, delta: f32, available: f32) {
         let next = (self.ratio + delta).clamp(0.0, 1.0);
-        self.set_first_main_and_notify(next * available, available);
+        self.set_first_main_and_notify(ctx, next * available, available);
     }
 
-    fn set_first_main_and_notify(&mut self, first_main: f32, available: f32) {
-        if self.update_extent_from_first_main(first_main, available)
-            && let Some(on_change) = &mut self.on_change
-        {
+    fn set_first_main_and_notify(&mut self, ctx: &mut EventCtx, first_main: f32, available: f32) {
+        if self.update_extent_from_first_main(first_main, available) {
+            self.notify_change(ctx);
+        }
+    }
+
+    /// Report the new split ratio to both change callbacks.
+    fn notify_change(&mut self, ctx: &mut EventCtx) {
+        if let Some(on_change) = &mut self.on_change {
             on_change(self.ratio);
+        }
+        if let Some(on_change) = &mut self.on_change_with_ctx {
+            on_change(ctx, self.ratio);
         }
     }
 
@@ -1879,7 +1896,7 @@ impl Widget for SplitView {
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 if self.drag_pointer == Some(pointer.pointer_id) {
-                    self.set_ratio_from_position(ctx.bounds(), pointer.position);
+                    self.set_ratio_from_position(ctx, ctx.bounds(), pointer.position);
                     ctx.request_arrange();
                     ctx.request_paint();
                     ctx.request_semantics();
@@ -1907,7 +1924,7 @@ impl Widget for SplitView {
                 self.set_dragging(true, ctx);
                 ctx.request_focus();
                 ctx.request_pointer_capture(pointer.pointer_id);
-                self.set_ratio_from_position(ctx.bounds(), pointer.position);
+                self.set_ratio_from_position(ctx, ctx.bounds(), pointer.position);
                 ctx.request_arrange();
                 ctx.set_handled();
             }
@@ -1947,7 +1964,7 @@ impl Widget for SplitView {
                     (Axis::Horizontal, "ArrowLeft") | (Axis::Vertical, "ArrowUp") => -step,
                     (Axis::Horizontal, "ArrowRight") | (Axis::Vertical, "ArrowDown") => step,
                     (Axis::Horizontal, "Home") | (Axis::Vertical, "Home") => {
-                        self.set_first_main_and_notify(0.0, available);
+                        self.set_first_main_and_notify(ctx, 0.0, available);
                         ctx.request_arrange();
                         ctx.request_paint();
                         ctx.request_semantics();
@@ -1955,7 +1972,7 @@ impl Widget for SplitView {
                         return;
                     }
                     (Axis::Horizontal, "End") | (Axis::Vertical, "End") => {
-                        self.set_first_main_and_notify(available, available);
+                        self.set_first_main_and_notify(ctx, available, available);
                         ctx.request_arrange();
                         ctx.request_paint();
                         ctx.request_semantics();
@@ -1964,7 +1981,7 @@ impl Widget for SplitView {
                     }
                     _ => return,
                 };
-                self.nudge_ratio(delta, available);
+                self.nudge_ratio(ctx, delta, available);
                 ctx.request_arrange();
                 ctx.request_paint();
                 ctx.request_semantics();

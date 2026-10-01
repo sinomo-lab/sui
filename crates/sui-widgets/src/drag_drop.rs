@@ -28,7 +28,9 @@ type DragEndCallback = Box<dyn FnMut(&mut EventCtx, &DragEvent)>;
 type DropAcceptCallback = Box<dyn FnMut(&DragEvent) -> DropEffect>;
 type DropCallback = Box<dyn FnMut(&mut EventCtx, &DragEvent)>;
 type HoverCallback = Box<dyn FnMut(bool)>;
+type HoverCallbackWithCtx = Box<dyn FnMut(&mut EventCtx, bool)>;
 type HoverStateCallback = Box<dyn FnMut(DropHover)>;
+type HoverStateCallbackWithCtx = Box<dyn FnMut(&mut EventCtx, DropHover)>;
 type ThemeReader = Rc<dyn Fn() -> DefaultTheme>;
 type PreviewBuilder = Box<dyn FnMut(&DragPreview) -> Option<Box<dyn Widget>>>;
 
@@ -742,7 +744,9 @@ pub struct DropTarget {
     hover: DropHover,
     on_drop: Option<DropCallback>,
     on_hover_change: Option<HoverCallback>,
+    on_hover_change_with_ctx: Option<HoverCallbackWithCtx>,
     on_hover_state: Option<HoverStateCallback>,
+    on_hover_state_with_ctx: Option<HoverStateCallbackWithCtx>,
 }
 
 impl DropTarget {
@@ -761,7 +765,9 @@ impl DropTarget {
             hover: DropHover::Idle,
             on_drop: None,
             on_hover_change: None,
+            on_hover_change_with_ctx: None,
             on_hover_state: None,
+            on_hover_state_with_ctx: None,
         }
     }
 
@@ -794,6 +800,15 @@ impl DropTarget {
         self
     }
 
+    /// [`Self::on_hover_change`], with the event context first.
+    pub fn on_hover_change_with_ctx<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, bool) + 'static,
+    {
+        self.on_hover_change_with_ctx = Some(Box::new(callback));
+        self
+    }
+
     /// Follows [`DropHover`]: whether a drag is over the target, the
     /// effect it accepts, or that it refuses the drag. Refusing lets a
     /// target show that a drag cannot land there.
@@ -802,6 +817,15 @@ impl DropTarget {
         F: FnMut(DropHover) + 'static,
     {
         self.on_hover_state = Some(Box::new(callback));
+        self
+    }
+
+    /// [`Self::on_hover_state`], with the event context first.
+    pub fn on_hover_state_with_ctx<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, DropHover) + 'static,
+    {
+        self.on_hover_state_with_ctx = Some(Box::new(callback));
         self
     }
 
@@ -834,10 +858,15 @@ impl DropTarget {
         if let Some(callback) = &mut self.on_hover_state {
             callback(hover);
         }
-        if was_hovered != hover.is_accepting()
-            && let Some(callback) = &mut self.on_hover_change
-        {
+        if let Some(callback) = &mut self.on_hover_state_with_ctx {
+            callback(ctx, hover);
+        }
+        let accepting_changed = was_hovered != hover.is_accepting();
+        if accepting_changed && let Some(callback) = &mut self.on_hover_change {
             callback(hover.is_accepting());
+        }
+        if accepting_changed && let Some(callback) = &mut self.on_hover_change_with_ctx {
+            callback(ctx, hover.is_accepting());
         }
         ctx.request_paint();
         ctx.request_semantics();
