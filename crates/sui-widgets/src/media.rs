@@ -1,3 +1,4 @@
+use crate::binding::Binding;
 use crate::draw::{inset_rect, mix_color};
 use sui_core::{
     Color, ColorSpace, Event, ImageHandle, KeyState, Oklch, Path, PathBuilder, Point,
@@ -5,6 +6,7 @@ use sui_core::{
     SemanticsValue, Size, WidgetId,
 };
 use sui_layout::{Constraints, Padding as Insets};
+use sui_reactive::Observable;
 use sui_runtime::{EventCtx, FrameClock, MeasureCtx, PaintCtx, SemanticsCtx, Widget};
 use sui_scene::{Brush, GradientStop, ImageSource, StrokeStyle, WidgetShader};
 use sui_text::{FontFeature, TextAlign, TextStyle};
@@ -836,6 +838,7 @@ impl ColorPaletteSwatch {
 pub struct ColorPalette {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    enabled: Binding<bool>,
     name: String,
     swatches: Vec<ColorPaletteSwatch>,
     selected: Option<usize>,
@@ -859,6 +862,7 @@ impl ColorPalette {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
+            enabled: Binding::new(true),
             name: name.into(),
             swatches: Vec::new(),
             selected: None,
@@ -890,6 +894,48 @@ impl ColorPalette {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn swatch(mut self, swatch: ColorPaletteSwatch) -> Self {
@@ -1113,6 +1159,16 @@ impl ColorPalette {
 
 impl Widget for ColorPalette {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let theme = self.resolved_theme();
@@ -1201,7 +1257,10 @@ impl Widget for ColorPalette {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
@@ -1301,6 +1360,10 @@ impl Widget for ColorPalette {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let mut node = SemanticsNode::new(
             ctx.widget_id(),
             SemanticsRole::GenericContainer,
@@ -1310,6 +1373,10 @@ impl Widget for ColorPalette {
         node.value = self.selected_value().map(SemanticsValue::Text);
         node.state.focused = ctx.is_focused();
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        if !enabled {
+            node.state.disabled = true;
+            node.actions.clear();
+        }
         ctx.push(node);
 
         let selected = self.current_selected();
@@ -1329,12 +1396,16 @@ impl Widget for ColorPalette {
             node.state.hovered = self.hovered == Some(index);
             node.state.selected = selected == Some(index);
             node.actions = vec![SemanticsAction::Activate];
+            if !enabled {
+                node.state.disabled = true;
+                node.actions.clear();
+            }
             ctx.push(node);
         }
     }
 
     fn accepts_focus(&self) -> bool {
-        !self.swatches.is_empty()
+        self.enabled.get() && (!self.swatches.is_empty())
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -1975,6 +2046,7 @@ impl ColorPickerAppearance {
 pub struct ColorPicker {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    enabled: Binding<bool>,
     name: String,
     editing_space: ColorSpace,
     hue: f32,
@@ -2051,6 +2123,7 @@ impl ColorPicker {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
+            enabled: Binding::new(true),
             name: name.into(),
             editing_space: color.space,
             hue,
@@ -2081,6 +2154,48 @@ impl ColorPicker {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn show_alpha(mut self, show_alpha: bool) -> Self {
@@ -3520,6 +3635,16 @@ impl Widget for SimpleColorPicker {
 
 impl Widget for ColorPicker {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         if self.sync_external_color() {
             ctx.request_paint();
             ctx.request_semantics();
@@ -3629,7 +3754,10 @@ impl Widget for ColorPicker {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let resolved = self.resolved_state();
         let current = resolved.color;
         let wheel = self.color_wheel_rect(ctx.bounds());
@@ -3728,6 +3856,10 @@ impl Widget for ColorPicker {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let resolved = self.resolved_state();
         let current = resolved.color;
         let mut node =
@@ -3743,12 +3875,16 @@ impl Widget for ColorPicker {
             self.color_semantics_text(current, resolved.hdr_capable),
         ));
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        if !enabled {
+            node.state.disabled = true;
+            node.actions.clear();
+        }
         ctx.push(node);
         self.push_component_semantics(ctx, resolved);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {

@@ -2,6 +2,7 @@ use crate::DefaultTheme;
 use crate::IconGlyph;
 use crate::Progress;
 use crate::animation::AnimationSpec;
+use crate::binding::Binding;
 use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
@@ -104,6 +105,7 @@ impl From<&str> for TabBarItem {
 pub struct TabBar {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    pub(super) enabled: Binding<bool>,
     pub(super) name: String,
     pub(super) tabs: Vec<TabBarItem>,
     pub(super) selected: usize,
@@ -130,6 +132,7 @@ impl TabBar {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
+            enabled: Binding::new(true),
             name: name.into(),
             tabs: Vec::new(),
             selected: 0,
@@ -164,6 +167,48 @@ impl TabBar {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn tab(mut self, label: impl Into<String>) -> Self {
@@ -491,6 +536,16 @@ impl TabBar {
 
 impl Widget for TabBar {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         self.sync_external_selected(ctx);
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
@@ -606,7 +661,10 @@ impl Widget for TabBar {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
@@ -722,6 +780,10 @@ impl Widget for TabBar {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::TabBar, ctx.bounds());
         node.name = Some(self.name.clone());
         node.value = self
@@ -729,11 +791,15 @@ impl Widget for TabBar {
             .map(|value| SemanticsValue::Text(value.to_string()));
         node.state.focused = ctx.is_focused();
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        if !enabled {
+            node.state.disabled = true;
+            node.actions.clear();
+        }
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -1563,6 +1629,7 @@ pub(super) fn browser_tab_close_semantics_id(parent: WidgetId, index: usize) -> 
 pub struct SegmentedControl {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    pub(super) enabled: Binding<bool>,
     pub(super) name: String,
     pub(super) segments: Vec<SegmentedControlItem>,
     pub(super) selected: usize,
@@ -1630,6 +1697,7 @@ impl SegmentedControl {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
+            enabled: Binding::new(true),
             name: name.into(),
             segments: Vec::new(),
             selected: 0,
@@ -1661,6 +1729,48 @@ impl SegmentedControl {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn item(mut self, item: SegmentedControlItem) -> Self {
@@ -1876,6 +1986,16 @@ impl SegmentedControl {
 
 impl Widget for SegmentedControl {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(self.segment_at(ctx.bounds(), pointer.position), ctx);
@@ -1957,7 +2077,10 @@ impl Widget for SegmentedControl {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
@@ -2064,6 +2187,10 @@ impl Widget for SegmentedControl {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let selected = self.normalized_selected();
         let value = self
             .segments
@@ -2075,6 +2202,10 @@ impl Widget for SegmentedControl {
         group.value = value.map(SemanticsValue::Text);
         group.state.focused = ctx.is_focused();
         group.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        if !enabled {
+            group.state.disabled = true;
+            group.actions.clear();
+        }
         ctx.push(group);
 
         for (index, segment) in self.segments.iter().enumerate() {
@@ -2108,12 +2239,16 @@ impl Widget for SegmentedControl {
             } else {
                 sui_core::ToggleState::Unchecked
             });
+            if !enabled {
+                node.state.disabled = true;
+                node.actions.clear();
+            }
             ctx.push(node);
         }
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -2127,6 +2262,7 @@ impl Widget for SegmentedControl {
 pub struct Tabs {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    pub(super) enabled: Binding<bool>,
     pub(super) name: String,
     pub(super) labels: Vec<String>,
     pub(super) panels: WidgetChildren,
@@ -2152,6 +2288,7 @@ impl Tabs {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
+            enabled: Binding::new(true),
             name: name.into(),
             labels: Vec::new(),
             panels: WidgetChildren::new(),
@@ -2185,6 +2322,48 @@ impl Tabs {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     /// Select item `index`. This widget always shows one choice, so `None`
@@ -2387,6 +2566,16 @@ impl Tabs {
 
 impl Widget for Tabs {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(self.tab_at(ctx.bounds(), pointer.position), ctx);
@@ -2540,7 +2729,10 @@ impl Widget for Tabs {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
@@ -2661,6 +2853,10 @@ impl Widget for Tabs {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Tabs, ctx.bounds());
         node.name = Some(self.name.clone());
         node.value = self
@@ -2668,6 +2864,10 @@ impl Widget for Tabs {
             .map(|value| SemanticsValue::Text(value.to_string()));
         node.state.focused = ctx.is_focused();
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        if !enabled {
+            node.state.disabled = true;
+            node.actions.clear();
+        }
         ctx.push(node);
         if let Some(panel) = self.selected_panel() {
             panel.semantics(ctx);
@@ -2675,7 +2875,7 @@ impl Widget for Tabs {
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {

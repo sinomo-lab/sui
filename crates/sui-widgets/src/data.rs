@@ -1,3 +1,4 @@
+use crate::binding::Binding;
 use crate::draw::inset_rect;
 use std::{
     cell::{Cell, RefCell},
@@ -7,6 +8,7 @@ use std::{
     rc::Rc,
     time::{Duration, Instant},
 };
+use sui_reactive::Observable;
 
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
@@ -171,6 +173,7 @@ impl ListItem {
 pub struct ListView {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    enabled: Binding<bool>,
     name: String,
     items: Vec<ListItem>,
     selected: Option<usize>,
@@ -195,6 +198,7 @@ impl ListView {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
+            enabled: Binding::new(true),
             name: name.into(),
             items: Vec::new(),
             selected: None,
@@ -227,6 +231,48 @@ impl ListView {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn item(mut self, item: ListItem) -> Self {
@@ -460,6 +506,16 @@ impl ListView {
 
 impl Widget for ListView {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         self.sync_selected();
         let viewport = self.viewport_rect(ctx.bounds());
 
@@ -736,7 +792,10 @@ impl Widget for ListView {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let viewport = self.viewport_rect(ctx.bounds());
@@ -883,6 +942,10 @@ impl Widget for ListView {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::List, ctx.bounds());
         node.name = Some(self.name.clone());
         node.state.focused = ctx.is_focused();
@@ -891,6 +954,10 @@ impl Widget for ListView {
             .and_then(|index| self.items.get(index))
             .map(|item| SemanticsValue::Text(item.label.clone()));
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        if !enabled {
+            node.state.disabled = true;
+            node.actions.clear();
+        }
         ctx.push(node);
 
         for (index, item) in self.items.iter().enumerate() {
@@ -919,6 +986,10 @@ impl Widget for ListView {
                 if item.can_activate_from_row() {
                     row.actions = vec![SemanticsAction::Activate];
                 }
+                if !enabled {
+                    row.state.disabled = true;
+                    row.actions.clear();
+                }
                 ctx.push(row);
             }
 
@@ -929,7 +1000,7 @@ impl Widget for ListView {
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -1129,6 +1200,7 @@ type LayerListReorderCallback = Box<dyn FnMut(&mut EventCtx, LayerListReorderCha
 pub struct LayerList {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    enabled: Binding<bool>,
     name: String,
     layers: Vec<LayerListItem>,
     selected: Option<usize>,
@@ -1156,6 +1228,7 @@ impl LayerList {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
+            enabled: Binding::new(true),
             name: name.into(),
             layers: Vec::new(),
             selected: None,
@@ -1191,6 +1264,48 @@ impl LayerList {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn layer(mut self, layer: LayerListItem) -> Self {
@@ -1771,6 +1886,16 @@ impl LayerList {
 
 impl Widget for LayerList {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         self.sync_selected();
 
         match event {
@@ -1940,7 +2065,10 @@ impl Widget for LayerList {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let viewport = self.viewport_rect(ctx.bounds());
         let label_style = theme.body_text_style();
         let detail_style = caption_style(&theme);
@@ -1998,6 +2126,10 @@ impl Widget for LayerList {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::List, ctx.bounds());
         node.name = Some(self.name.clone());
         node.state.focused = ctx.is_focused();
@@ -2006,6 +2138,10 @@ impl Widget for LayerList {
             .and_then(|index| self.layers.get(index))
             .map(|layer| SemanticsValue::Text(layer.label.clone()));
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        if !enabled {
+            node.state.disabled = true;
+            node.actions.clear();
+        }
         ctx.push(node);
 
         for (index, layer) in self.layers.iter().enumerate() {
@@ -2031,6 +2167,10 @@ impl Widget for LayerList {
             row_node.state.selected = self.current_selected() == Some(index);
             if !layer.disabled {
                 row_node.actions = vec![SemanticsAction::Activate];
+            }
+            if !enabled {
+                row_node.state.disabled = true;
+                row_node.actions.clear();
             }
             ctx.push(row_node);
 
@@ -2060,6 +2200,10 @@ impl Widget for LayerList {
             if !layer.disabled {
                 visibility.actions = vec![SemanticsAction::Activate];
             }
+            if !enabled {
+                visibility.state.disabled = true;
+                visibility.actions.clear();
+            }
             ctx.push(visibility);
 
             let mut lock = SemanticsNode::new(
@@ -2088,12 +2232,16 @@ impl Widget for LayerList {
             if !layer.disabled {
                 lock.actions = vec![SemanticsAction::Activate];
             }
+            if !enabled {
+                lock.state.disabled = true;
+                lock.actions.clear();
+            }
             ctx.push(lock);
         }
     }
 
     fn accepts_focus(&self) -> bool {
-        !self.layers.is_empty()
+        self.enabled.get() && (!self.layers.is_empty())
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -2217,6 +2365,7 @@ impl TreeItem {
 pub struct TreeView {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    enabled: Binding<bool>,
     name: String,
     items: Vec<TreeItem>,
     selected: Option<Vec<usize>>,
@@ -2241,6 +2390,7 @@ impl TreeView {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
+            enabled: Binding::new(true),
             name: name.into(),
             items: Vec::new(),
             selected: None,
@@ -2273,6 +2423,48 @@ impl TreeView {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn item(mut self, item: TreeItem) -> Self {
@@ -2503,6 +2695,16 @@ impl TreeView {
 
 impl Widget for TreeView {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         self.sync_visible_rows();
         let viewport = self.viewport_rect(ctx.bounds());
 
@@ -2865,7 +3067,10 @@ impl Widget for TreeView {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let viewport = self.viewport_rect(ctx.bounds());
         let rows = &self.visible_rows;
@@ -2962,6 +3167,10 @@ impl Widget for TreeView {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Tree, ctx.bounds());
         node.name = Some(self.name.clone());
         node.state.focused = ctx.is_focused();
@@ -2996,6 +3205,10 @@ impl Widget for TreeView {
             SemanticsAction::Increment,
             SemanticsAction::Decrement,
         ];
+        if !enabled {
+            node.state.disabled = true;
+            node.actions.clear();
+        }
         ctx.push(node);
 
         for index in visible_indices {
@@ -3037,6 +3250,10 @@ impl Widget for TreeView {
                     SemanticsAction::Expand
                 });
             }
+            if !enabled {
+                item.state.disabled = true;
+                item.actions.clear();
+            }
             ctx.push(item);
 
             if let Some(content) = tree_item.and_then(|item| item.content.as_ref()) {
@@ -3046,7 +3263,7 @@ impl Widget for TreeView {
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -3167,6 +3384,7 @@ pub type DataGrid = Table;
 pub struct Table {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    enabled: Binding<bool>,
     name: String,
     name_reader: Option<Box<dyn Fn() -> String>>,
     columns: Vec<TableColumn>,
@@ -3190,6 +3408,7 @@ impl Table {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
+            enabled: Binding::new(true),
             name: name.into(),
             name_reader: None,
             columns: Vec::new(),
@@ -3221,6 +3440,48 @@ impl Table {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn name_when<F>(mut self, name: F) -> Self
@@ -3437,6 +3698,16 @@ impl Table {
 
 impl Widget for Table {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         let body = self.body_rect(ctx.bounds());
 
         match event {
@@ -3549,7 +3820,10 @@ impl Widget for Table {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let header_style = theme.text_style(palette.placeholder);
@@ -3673,6 +3947,10 @@ impl Widget for Table {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let mut node = SemanticsNode::new(ctx.widget_id(), SemanticsRole::Table, ctx.bounds());
         node.name = Some(self.name());
         node.state.focused = ctx.is_focused();
@@ -3683,11 +3961,15 @@ impl Widget for Table {
             .cloned()
             .map(SemanticsValue::Text);
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        if !enabled {
+            node.state.disabled = true;
+            node.actions.clear();
+        }
         ctx.push(node);
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
@@ -8799,6 +9081,53 @@ mod tests {
             (before_child.y() - after_child.y() - 24.0).abs() < 0.5,
             "custom tree child should move with scroll: before={before_child:?}, after={after_child:?}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_disabled_collection_ignores_input_and_disables_every_item() -> Result<()> {
+        let changes = Rc::new(RefCell::new(Vec::new()));
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            ListView::new("Files")
+                .items([ListItem::new("Alpha"), ListItem::new("Beta")])
+                .enabled(false)
+                .on_change(move |index, _| on_change.borrow_mut().push(index)),
+        );
+        let output = runtime.render(window_id)?;
+        let nodes = output
+            .semantics
+            .iter()
+            .filter(|node| matches!(node.role, SemanticsRole::List | SemanticsRole::ListItem))
+            .collect::<Vec<_>>();
+        assert!(nodes.len() >= 3, "the list and its items are announced");
+        assert!(
+            nodes
+                .iter()
+                .all(|node| node.state.disabled && node.actions.is_empty())
+        );
+        for at in [Point::new(30.0, 20.0), Point::new(30.0, 56.0)] {
+            runtime.handle_event(window_id, primary_pointer(PointerEventKind::Down, at, true))?;
+            runtime.handle_event(window_id, primary_pointer(PointerEventKind::Up, at, false))?;
+        }
+        assert!(
+            changes.borrow().is_empty(),
+            "a disabled list ignores clicks"
+        );
+
+        // The same clicks select rows once the list is enabled.
+        let on_change = Rc::clone(&changes);
+        let (mut runtime, window_id) = build_runtime(
+            ListView::new("Files")
+                .items([ListItem::new("Alpha"), ListItem::new("Beta")])
+                .on_change(move |index, _| on_change.borrow_mut().push(index)),
+        );
+        let _ = runtime.render(window_id)?;
+        for at in [Point::new(30.0, 20.0), Point::new(30.0, 56.0)] {
+            runtime.handle_event(window_id, primary_pointer(PointerEventKind::Down, at, true))?;
+            runtime.handle_event(window_id, primary_pointer(PointerEventKind::Up, at, false))?;
+        }
+        assert!(!changes.borrow().is_empty());
         Ok(())
     }
 

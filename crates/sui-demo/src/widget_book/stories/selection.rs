@@ -189,6 +189,17 @@ fn radio_group(ctx: &StoryCtx) -> Vec<Section> {
                 )),
             ),
             (
+                "Disabled",
+                boxed(sized(
+                    220.0,
+                    RadioGroup::new("Disabled render quality")
+                        .options(["Balanced", "High", "Fast"])
+                        .selected(0)
+                        .enabled(false)
+                        .theme(theme),
+                )),
+            ),
+            (
                 "Small",
                 boxed(sized(
                     220.0,
@@ -255,6 +266,16 @@ fn segmented_control(ctx: &StoryCtx) -> Vec<Section> {
                         SegmentedControl::new("Preview mode")
                             .segments(["Preview", "Inspect", "Compare"])
                             .selected(1)
+                            .theme(theme),
+                    ),
+                ),
+                (
+                    "Disabled",
+                    boxed(
+                        SegmentedControl::new("Disabled layout mode")
+                            .segments(["List", "Grid"])
+                            .selected(0)
+                            .enabled(false)
                             .theme(theme),
                     ),
                 ),

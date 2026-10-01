@@ -84,39 +84,55 @@ fn list_view(ctx: &StoryCtx) -> Vec<Section> {
     let theme = ctx.theme;
     let accent = theme.decorative.get(DecorativeHue::Blue).solid;
     let warm = theme.decorative.get(DecorativeHue::Orange).solid;
-    vec![example(
-        "",
-        SizedBox::new().width(360.0).height(236.0).with_child(
-            ListView::new("Assets list")
-                .padding(Insets::all(8.0))
-                .items([
-                    ListItem::new("Hero texture")
-                        .detail("2048 x 2048 RGBA")
-                        .accent(accent),
-                    ListItem::new("Normals atlas").detail("Streaming mip chain"),
-                    ListItem::new("Glass material").with_content(
-                        Stack::horizontal()
-                            .spacing(10.0)
-                            .alignment(Alignment::Center)
-                            .with_child(ctx.text("Glass material"))
-                            .with_child(
-                                StatusBadge::new("3 prefabs")
-                                    .tone(SemanticTone::Accent)
-                                    .theme(theme),
-                            ),
-                    ),
-                    ListItem::new("UI icon sheet")
-                        .detail("Tagged for export")
-                        .trailing("12 MB")
-                        .accent(warm),
-                    ListItem::new("Archive cache")
-                        .detail("Read only")
-                        .enabled(false),
-                ])
-                .selected(1)
-                .theme(theme),
+    vec![
+        example(
+            "",
+            SizedBox::new().width(360.0).height(236.0).with_child(
+                ListView::new("Assets list")
+                    .padding(Insets::all(8.0))
+                    .items([
+                        ListItem::new("Hero texture")
+                            .detail("2048 x 2048 RGBA")
+                            .accent(accent),
+                        ListItem::new("Normals atlas").detail("Streaming mip chain"),
+                        ListItem::new("Glass material").with_content(
+                            Stack::horizontal()
+                                .spacing(10.0)
+                                .alignment(Alignment::Center)
+                                .with_child(ctx.text("Glass material"))
+                                .with_child(
+                                    StatusBadge::new("3 prefabs")
+                                        .tone(SemanticTone::Accent)
+                                        .theme(theme),
+                                ),
+                        ),
+                        ListItem::new("UI icon sheet")
+                            .detail("Tagged for export")
+                            .trailing("12 MB")
+                            .accent(warm),
+                        ListItem::new("Archive cache")
+                            .detail("Read only")
+                            .enabled(false),
+                    ])
+                    .selected(1)
+                    .theme(theme),
+            ),
         ),
-    )]
+        example(
+            "Disabled",
+            SizedBox::new().width(360.0).height(96.0).with_child(
+                ListView::new("Disabled assets list")
+                    .padding(Insets::all(8.0))
+                    .items([
+                        ListItem::new("Hero texture"),
+                        ListItem::new("Normals atlas"),
+                    ])
+                    .selected(0)
+                    .enabled(false)
+                    .theme(theme),
+            ),
+        ),
+    ]
 }
 
 fn tree_view(ctx: &StoryCtx) -> Vec<Section> {

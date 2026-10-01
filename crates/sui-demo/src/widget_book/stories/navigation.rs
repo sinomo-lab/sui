@@ -72,6 +72,17 @@ fn tab_bar(ctx: &StoryCtx) -> Vec<Section> {
                             .theme(theme),
                     )),
                 ),
+                (
+                    "Disabled",
+                    boxed(sized(
+                        300.0,
+                        TabBar::new("Workspace tabs, disabled")
+                            .tabs(tabs)
+                            .selected(0)
+                            .enabled(false)
+                            .theme(theme),
+                    )),
+                ),
             ],
         ),
         size_strip(ctx, |size_theme| {

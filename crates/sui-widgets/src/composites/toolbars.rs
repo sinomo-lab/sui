@@ -3,6 +3,7 @@ use crate::DefaultTheme;
 use crate::IconGlyph;
 use crate::Progress;
 use crate::SemanticTone;
+use crate::binding::Binding;
 use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
@@ -35,6 +36,7 @@ use sui_layout::FlexWrap;
 use sui_layout::Padding as Insets;
 use sui_layout::arrange_flex;
 use sui_layout::flex_layout;
+use sui_reactive::Observable;
 use sui_runtime::ArrangeCtx;
 use sui_runtime::EventCtx;
 use sui_runtime::FrameClock;
@@ -938,6 +940,7 @@ impl ToolPaletteItem {
 pub struct ToolPalette {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    pub(super) enabled: Binding<bool>,
     pub(super) axis: Axis,
     pub(super) name: String,
     pub(super) items: Vec<ToolPaletteItem>,
@@ -974,6 +977,7 @@ impl ToolPalette {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
+            enabled: Binding::new(true),
             axis,
             name: name.into(),
             items: Vec::new(),
@@ -1010,6 +1014,48 @@ impl ToolPalette {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn item(mut self, item: ToolPaletteItem) -> Self {
@@ -1273,6 +1319,16 @@ impl ToolPalette {
 
 impl Widget for ToolPalette {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(self.hit_at(ctx.bounds(), pointer.position), ctx);
@@ -1390,7 +1446,10 @@ impl Widget for ToolPalette {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
@@ -1504,6 +1563,10 @@ impl Widget for ToolPalette {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let selected = self.current_selected();
         let mut node = SemanticsNode::new(
             ctx.widget_id(),
@@ -1516,6 +1579,10 @@ impl Widget for ToolPalette {
             .map(|item| SemanticsValue::Text(item.label.clone()));
         node.state.focused = ctx.is_focused();
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        if !enabled {
+            node.state.disabled = true;
+            node.actions.clear();
+        }
         ctx.push(node);
 
         for (index, item) in self.items.iter().enumerate() {
@@ -1536,12 +1603,16 @@ impl Widget for ToolPalette {
             if item.enabled {
                 item_node.actions = vec![SemanticsAction::Activate];
             }
+            if !enabled {
+                item_node.state.disabled = true;
+                item_node.actions.clear();
+            }
             ctx.push(item_node);
         }
     }
 
     fn accepts_focus(&self) -> bool {
-        self.items.iter().any(|item| item.enabled)
+        self.enabled.get() && (self.items.iter().any(|item| item.enabled))
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {

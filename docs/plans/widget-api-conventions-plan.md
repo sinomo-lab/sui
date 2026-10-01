@@ -50,6 +50,8 @@ Status: done.
 
 ## Phase 2b: Availability Beyond the Inputs
 
+Status: done.
+
 - The other interactive widgets take `enabled`, `enabled_when`, and
   `enabled_from`: `RadioGroup`, `SegmentedControl`, `TabBar`, `Tabs`,
   `ListView`, `Table`, `TreeView`, `LayerList`, `ColorPicker`,

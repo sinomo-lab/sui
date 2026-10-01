@@ -8,6 +8,7 @@ use crate::WidgetEffectRole;
 use crate::WidgetLuminanceRole;
 use crate::WidgetMaterialRole;
 use crate::animation::Reveal;
+use crate::binding::Binding;
 use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
@@ -54,6 +55,7 @@ use sui_core::Vector;
 use sui_core::WakeEvent;
 use sui_core::WidgetId;
 use sui_layout::Constraints;
+use sui_reactive::Observable;
 use sui_runtime::ArrangeCtx;
 use sui_runtime::Command;
 use sui_runtime::CommandKey;
@@ -97,6 +99,7 @@ pub enum TooltipAlignment {
 pub struct Menu {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    pub(super) enabled: Binding<bool>,
     pub(super) name: String,
     pub(super) items: Vec<MenuItem>,
     pub(super) highlighted: Option<usize>,
@@ -118,6 +121,7 @@ impl Menu {
         Self {
             theme: Box::new(theme),
             theme_reader: None,
+            enabled: Binding::new(true),
             name: name.into(),
             items: Vec::new(),
             highlighted: None,
@@ -146,6 +150,48 @@ impl Menu {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn item(mut self, item: MenuItem) -> Self {
@@ -310,6 +356,16 @@ impl Menu {
 
 impl Widget for Menu {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_highlighted(self.item_at(ctx.bounds(), pointer.position), ctx);
@@ -392,7 +448,10 @@ impl Widget for Menu {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
@@ -497,6 +556,10 @@ impl Widget for Menu {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let state = SemanticsState {
             focused: ctx.is_focused(),
             ..SemanticsState::default()
@@ -513,23 +576,32 @@ impl Widget for Menu {
             SemanticsAction::SetValue,
             SemanticsAction::Activate,
         ];
+        if !enabled {
+            node.state.disabled = true;
+            node.actions.clear();
+        }
         ctx.push(node);
         for (index, item) in self.items.iter().enumerate() {
             let Some(row) = self.item_rect(ctx.bounds(), index) else {
                 continue;
             };
-            ctx.push(menu_item_semantics_node(
+            let mut pushed_node = menu_item_semantics_node(
                 ctx.widget_id(),
                 index,
                 item,
                 row,
                 self.highlighted == Some(index),
-            ));
+            );
+            if !enabled {
+                pushed_node.state.disabled = true;
+                pushed_node.actions.clear();
+            }
+            ctx.push(pushed_node);
         }
     }
 
     fn accepts_focus(&self) -> bool {
-        true
+        self.enabled.get()
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {

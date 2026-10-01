@@ -3,6 +3,7 @@ use crate::DefaultTheme;
 use crate::IconGlyph;
 use crate::Progress;
 use crate::SemanticTone;
+use crate::binding::Binding;
 use crate::composites::forms::{
     set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
 };
@@ -31,6 +32,7 @@ use sui_core::Size;
 use sui_core::Vector;
 use sui_core::WidgetId;
 use sui_layout::Constraints;
+use sui_reactive::Observable;
 use sui_runtime::ArrangeCtx;
 use sui_runtime::EventCtx;
 use sui_runtime::FrameClock;
@@ -271,6 +273,7 @@ impl Widget for EmptyState {
 pub struct PresetStrip {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
+    pub(super) enabled: Binding<bool>,
     pub(super) name: String,
     pub(super) presets: Vec<String>,
     pub(super) selected: Option<usize>,
@@ -295,6 +298,7 @@ impl PresetStrip {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
+            enabled: Binding::new(true),
             name: name.into(),
             presets: Vec::new(),
             selected: None,
@@ -327,6 +331,48 @@ impl PresetStrip {
     {
         self.theme_reader = Some(Box::new(theme));
         self
+    }
+
+    /// Whether the user can use the widget. Disabled, it ignores input,
+    /// can't take focus, draws in the theme's disabled colors, and tells
+    /// assistive technology it and its items are unavailable.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled.set(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], read whenever the widget needs it.
+    pub fn enabled_when<F>(mut self, enabled: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.enabled.set_when(enabled);
+        self
+    }
+
+    /// [`Self::enabled`], following an observable and repainting when it
+    /// changes.
+    pub fn enabled_from<O>(mut self, enabled: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.enabled.set_from(enabled);
+        self
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.get()
+    }
+
+    /// The theme to paint with: the disabled look while the widget is
+    /// disabled.
+    fn paint_theme(&self) -> DefaultTheme {
+        let theme = self.resolved_theme();
+        if self.enabled.get() {
+            theme
+        } else {
+            theme.for_disabled_control()
+        }
     }
 
     pub fn preset(mut self, preset: impl Into<String>) -> Self {
@@ -521,6 +567,16 @@ impl PresetStrip {
 
 impl Widget for PresetStrip {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if !self.enabled.get() {
+            // Disabled, the widget takes no input, but it lets go of a
+            // pointer it captured while enabled.
+            if let Event::Pointer(pointer) = event
+                && pointer.kind == PointerEventKind::Up
+            {
+                ctx.release_pointer_capture(pointer.pointer_id);
+            }
+            return;
+        }
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(self.item_at(ctx.bounds(), pointer.position), ctx);
@@ -618,7 +674,10 @@ impl Widget for PresetStrip {
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
-        let theme = self.resolved_theme();
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let theme = self.paint_theme();
         let palette = theme.palette;
         let metrics = theme.metrics;
         let interaction = theme.interaction;
@@ -705,6 +764,10 @@ impl Widget for PresetStrip {
     }
 
     fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.enabled.observe(|source| {
+            ctx.observe(source);
+        });
+        let enabled = self.enabled.get();
         let mut node = SemanticsNode::new(
             ctx.widget_id(),
             SemanticsRole::GenericContainer,
@@ -714,6 +777,10 @@ impl Widget for PresetStrip {
         node.value = self.selected_text().map(SemanticsValue::Text);
         node.state.focused = ctx.is_focused();
         node.actions = vec![SemanticsAction::Focus, SemanticsAction::SetValue];
+        if !enabled {
+            node.state.disabled = true;
+            node.actions.clear();
+        }
         ctx.push(node);
 
         let selected = self.current_selected();
@@ -732,12 +799,16 @@ impl Widget for PresetStrip {
             item.state.hovered = self.hovered == Some(index);
             item.state.selected = selected == Some(index);
             item.actions = vec![SemanticsAction::Activate];
+            if !enabled {
+                item.state.disabled = true;
+                item.actions.clear();
+            }
             ctx.push(item);
         }
     }
 
     fn accepts_focus(&self) -> bool {
-        !self.presets.is_empty()
+        self.enabled.get() && (!self.presets.is_empty())
     }
 
     fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {

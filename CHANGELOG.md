@@ -84,6 +84,12 @@ Versioning, with the usual expectation that the API may change during the
   `selected(None)` clears it. `TreeView` gains `selected_path`. Breaking:
   `TabBar`, `Tabs`, and `SegmentedControl` return `Option<usize>` from
   `selected_index()`, `None` only when they have no items.
+- Collections and choice groups can be disabled too: `RadioGroup`,
+  `SegmentedControl`, `TabBar`, `Tabs`, `ListView`, `Table`, `TreeView`,
+  `LayerList`, `ColorPicker`, `ColorPalette`, `ToolPalette`, `PresetStrip`,
+  and `Menu` take `enabled`, `enabled_when`, and `enabled_from`. Disabled,
+  the widget and each of its items report themselves disabled with no
+  actions.
 - Items take `enabled(bool)`; `disabled()` is deprecated. Breaking:
   `read_only()` takes a `bool` on `TextInput`, `TextArea`, `PasswordInput`,
   `DateTimeInput`, `ColorSwatch`, and `TextSurface`, which also gain
