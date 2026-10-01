@@ -2284,20 +2284,170 @@ fn drag_edge_speed(position: f32, start: f32, end: f32) -> f32 {
     }
 }
 
+/// How far back before release a touch drag's speed is measured, in seconds.
+const TOUCH_VELOCITY_WINDOW: f64 = 0.1;
+/// A finger that rested this long before lifting releases without speed.
+const TOUCH_VELOCITY_STALE: f64 = 0.05;
+const TOUCH_VELOCITY_SAMPLES: usize = 8;
+/// How quickly a fling slows, per second: velocity decays by `e^-friction`
+/// each second, close to the 0.998-per-millisecond deceleration of iOS.
+const TOUCH_FLING_FRICTION: f32 = 2.0;
+/// Release speeds below this, in pixels a second, stop where they lift.
+const TOUCH_FLING_MIN_SPEED: f32 = 60.0;
+/// A fling ends once it slows below this, in pixels a second.
+const TOUCH_FLING_STOP_SPEED: f32 = 12.0;
+const TOUCH_FLING_MAX_SPEED: f32 = 8_000.0;
+
+/// Recent positions of a touch drag, for its speed when the finger lifts.
+#[derive(Debug, Clone, Copy)]
+struct TouchVelocity {
+    samples: [(f64, Point); TOUCH_VELOCITY_SAMPLES],
+    len: usize,
+    next: usize,
+}
+
+impl TouchVelocity {
+    fn new(time: f64, position: Point) -> Self {
+        let mut velocity = Self {
+            samples: [(time, position); TOUCH_VELOCITY_SAMPLES],
+            len: 0,
+            next: 0,
+        };
+        velocity.push(time, position);
+        velocity
+    }
+
+    fn push(&mut self, time: f64, position: Point) {
+        self.samples[self.next] = (time, position);
+        self.next = (self.next + 1) % TOUCH_VELOCITY_SAMPLES;
+        self.len = (self.len + 1).min(TOUCH_VELOCITY_SAMPLES);
+    }
+
+    fn sample(&self, back: usize) -> (f64, Point) {
+        self.samples[(self.next + TOUCH_VELOCITY_SAMPLES - back) % TOUCH_VELOCITY_SAMPLES]
+    }
+
+    /// The finger's velocity in pixels a second as it lifts at `time`.
+    fn release(&self, time: f64) -> Vector {
+        if self.len < 2 {
+            return Vector::ZERO;
+        }
+        let newest = self.sample(1);
+        if time - newest.0 > TOUCH_VELOCITY_STALE {
+            return Vector::ZERO;
+        }
+        let mut oldest = newest;
+        for back in 2..=self.len {
+            let sample = self.sample(back);
+            if newest.0 - sample.0 > TOUCH_VELOCITY_WINDOW {
+                break;
+            }
+            oldest = sample;
+        }
+        let span = newest.0 - oldest.0;
+        if span <= f64::EPSILON {
+            return Vector::ZERO;
+        }
+        let distance = newest.1 - oldest.1;
+        let span = span as f32;
+        Vector::new(distance.x / span, distance.y / span)
+    }
+}
+
+/// Scrolling that coasts on after a touch drag lets go, slowing to a stop.
+#[derive(Debug, Clone, Copy, Default)]
+struct TouchFling {
+    /// Scroll offset change in pixels a second; zero when not coasting.
+    velocity: Vector,
+}
+
+impl TouchFling {
+    fn is_active(&self) -> bool {
+        self.velocity != Vector::ZERO
+    }
+
+    /// Stop coasting, reporting whether it was.
+    fn stop(&mut self) -> bool {
+        let was_active = self.is_active();
+        self.velocity = Vector::ZERO;
+        was_active
+    }
+
+    /// Coast at `velocity`, in scroll offset pixels a second, when it is
+    /// fast enough to be a fling.
+    fn start(&mut self, ctx: &mut EventCtx, velocity: Vector) {
+        let speed = velocity.x.hypot(velocity.y);
+        if !speed.is_finite() || speed < TOUCH_FLING_MIN_SPEED {
+            self.stop();
+            return;
+        }
+        let scale = (TOUCH_FLING_MAX_SPEED / speed).min(1.0);
+        self.velocity = Vector::new(velocity.x * scale, velocity.y * scale);
+        ctx.request_animation_frame();
+    }
+
+    /// How far to scroll for a frame `delta` seconds after the last one,
+    /// slowing the fling by as much.
+    fn step(&mut self, delta: f64) -> Vector {
+        // A long gap, like the first frame after a pause, would jump.
+        let seconds = delta.clamp(0.0, 1.0 / 20.0) as f32;
+        let decay = (-TOUCH_FLING_FRICTION * seconds).exp();
+        // The distance covered while the velocity decays over the frame.
+        let travel = (1.0 - decay) / TOUCH_FLING_FRICTION;
+        let step = Vector::new(self.velocity.x * travel, self.velocity.y * travel);
+        self.velocity = Vector::new(self.velocity.x * decay, self.velocity.y * decay);
+        if self.velocity.x.hypot(self.velocity.y) < TOUCH_FLING_STOP_SPEED {
+            self.stop();
+        }
+        step
+    }
+
+    /// Drop the motion along any axis where `step` moved nothing, as at a
+    /// scroll limit.
+    fn block(&mut self, step: Vector, moved: Vector) {
+        if step.x != 0.0 && moved.x.abs() <= f32::EPSILON {
+            self.velocity.x = 0.0;
+        }
+        if step.y != 0.0 && moved.y.abs() <= f32::EPSILON {
+            self.velocity.y = 0.0;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct TouchScrollGesture {
     pointer_id: u64,
     start_position: Point,
     dragging: bool,
+    velocity: TouchVelocity,
 }
 
 impl TouchScrollGesture {
-    fn new(pointer: &PointerEvent) -> Self {
+    fn new(pointer: &PointerEvent, time: f64) -> Self {
         Self {
             pointer_id: pointer.pointer_id,
             start_position: pointer.position,
             dragging: false,
+            velocity: TouchVelocity::new(time, pointer.position),
         }
+    }
+
+    /// The scroll velocity to coast at when the finger lifts at `time`:
+    /// opposite the finger's, along the axes the view scrolls.
+    fn release_velocity(&self, time: f64, axes: ScrollAxes) -> Vector {
+        let finger = self.velocity.release(time);
+        Vector::new(
+            if axes.allows_horizontal() {
+                -finger.x
+            } else {
+                0.0
+            },
+            if axes.allows_vertical() {
+                -finger.y
+            } else {
+                0.0
+            },
+        )
     }
 
     fn matches(self, pointer: &PointerEvent) -> bool {
@@ -3530,6 +3680,7 @@ pub struct ScrollView {
     scroll_bars: bool,
     bars: Option<ScrollBars>,
     touch_scroll: Option<TouchScrollGesture>,
+    touch_fling: TouchFling,
     drag_auto_scroll: DragAutoScroll,
     child: SingleChild,
 }
@@ -3559,6 +3710,7 @@ impl ScrollView {
             scroll_bars: true,
             bars: None,
             touch_scroll: None,
+            touch_fling: TouchFling::default(),
             drag_auto_scroll: DragAutoScroll::default(),
             child: SingleChild::new(child),
         }
@@ -3852,6 +4004,9 @@ impl ScrollView {
 
     fn handle_touch_pointer(&mut self, ctx: &mut EventCtx, pointer: &PointerEvent, viewport: Size) {
         if pointer.pointer_kind != PointerKind::Touch {
+            if pointer.kind == PointerEventKind::Down && ctx.bounds().contains(pointer.position) {
+                self.touch_fling.stop();
+            }
             return;
         }
 
@@ -3862,7 +4017,12 @@ impl ScrollView {
                     && self.viewport_rect(ctx.bounds()).contains(pointer.position)
                     && self.has_touch_overflow() =>
             {
-                self.touch_scroll = Some(TouchScrollGesture::new(pointer));
+                self.touch_scroll = Some(TouchScrollGesture::new(pointer, ctx.current_time()));
+                // A touch that catches a fling only stops it, rather than also
+                // pressing whatever lies beneath.
+                if self.touch_fling.stop() {
+                    ctx.set_handled();
+                }
             }
             PointerEventKind::Move => {
                 let Some(gesture) = self.touch_scroll else {
@@ -3870,6 +4030,9 @@ impl ScrollView {
                 };
                 if !gesture.matches(pointer) || ctx.phase() == EventPhase::Capture {
                     return;
+                }
+                if let Some(gesture) = &mut self.touch_scroll {
+                    gesture.velocity.push(ctx.current_time(), pointer.position);
                 }
                 if !gesture.dragging && !gesture.passed_threshold(pointer, self.scroll_axes()) {
                     return;
@@ -3913,6 +4076,11 @@ impl ScrollView {
                 if gesture.dragging && ctx.phase() != EventPhase::Capture {
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.set_handled();
+                    if pointer.kind == PointerEventKind::Up {
+                        let velocity =
+                            gesture.release_velocity(ctx.current_time(), self.scroll_axes());
+                        self.touch_fling.start(ctx, velocity);
+                    }
                 }
             }
             _ => {}
@@ -4029,6 +4197,7 @@ pub struct VirtualScrollView {
     scroll_bars: bool,
     bars: Option<ScrollBars>,
     touch_scroll: Option<TouchScrollGesture>,
+    touch_fling: TouchFling,
     drag_auto_scroll: DragAutoScroll,
     children: WidgetChildren,
 }
@@ -4053,6 +4222,7 @@ impl VirtualScrollView {
             scroll_bars: true,
             bars: None,
             touch_scroll: None,
+            touch_fling: TouchFling::default(),
             drag_auto_scroll: DragAutoScroll::default(),
             children: WidgetChildren::new(),
         }
@@ -4178,6 +4348,9 @@ impl VirtualScrollView {
 
     fn handle_touch_pointer(&mut self, ctx: &mut EventCtx, pointer: &PointerEvent, viewport: Rect) {
         if pointer.pointer_kind != PointerKind::Touch {
+            if pointer.kind == PointerEventKind::Down && ctx.bounds().contains(pointer.position) {
+                self.touch_fling.stop();
+            }
             return;
         }
 
@@ -4188,7 +4361,12 @@ impl VirtualScrollView {
                     && ctx.bounds().contains(pointer.position)
                     && self.has_touch_overflow() =>
             {
-                self.touch_scroll = Some(TouchScrollGesture::new(pointer));
+                self.touch_scroll = Some(TouchScrollGesture::new(pointer, ctx.current_time()));
+                // A touch that catches a fling only stops it, rather than also
+                // pressing whatever lies beneath.
+                if self.touch_fling.stop() {
+                    ctx.set_handled();
+                }
             }
             PointerEventKind::Move => {
                 let Some(gesture) = self.touch_scroll else {
@@ -4196,6 +4374,9 @@ impl VirtualScrollView {
                 };
                 if !gesture.matches(pointer) || ctx.phase() == EventPhase::Capture {
                     return;
+                }
+                if let Some(gesture) = &mut self.touch_scroll {
+                    gesture.velocity.push(ctx.current_time(), pointer.position);
                 }
                 if !gesture.dragging && !gesture.passed_threshold(pointer, ScrollAxes::Vertical) {
                     return;
@@ -4235,6 +4416,11 @@ impl VirtualScrollView {
                 if gesture.dragging && ctx.phase() != EventPhase::Capture {
                     ctx.release_pointer_capture(pointer.pointer_id);
                     ctx.set_handled();
+                    if pointer.kind == PointerEventKind::Up {
+                        let velocity =
+                            gesture.release_velocity(ctx.current_time(), ScrollAxes::Vertical);
+                        self.touch_fling.start(ctx, velocity);
+                    }
                 }
             }
             _ => {}
@@ -4420,6 +4606,7 @@ impl Widget for ScrollView {
                     .scroll_delta
                     .map(scroll_delta_to_offset)
                     .unwrap_or(pointer.delta);
+                self.touch_fling.stop();
                 if self.scroll_by(viewport, Vector::new(-delta.x, -delta.y), ctx) {
                     ctx.set_handled();
                 }
@@ -4443,11 +4630,23 @@ impl Widget for ScrollView {
                     self.drag_auto_scroll.stop();
                 }
             }
+            Event::Wake(WakeEvent::AnimationFrame { delta, .. })
+                if self.touch_fling.is_active() =>
+            {
+                let step = self.touch_fling.step(*delta);
+                let before = self.offset;
+                self.scroll_by(viewport, step, ctx);
+                self.touch_fling.block(step, self.offset - before);
+                if self.touch_fling.is_active() {
+                    ctx.request_animation_frame();
+                }
+            }
             Event::Keyboard(key)
                 if ctx.phase() != EventPhase::Capture
                     && ctx.is_focused()
                     && key.state == sui_core::KeyState::Pressed =>
             {
+                self.touch_fling.stop();
                 let line = 40.0;
                 let page = (viewport.height * 0.85).max(line);
                 let delta = match key.key.as_str() {
@@ -4704,6 +4903,7 @@ impl Widget for VirtualScrollView {
                     .scroll_delta
                     .map(scroll_delta_to_offset)
                     .unwrap_or(pointer.delta);
+                self.touch_fling.stop();
                 if self.scroll_by(viewport, -delta.y, ctx) {
                     ctx.set_handled();
                 }
@@ -4722,11 +4922,24 @@ impl Widget for VirtualScrollView {
                     self.drag_auto_scroll.stop();
                 }
             }
+            Event::Wake(WakeEvent::AnimationFrame { delta, .. })
+                if self.touch_fling.is_active() =>
+            {
+                let step = self.touch_fling.step(*delta);
+                let before = self.offset_y;
+                self.scroll_by(viewport, step.y, ctx);
+                self.touch_fling
+                    .block(step, Vector::new(0.0, self.offset_y - before));
+                if self.touch_fling.is_active() {
+                    ctx.request_animation_frame();
+                }
+            }
             Event::Keyboard(key)
                 if ctx.phase() != EventPhase::Capture
                     && ctx.is_focused()
                     && key.state == sui_core::KeyState::Pressed =>
             {
+                self.touch_fling.stop();
                 let line = 40.0;
                 let page = (viewport.height() * 0.85).max(line);
                 let delta = match key.key.as_str() {
@@ -8630,6 +8843,237 @@ mod tests {
         assert_eq!(inner_state.current_offset(), Vector::new(0.0, 80.0));
         assert_eq!(outer_state.current_offset(), Vector::new(0.0, 24.0));
         assert_eq!(runtime.pointer_capture_target(window_id, 9).unwrap(), None);
+    }
+
+    /// Drag touch `pointer_id` up by `step` pixels each sixtieth of a second,
+    /// `moves` times, starting at `time`; returns the time of the last move.
+    fn touch_swipe_up(
+        runtime: &mut Runtime,
+        window_id: sui_core::WindowId,
+        pointer_id: u64,
+        start: Point,
+        step: f32,
+        moves: usize,
+        time: f64,
+    ) -> (f64, Point) {
+        runtime.tick(time);
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(touch_pointer(
+                    PointerEventKind::Down,
+                    pointer_id,
+                    start,
+                    Vector::ZERO,
+                )),
+            )
+            .unwrap();
+        let mut time = time;
+        let mut position = start;
+        for _ in 0..moves {
+            time += 1.0 / 60.0;
+            position = Point::new(position.x, position.y - step);
+            runtime.tick(time);
+            runtime
+                .handle_event(
+                    window_id,
+                    Event::Pointer(touch_pointer(
+                        PointerEventKind::Move,
+                        pointer_id,
+                        position,
+                        Vector::new(0.0, -step),
+                    )),
+                )
+                .unwrap();
+        }
+        (time, position)
+    }
+
+    fn touch_up(
+        runtime: &mut Runtime,
+        window_id: sui_core::WindowId,
+        pointer_id: u64,
+        position: Point,
+        time: f64,
+    ) {
+        runtime.tick(time);
+        runtime
+            .handle_event(
+                window_id,
+                Event::Pointer(touch_pointer(
+                    PointerEventKind::Up,
+                    pointer_id,
+                    position,
+                    Vector::ZERO,
+                )),
+            )
+            .unwrap();
+    }
+
+    /// Run animation frames from `time` for `seconds`; returns the end time.
+    fn run_frames(runtime: &mut Runtime, time: f64, seconds: f64) -> f64 {
+        let mut now = time;
+        while now < time + seconds {
+            now += 1.0 / 120.0;
+            runtime.tick(now);
+            handle_ready_events(runtime);
+        }
+        now
+    }
+
+    #[test]
+    fn touch_fling_coasts_after_release_and_slows_to_a_stop() {
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
+                ScrollView::vertical(OverflowingBox::new(
+                    Size::new(80.0, 4_000.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .state(state.clone()),
+            ),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        // Six moves of 10 pixels each sixtieth of a second: 600 pixels a second.
+        let (time, position) = touch_swipe_up(
+            &mut runtime,
+            window_id,
+            5,
+            Point::new(20.0, 30.0),
+            10.0,
+            6,
+            1.0,
+        );
+        touch_up(&mut runtime, window_id, 5, position, time);
+        assert_eq!(state.current_offset(), Vector::new(0.0, 60.0));
+        assert!(runtime.has_pending_animation_frames(window_id).unwrap());
+
+        let time = run_frames(&mut runtime, time, 0.25);
+        let coasting = state.current_offset().y;
+        assert!(
+            coasting > 150.0,
+            "fling should keep scrolling, at {coasting}"
+        );
+
+        let _ = run_frames(&mut runtime, time, 5.0);
+        let settled = state.current_offset().y;
+        assert!(settled > coasting);
+        // Exponential friction covers at most velocity / friction.
+        assert!(settled <= 60.0 + 600.0 / super::TOUCH_FLING_FRICTION + 1.0);
+        assert!(!runtime.has_pending_animation_frames(window_id).unwrap());
+    }
+
+    #[test]
+    fn touch_release_after_resting_does_not_fling() {
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().size(Size::new(80.0, 40.0)).child(
+                ScrollView::vertical(OverflowingBox::new(
+                    Size::new(80.0, 4_000.0),
+                    Color::rgba(0.2, 0.3, 0.7, 1.0),
+                ))
+                .state(state.clone()),
+            ),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        let (time, position) = touch_swipe_up(
+            &mut runtime,
+            window_id,
+            5,
+            Point::new(20.0, 30.0),
+            10.0,
+            6,
+            1.0,
+        );
+        touch_up(&mut runtime, window_id, 5, position, time + 0.2);
+        let _ = run_frames(&mut runtime, time + 0.2, 0.5);
+
+        assert_eq!(state.current_offset(), Vector::new(0.0, 60.0));
+    }
+
+    #[test]
+    fn touch_catching_a_fling_stops_it_without_pressing_content() {
+        let presses = Rc::new(Cell::new(0usize));
+        let mut content = Stack::vertical();
+        for index in 0..100 {
+            let presses = Rc::clone(&presses);
+            content.push(
+                crate::Button::new(format!("Row {index}"))
+                    .on_press(move || presses.set(presses.get() + 1)),
+            );
+        }
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(100.0, 80.0))
+                .child(ScrollView::vertical(content).state(state.clone())),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        let (time, position) = touch_swipe_up(
+            &mut runtime,
+            window_id,
+            6,
+            Point::new(20.0, 70.0),
+            10.0,
+            6,
+            1.0,
+        );
+        touch_up(&mut runtime, window_id, 6, position, time);
+        let time = run_frames(&mut runtime, time, 0.1);
+        let _ = runtime.render(window_id).unwrap();
+        let caught_at = state.current_offset();
+
+        runtime.tick(time);
+        for kind in [PointerEventKind::Down, PointerEventKind::Up] {
+            runtime
+                .handle_event(
+                    window_id,
+                    Event::Pointer(touch_pointer(kind, 7, Point::new(20.0, 20.0), Vector::ZERO)),
+                )
+                .unwrap();
+        }
+        let _ = run_frames(&mut runtime, time, 0.5);
+
+        assert_eq!(state.current_offset(), caught_at);
+        assert_eq!(presses.get(), 0);
+    }
+
+    #[test]
+    fn virtual_scroll_view_fling_stops_at_the_end() {
+        let mut view = VirtualScrollView::new();
+        for _ in 0..3 {
+            view.push(FixedBox::new(
+                Size::new(80.0, 40.0),
+                Color::rgba(0.2, 0.3, 0.7, 1.0),
+            ));
+        }
+        let state = ScrollState::new();
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(80.0, 40.0))
+                .child(view.state(state.clone())),
+        );
+        let _ = runtime.render(window_id).unwrap();
+
+        // 360 pixels a second coasts up to 180 pixels, past the 50 left.
+        let (time, position) = touch_swipe_up(
+            &mut runtime,
+            window_id,
+            8,
+            Point::new(20.0, 35.0),
+            6.0,
+            5,
+            1.0,
+        );
+        assert_eq!(state.current_offset(), Vector::new(0.0, 30.0));
+        touch_up(&mut runtime, window_id, 8, position, time);
+        let _ = run_frames(&mut runtime, time, 1.0);
+
+        assert_eq!(state.current_offset(), Vector::new(0.0, 80.0));
+        assert!(!runtime.has_pending_animation_frames(window_id).unwrap());
     }
 
     #[test]
