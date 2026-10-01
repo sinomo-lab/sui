@@ -1010,9 +1010,11 @@ export interface ButtonOptions {
 
 export function button(label: State | BindingValue, options?: ButtonOptions): Widget;
 
-export function Icon(glyph: IconGlyph | string, label?: string, size?: number, color?: Color): Widget;
+export function Icon(glyph: IconGlyph | string, semanticName?: string, size?: number, color?: Color): Widget;
 
 export interface IconOptions {
+  semanticName?: string;
+  /** @deprecated Use `semanticName`. */
   label?: string;
   size?: number;
   color?: Color;
@@ -1043,28 +1045,38 @@ export interface LinkOptions {
 
 export function link(label: State | BindingValue, url: State | BindingValue, options?: LinkOptions): Widget;
 
-export function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onToggle?: (checked: boolean) => void): Widget;
+export function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
 
 export interface CheckboxOptions {
   checked?: State | boolean | number;
+  onChange?: (checked: boolean) => void;
+  /** @deprecated Use `onChange`. */
   onToggle?: (checked: boolean) => void;
 }
 
 export function checkbox(label: State | BindingValue, options?: CheckboxOptions): Widget;
 
-export function Switch(label: State | BindingValue, on?: State | boolean | number, onToggle?: (on: boolean) => void): Widget;
+export function Switch(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
 
 export interface SwitchOptions {
+  checked?: State | boolean | number;
+  /** @deprecated Use `checked`. */
   on?: State | boolean | number;
-  onToggle?: (on: boolean) => void;
+  onChange?: (checked: boolean) => void;
+  /** @deprecated Use `onChange`. */
+  onToggle?: (checked: boolean) => void;
 }
 
 export function switchControl(label: State | BindingValue, options?: SwitchOptions): Widget;
 
-export function RadioButton(label: State | BindingValue, selected?: State | boolean | number, onSelect?: () => void): Widget;
+export function RadioButton(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
 
 export interface RadioButtonOptions {
+  checked?: State | boolean | number;
+  /** @deprecated Use `checked`. */
   selected?: State | boolean | number;
+  onChange?: (checked: boolean) => void;
+  /** @deprecated Use `onChange`. */
   onSelect?: () => void;
 }
 
@@ -1287,9 +1299,11 @@ export interface RichDocumentViewOptions {
 
 export function richDocumentView(document: RichDocument, options?: RichDocumentViewOptions): Widget;
 
-export function Image(image: ImageHandle, label?: string, fit?: ImageFit, size?: Size): Widget;
+export function Image(image: ImageHandle, semanticName?: string, fit?: ImageFit, size?: Size): Widget;
 
 export interface ImageOptions {
+  semanticName?: string;
+  /** @deprecated Use `semanticName`. */
   label?: string;
   fit?: ImageFit;
   size?: Size;
@@ -1332,13 +1346,15 @@ export interface EmptyStateOptions {
 
 export function emptyState(title: string, description: string, options?: EmptyStateOptions): Widget;
 
-export function Surface(child: Widget, role?: SurfaceRole | string, name?: string, border?: SurfaceBorder | string, elevation?: SurfaceElevation | string, radius?: number, padding?: number, fillWidth?: boolean, fillHeight?: boolean): Widget;
+export function Surface(child: Widget, role?: SurfaceRole | string, name?: string, border?: SurfaceBorder | string, elevation?: SurfaceElevation | string, cornerRadius?: number, padding?: number, fillWidth?: boolean, fillHeight?: boolean): Widget;
 
 export interface SurfaceOptions {
   role?: SurfaceRole | string;
   name?: string;
   border?: SurfaceBorder | string;
   elevation?: SurfaceElevation | string;
+  cornerRadius?: number;
+  /** @deprecated Use `cornerRadius`. */
   radius?: number;
   padding?: number;
   fillWidth?: boolean;
@@ -1347,13 +1363,15 @@ export interface SurfaceOptions {
 
 export function surface(child: Widget, options?: SurfaceOptions): Widget;
 
-export function Toolbar(children: Widget[], axis?: Axis, name?: string, extent?: number, padding?: number, spacing?: number, background?: Color, divider?: boolean): Widget;
+export function Toolbar(children: Widget[], axis?: Axis, name?: string, extent?: number, padding?: number, gap?: number, background?: Color, divider?: boolean): Widget;
 
 export interface ToolbarOptions {
   axis?: Axis;
   name?: string;
   extent?: number;
   padding?: number;
+  gap?: number;
+  /** @deprecated Use `gap`. */
   spacing?: number;
   background?: Color;
   divider?: boolean;
@@ -1650,10 +1668,12 @@ export interface DropTargetOptions {
 
 export function dropTarget(scope: DragScope, child: Widget, options?: DropTargetOptions): Widget;
 
-export function VirtualList(name: string, model: VirtualListModel, estimatedRowHeight?: number, spacing?: number, padding?: number, rowPadding?: number, overscanViewports?: number, cacheCapacity?: number, selectable?: boolean, transparent?: boolean, stickToEnd?: boolean, overlayScrollBars?: boolean, onChange?: (key: string) => void, onNearStart?: () => void, onNearEnd?: () => void): Widget;
+export function VirtualList(name: string, model: VirtualListModel, estimatedRowHeight?: number, gap?: number, padding?: number, rowPadding?: number, overscanViewports?: number, cacheCapacity?: number, selectable?: boolean, transparent?: boolean, stickToEnd?: boolean, overlayScrollBars?: boolean, onChange?: (key: string) => void, onNearStart?: () => void, onNearEnd?: () => void): Widget;
 
 export interface VirtualListOptions {
   estimatedRowHeight?: number;
+  gap?: number;
+  /** @deprecated Use `gap`. */
   spacing?: number;
   padding?: number;
   rowPadding?: number;
@@ -1762,18 +1782,22 @@ export interface TabsOptions {
 
 export function tabs(name: State | BindingValue, tabs: string[], options?: TabsOptions): Widget;
 
-export function Dialog(title: State | BindingValue, content: Widget, shown?: State | boolean | number): Widget;
+export function Dialog(title: State | BindingValue, content: Widget, open?: State | boolean | number): Widget;
 
 export interface DialogOptions {
+  open?: State | boolean | number;
+  /** @deprecated Use `open`. */
   shown?: State | boolean | number;
 }
 
 export function dialog(title: State | BindingValue, content: Widget, options?: DialogOptions): Widget;
 
-export function CommandPalette(name: string, content: Widget, description?: string, shown?: State | boolean | number, maxWidth?: number, onDismiss?: () => void): Widget;
+export function CommandPalette(name: string, content: Widget, description?: string, open?: State | boolean | number, maxWidth?: number, onDismiss?: () => void): Widget;
 
 export interface CommandPaletteOptions {
   description?: string;
+  open?: State | boolean | number;
+  /** @deprecated Use `open`. */
   shown?: State | boolean | number;
   maxWidth?: number;
   onDismiss?: () => void;
@@ -1817,10 +1841,12 @@ export interface SizedBoxOptions {
 
 export function sizedBox(options?: SizedBoxOptions): Widget;
 
-export function Stack(children: Widget[], axis?: Axis, spacing?: number, alignment?: "start" | "center" | "end" | "stretch"): Widget;
+export function Stack(children: Widget[], axis?: Axis, gap?: number, alignment?: "start" | "center" | "end" | "stretch"): Widget;
 
 export interface StackOptions {
   axis?: Axis;
+  gap?: number;
+  /** @deprecated Use `gap`. */
   spacing?: number;
   alignment?: "start" | "center" | "end" | "stretch";
 }
@@ -1847,9 +1873,11 @@ export interface FormRowOptions {
 
 export function formRow(label: string, control: Widget, options?: FormRowOptions): Widget;
 
-export function FieldGroup(children: Widget[], spacing?: number, padding?: number, maxWidth?: number, fillWidth?: boolean): Widget;
+export function FieldGroup(children: Widget[], gap?: number, padding?: number, maxWidth?: number, fillWidth?: boolean): Widget;
 
 export interface FieldGroupOptions {
+  gap?: number;
+  /** @deprecated Use `gap`. */
   spacing?: number;
   padding?: number;
   maxWidth?: number;
@@ -1858,7 +1886,7 @@ export interface FieldGroupOptions {
 
 export function fieldGroup(children: Widget[], options?: FieldGroupOptions): Widget;
 
-export function FormSection(title: string, child: Widget, description?: string, headerAction?: Widget, padding?: number, bodyGap?: number, headerGap?: number, maxWidth?: number, fillWidth?: boolean, radius?: number, elevation?: SurfaceElevation | string): Widget;
+export function FormSection(title: string, child: Widget, description?: string, headerAction?: Widget, padding?: number, bodyGap?: number, headerGap?: number, maxWidth?: number, fillWidth?: boolean, cornerRadius?: number, elevation?: SurfaceElevation | string): Widget;
 
 export interface FormSectionOptions {
   description?: string;
@@ -1868,6 +1896,8 @@ export interface FormSectionOptions {
   headerGap?: number;
   maxWidth?: number;
   fillWidth?: boolean;
+  cornerRadius?: number;
+  /** @deprecated Use `cornerRadius`. */
   radius?: number;
   elevation?: SurfaceElevation | string;
 }
@@ -1918,7 +1948,7 @@ export interface PopoverOptions {
 
 export function popover(name: string, trigger: Widget, content: Widget, options?: PopoverOptions): Widget;
 
-export function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: number, value: string) => void, extent?: number, padding?: number, spacing?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean): Widget;
+export function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: number, value: string) => void, extent?: number, padding?: number, gap?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean): Widget;
 
 export interface ToolPaletteOptions {
   selected?: State | number | boolean;
@@ -1926,6 +1956,8 @@ export interface ToolPaletteOptions {
   onChange?: (index: number, value: string) => void;
   extent?: number;
   padding?: number;
+  gap?: number;
+  /** @deprecated Use `gap`. */
   spacing?: number;
   itemSize?: number;
   iconSize?: number;
@@ -2040,11 +2072,13 @@ export interface BrushPreviewOptions {
 
 export function brushPreview(name: string, spec: BrushPreviewSpec, options?: BrushPreviewOptions): Widget;
 
-export function CommandGroup(name: string, children: Widget[], axis?: Axis, padding?: number, spacing?: number, cornerRadius?: number, background?: Color, border?: Color): Widget;
+export function CommandGroup(name: string, children: Widget[], axis?: Axis, padding?: number, gap?: number, cornerRadius?: number, background?: Color, border?: Color): Widget;
 
 export interface CommandGroupOptions {
   axis?: Axis;
   padding?: number;
+  gap?: number;
+  /** @deprecated Use `gap`. */
   spacing?: number;
   cornerRadius?: number;
   background?: Color;
@@ -2143,10 +2177,12 @@ export interface SectionLabelOptions {
 
 export function sectionLabel(label: string, options?: SectionLabelOptions): Widget;
 
-export function SideSheet(title: string, body: Widget, description?: string, shown?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, placement?: "left" | "right", width?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
+export function SideSheet(title: string, body: Widget, description?: string, open?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, placement?: "left" | "right", width?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
 
 export interface SideSheetOptions {
   description?: string;
+  open?: State | boolean | number;
+  /** @deprecated Use `open`. */
   shown?: State | boolean | number;
   modal?: boolean;
   dismissOnScrim?: boolean;
@@ -2159,10 +2195,12 @@ export interface SideSheetOptions {
 
 export function sideSheet(title: string, body: Widget, options?: SideSheetOptions): Widget;
 
-export function BottomSheet(title: string, body: Widget, description?: string, shown?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, height?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
+export function BottomSheet(title: string, body: Widget, description?: string, open?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, height?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
 
 export interface BottomSheetOptions {
   description?: string;
+  open?: State | boolean | number;
+  /** @deprecated Use `open`. */
   shown?: State | boolean | number;
   modal?: boolean;
   dismissOnScrim?: boolean;
@@ -2299,19 +2337,23 @@ export interface FloatingStackOptions {
 
 export function floatingStack(windows: FloatingStackWindow[], options?: FloatingStackOptions): Widget;
 
-export function VirtualScrollView(children: Widget[], name?: string, padding?: number, spacing?: number): Widget;
+export function VirtualScrollView(children: Widget[], name?: string, padding?: number, gap?: number): Widget;
 
 export interface VirtualScrollViewOptions {
   name?: string;
   padding?: number;
+  gap?: number;
+  /** @deprecated Use `gap`. */
   spacing?: number;
 }
 
 export function virtualScrollView(children: Widget[], options?: VirtualScrollViewOptions): Widget;
 
-export function ReorderableList(name: string, children: Widget[], spacing?: number, dragThreshold?: number, previewLabel?: string, onReorder?: (item: number, fromIndex: number, toIndex: number) => void): Widget;
+export function ReorderableList(name: string, children: Widget[], gap?: number, dragThreshold?: number, previewLabel?: string, onReorder?: (item: number, fromIndex: number, toIndex: number) => void): Widget;
 
 export interface ReorderableListOptions {
+  gap?: number;
+  /** @deprecated Use `gap`. */
   spacing?: number;
   dragThreshold?: number;
   previewLabel?: string;

@@ -17,7 +17,7 @@ const root = sui.column(
     sui.label(count),
     sui.button("Increment", { onPress: increment }),
     sui.checkbox("Enabled", { checked: enabled }),
-    sui.switchControl("Preview", { on: true }),
+    sui.switchControl("Preview", { checked: true }),
     sui.slider("Opacity", { value: opacity, min: 0, max: 1, step: 0.05 }),
     sui.textInput("Name", { value: name, placeholder: "Optional label" }),
   ],

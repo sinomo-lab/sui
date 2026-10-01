@@ -14,7 +14,7 @@ use std::{
 use ::sui as sui_crate;
 use pyo3::{
     Bound, Py, PyAny, PyErr, PyResult, Python,
-    exceptions::{PyOSError, PyRuntimeError, PyValueError},
+    exceptions::{PyDeprecationWarning, PyOSError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyBytes, PyModule},
 };
@@ -4468,6 +4468,35 @@ fn binding_text_from_py(value: &Bound<'_, PyAny>) -> PyResult<BindingText> {
     ))
 }
 
+/// Merge a keyword argument with its deprecated former name, warning when the
+/// caller uses the former name and refusing both at once.
+fn renamed_kwarg<T>(
+    value: Option<T>,
+    former: Option<T>,
+    former_name: &str,
+    name: &str,
+) -> PyResult<Option<T>> {
+    let Some(former) = former else {
+        return Ok(value);
+    };
+    if value.is_some() {
+        return Err(PyTypeError::new_err(format!(
+            "pass `{name}` or its former name `{former_name}`, not both"
+        )));
+    }
+    let message = std::ffi::CString::new(format!("`{former_name}` is deprecated; use `{name}`"))
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    Python::attach(|py| {
+        PyErr::warn(
+            py,
+            py.get_type::<PyDeprecationWarning>().as_any(),
+            &message,
+            1,
+        )
+    })?;
+    Ok(Some(former))
+}
+
 fn binding_bool_from_py(value: &Bound<'_, PyAny>) -> PyResult<BindingBool> {
     if let Ok(state) = value.extract::<PyRef<'_, PyState>>() {
         return Ok(BindingBool::State(state.inner.clone()));
@@ -5489,7 +5518,7 @@ image = app.rgba_image(
 )
 
 app.window(sui.Window('Image').root(
-    sui.Image(image, label='Preview', fit='contain', size=sui.Size(32, 16))
+    sui.Image(image, semantic_name='Preview', fit='contain', size=sui.Size(32, 16))
 ))
 
 assert app.image_resource_count() == 1
@@ -5772,7 +5801,7 @@ app = sui.App()
 root = sui.Column([
     sui.Label('Ready'),
     sui.Button('Apply'),
-    sui.Icon('search', label='Search icon'),
+    sui.Icon('search', semantic_name='Search icon'),
     sui.IconButton('download', 'Download', selected=True, enabled=True, size=28, icon_size=16, description='Download file'),
     sui.Surface(
         sui.Label('Surface content'),
@@ -5783,8 +5812,8 @@ root = sui.Column([
     ),
     sui.Toolbar([
         sui.Button('Toolbar action'),
-        sui.Icon('search', label='Toolbar search'),
-    ], name='Main toolbar', extent=32.0, padding=4.0, spacing=4.0),
+        sui.Icon('search', semantic_name='Toolbar search'),
+    ], name='Main toolbar', extent=32.0, padding=4.0, gap=4.0),
     sui.Link('Documentation', 'https://example.invalid/docs'),
     sui.Checkbox('Enabled', True),
     sui.Switch('Airplane mode', False),
@@ -5822,7 +5851,7 @@ root = sui.Column([
     sui.CommandGroup('Editing commands', [
         sui.Button('Cut'),
         sui.Button('Copy'),
-    ], axis='horizontal', padding=4, spacing=2, corner_radius=5),
+    ], axis='horizontal', padding=4, gap=2, corner_radius=5),
     sui.CoverageDots('Coverage', 3, 4, tone='success', max_dots=4, min_width=72),
     sui.TextInput('Name', text, placeholder='Type a name'),
     sui.PasswordInput('Password', password, placeholder='Enter a password'),
@@ -5864,7 +5893,7 @@ root = sui.Column([
         'Inspector',
         sui.Label('Sheet body'),
         description='Selection details',
-        shown=sheet_shown,
+        open=sheet_shown,
         placement='right',
         header_action=sui.Button('Close inspector'),
         actions=[sui.Button('Save inspector')],
@@ -5873,14 +5902,14 @@ root = sui.Column([
         'Build output',
         sui.Label('Bottom sheet body'),
         description='Latest build details',
-        shown=False,
+        open=False,
         height=220,
     ),
     sui.CommandPalette(
         'Commands',
         sui.TextInput('Command search'),
         description='Search application commands',
-        shown=False,
+        open=False,
         max_width=560,
     ),
     sui.SplitView(
@@ -5913,11 +5942,11 @@ root = sui.Column([
     sui.VirtualScrollView([
         sui.Label('Virtual row one'),
         sui.Label('Virtual row two'),
-    ], name='Virtual results', padding=4, spacing=2),
+    ], name='Virtual results', padding=4, gap=2),
     sui.ReorderableList(
         'Tasks',
         [sui.Label('Task one'), sui.Label('Task two')],
-        spacing=4,
+        gap=4,
         drag_threshold=4,
         preview_label='Move task',
     ),
@@ -6189,10 +6218,10 @@ changes = []
 app = sui.App()
 app.window(sui.Window('Controls').root(
     sui.Column([
-        sui.Checkbox('Enabled', checked, on_toggle=changes.append),
+        sui.Checkbox('Enabled', checked, on_change=changes.append),
         sui.Switch('Airplane mode', False),
         sui.Slider('Opacity', opacity, min_value=0.0, max_value=1.0, step=0.05),
-        sui.Icon('search', label='Search icon'),
+        sui.Icon('search', semantic_name='Search icon'),
         sui.IconButton('download', 'Download', selected=selected, enabled=enabled, description='Download file'),
     ], gap=8)
 ))
@@ -6367,7 +6396,7 @@ selected = sui.State(False)
 calls = []
 app = sui.App()
 app.window(sui.Window('Radio').root(
-    sui.RadioButton('Manual', selected, on_select=lambda: calls.append('selected'))
+    sui.RadioButton('Manual', selected, on_change=calls.append)
 ))
 
 running = app.start()
@@ -6387,10 +6416,57 @@ running.handle_event(sui.Event.pointer(
 ))
 
 assert selected.get() is True
-assert calls == ['selected']
+assert calls == [True]
 ",
                 c"radio_button.py",
                 c"radio_button",
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn python_renamed_keywords_still_work_with_a_deprecation_warning() -> PyResult<()> {
+        Python::attach(|py| {
+            install_sui_module(py)?;
+            PyModule::from_code(
+                py,
+                c"
+import warnings
+
+import sui
+
+selected = sui.State(False)
+calls = []
+with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter('always')
+    stack = sui.Stack([sui.Label('A'), sui.Label('B')], spacing=4)
+    radio = sui.RadioButton('Manual', selected=selected, on_select=lambda: calls.append('selected'))
+messages = [str(warning.message) for warning in caught]
+assert all(warning.category is DeprecationWarning for warning in caught), caught
+assert '`spacing` is deprecated; use `gap`' in messages, messages
+assert '`selected` is deprecated; use `checked`' in messages, messages
+assert '`on_select` is deprecated; use `on_change`' in messages, messages
+
+try:
+    sui.Stack([], gap=1, spacing=2)
+except TypeError as error:
+    assert 'not both' in str(error), error
+else:
+    raise AssertionError('passing a keyword and its former name must fail')
+
+app = sui.App()
+app.window(sui.Window('Renamed').root(sui.Column([radio, stack])))
+running = app.start()
+running.render()
+running.handle_event(sui.Event.pointer('down', sui.Point(32, 18), button='primary', buttons=1))
+running.handle_event(sui.Event.pointer('up', sui.Point(32, 18), button='primary'))
+running.render()
+assert selected.get() is True
+assert calls == ['selected'], calls
+",
+                c"renamed_keywords.py",
+                c"renamed_keywords",
             )?;
             Ok(())
         })
@@ -6663,7 +6739,7 @@ app.window(sui.Window('Reorder').root(
             sui.SizedBox(width=120, height=30),
             sui.SizedBox(width=120, height=30),
         ],
-        spacing=0,
+        gap=0,
         drag_threshold=4,
         on_reorder=lambda item, from_index, to_index: changes.append(
             (item, from_index, to_index)

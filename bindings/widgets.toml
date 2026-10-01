@@ -2066,6 +2066,11 @@ classification = "bound"
 bindings = ["Separator"]
 
 [[rust_widget]]
+name = "ShadowBox"
+classification = "equivalent"
+bindings = ["Surface"]
+
+[[rust_widget]]
 name = "SideSheet"
 classification = "manual-wrapper"
 bindings = ["SideSheet"]

@@ -234,12 +234,12 @@ assert.equal(sui.renderWidget(sui.overlayHost(sui.label("Overlay content"))).com
 assert.equal(sui.renderWidget(sui.commandPalette(
   "Commands",
   sui.textInput("Search"),
-  { shown: false },
+  { open: false },
 )).commandCount >= 0, true);
 assert.equal(sui.renderWidget(sui.bottomSheet(
   "Build output",
   sui.label("Bottom content"),
-  { shown: false, height: 220 },
+  { open: false, height: 220 },
 )).commandCount >= 0, true);
 assert.equal(stateSubscription.unsubscribe(), true);
 sourceState.set(4);
@@ -352,7 +352,7 @@ assert.equal(sui.renderWidget(richDocumentWidget).commandCount > 0, true);
 const checked = new sui.State(false);
 let toggled;
 const checkboxRunning = start(
-  sui.checkbox("Enabled", { checked, onToggle(value) {
+  sui.checkbox("Enabled", { checked, onChange(value) {
     toggled = value;
   }}),
   "State boolean"
@@ -714,5 +714,27 @@ reorderRunning.handleEvent(
 );
 assert.deepEqual(reorderArgs, [0, 0, 2]);
 assert.equal(Array.isArray(reorderArgs[0]), false);
+
+// Renamed factory options still accept their former names, warning once.
+const deprecationWarnings = [];
+const emitWarning = process.emitWarning;
+process.emitWarning = (message, type) => deprecationWarnings.push([type, message]);
+try {
+  for (let index = 0; index < 2; index += 1) {
+    assert.equal(
+      sui.renderWidget(sui.stack([sui.label("A"), sui.label("B")], { spacing: 4 })).commandCount > 0,
+      true,
+    );
+  }
+  assert.equal(
+    sui.renderWidget(sui.stack([sui.label("A"), sui.label("B")], { gap: 4 })).commandCount > 0,
+    true,
+  );
+} finally {
+  process.emitWarning = emitWarning;
+}
+assert.deepEqual(deprecationWarnings, [
+  ["DeprecationWarning", "SUI: the `spacing` option is deprecated; use `gap`"],
+]);
 
 console.log("sui-js consumer boundary: ok");

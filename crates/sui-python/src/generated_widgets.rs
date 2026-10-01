@@ -1498,16 +1498,18 @@ pub fn py_button(label: &Bound<'_, PyAny>, on_press: Option<Py<PyAny>>) -> PyRes
 }
 
 #[pyfunction(name = "Icon")]
-#[pyo3(signature = (glyph, label=None, size=None, color=None))]
+#[pyo3(signature = (glyph, semantic_name=None, size=None, color=None, *, label=None))]
 pub fn py_icon(
     glyph: &str,
-    label: Option<String>,
+    semantic_name: Option<String>,
     size: Option<f32>,
     color: Option<PyColor>,
+    label: Option<String>,
 ) -> PyResult<PyWidget> {
+    let semantic_name = renamed_kwarg(semantic_name, label, "label", "semantic_name")?;
     Ok(PyWidget::from_binding(BindingWidget::icon(
         py_icon_glyph(glyph)?,
-        label,
+        semantic_name,
         size,
         color.map(Into::into),
     )))
@@ -1588,17 +1590,19 @@ pub fn py_link(
 }
 
 #[pyfunction(name = "Checkbox")]
-#[pyo3(signature = (label, checked=None, on_toggle=None))]
+#[pyo3(signature = (label, checked=None, on_change=None, *, on_toggle=None))]
 pub fn py_checkbox(
     label: &Bound<'_, PyAny>,
     checked: Option<&Bound<'_, PyAny>>,
+    on_change: Option<Py<PyAny>>,
     on_toggle: Option<Py<PyAny>>,
 ) -> PyResult<PyWidget> {
+    let on_change = renamed_kwarg(on_change, on_toggle, "on_toggle", "on_change")?;
     let checked = checked
         .map(binding_bool_from_py)
         .transpose()?
         .unwrap_or(BindingBool::Static(false));
-    let action = on_toggle.map(|callback| {
+    let action = on_change.map(|callback| {
         BindingBoolAction::new(move |value| {
             Python::attach(|py| {
                 callback
@@ -1616,17 +1620,21 @@ pub fn py_checkbox(
 }
 
 #[pyfunction(name = "Switch")]
-#[pyo3(signature = (label, on=None, on_toggle=None))]
+#[pyo3(signature = (label, checked=None, on_change=None, *, on=None, on_toggle=None))]
 pub fn py_switch(
     label: &Bound<'_, PyAny>,
+    checked: Option<&Bound<'_, PyAny>>,
+    on_change: Option<Py<PyAny>>,
     on: Option<&Bound<'_, PyAny>>,
     on_toggle: Option<Py<PyAny>>,
 ) -> PyResult<PyWidget> {
-    let on = on
+    let checked = renamed_kwarg(checked, on, "on", "checked")?;
+    let on_change = renamed_kwarg(on_change, on_toggle, "on_toggle", "on_change")?;
+    let checked = checked
         .map(binding_bool_from_py)
         .transpose()?
         .unwrap_or(BindingBool::Static(false));
-    let action = on_toggle.map(|callback| {
+    let action = on_change.map(|callback| {
         BindingBoolAction::new(move |value| {
             Python::attach(|py| {
                 callback
@@ -1638,35 +1646,54 @@ pub fn py_switch(
     });
     Ok(PyWidget::from_binding(BindingWidget::switch(
         binding_text_from_py(label)?,
-        on,
+        checked,
         action,
     )))
 }
 
 #[pyfunction(name = "RadioButton")]
-#[pyo3(signature = (label, selected=None, on_select=None))]
+#[pyo3(signature = (label, checked=None, on_change=None, *, selected=None, on_select=None))]
 pub fn py_radio_button(
     label: &Bound<'_, PyAny>,
+    checked: Option<&Bound<'_, PyAny>>,
+    on_change: Option<Py<PyAny>>,
     selected: Option<&Bound<'_, PyAny>>,
     on_select: Option<Py<PyAny>>,
 ) -> PyResult<PyWidget> {
-    let selected = selected
+    let checked = renamed_kwarg(checked, selected, "selected", "checked")?
         .map(binding_bool_from_py)
         .transpose()?
         .unwrap_or(BindingBool::Static(false));
-    let action = on_select.map(|callback| {
-        BindingAction::new(move || {
+    if on_change.is_some() && on_select.is_some() {
+        return Err(PyTypeError::new_err(
+            "pass `on_change` or its former name `on_select`, not both",
+        ));
+    }
+    let action = if let Some(callback) = on_change {
+        // A radio button only reports becoming checked.
+        Some(BindingAction::new(move || {
             Python::attach(|py| {
                 callback
-                    .call0(py)
+                    .call1(py, (true,))
                     .map(|_| ())
                     .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
             })
+        }))
+    } else {
+        renamed_kwarg(None, on_select, "on_select", "on_change")?.map(|callback| {
+            BindingAction::new(move || {
+                Python::attach(|py| {
+                    callback
+                        .call0(py)
+                        .map(|_| ())
+                        .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                })
+            })
         })
-    });
+    };
     Ok(PyWidget::from_binding(BindingWidget::radio_button(
         binding_text_from_py(label)?,
-        selected,
+        checked,
         action,
     )))
 }
@@ -2105,23 +2132,25 @@ pub fn py_brush_preview(
 }
 
 #[pyfunction(name = "CommandGroup")]
-#[pyo3(signature = (name, children, axis="vertical", padding=None, spacing=None, corner_radius=None, background=None, border=None))]
+#[pyo3(signature = (name, children, axis="vertical", padding=None, gap=None, corner_radius=None, background=None, border=None, *, spacing=None))]
 pub fn py_command_group(
     name: String,
     children: &Bound<'_, PyAny>,
     axis: &str,
     padding: Option<f32>,
-    spacing: Option<f32>,
+    gap: Option<f32>,
     corner_radius: Option<f32>,
     background: Option<PyColor>,
     border: Option<PyColor>,
+    spacing: Option<f32>,
 ) -> PyResult<PyWidget> {
+    let gap = renamed_kwarg(gap, spacing, "spacing", "gap")?;
     Ok(PyWidget::from_binding(BindingWidget::command_group(
         name,
         extract_binding_widgets(children)?,
         py_axis(axis)?,
         optional_uniform_insets(padding),
-        spacing,
+        gap,
         corner_radius,
         background.map(Into::into),
         border.map(Into::into),
@@ -2316,12 +2345,12 @@ pub fn py_section_label(
 }
 
 #[pyfunction(name = "SideSheet")]
-#[pyo3(signature = (title, body, description=None, shown=None, modal=true, dismiss_on_scrim=true, placement="right", width=None, header_action=None, actions=None, on_dismiss=None))]
+#[pyo3(signature = (title, body, description=None, open=None, modal=true, dismiss_on_scrim=true, placement="right", width=None, header_action=None, actions=None, on_dismiss=None, *, shown=None))]
 pub fn py_side_sheet(
     title: String,
     body: PyRef<'_, PyWidget>,
     description: Option<String>,
-    shown: Option<&Bound<'_, PyAny>>,
+    open: Option<&Bound<'_, PyAny>>,
     modal: bool,
     dismiss_on_scrim: bool,
     placement: &str,
@@ -2329,8 +2358,10 @@ pub fn py_side_sheet(
     header_action: Option<PyRef<'_, PyWidget>>,
     actions: Option<&Bound<'_, PyAny>>,
     on_dismiss: Option<Py<PyAny>>,
+    shown: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
-    let shown = shown
+    let open = renamed_kwarg(open, shown, "shown", "open")?;
+    let open = open
         .map(binding_bool_from_py)
         .transpose()?
         .unwrap_or(BindingBool::Static(true));
@@ -2357,7 +2388,7 @@ pub fn py_side_sheet(
         title,
         body.binding_widget()?,
         description,
-        shown,
+        open,
         modal,
         dismiss_on_scrim,
         placement,
@@ -2376,23 +2407,26 @@ pub fn py_side_sheet(
 
 #[pyfunction(name = "BottomSheet")]
 #[pyo3(signature = (
-    title, body, description=None, shown=None, modal=true, dismiss_on_scrim=true,
-    height=None, header_action=None, actions=None, on_dismiss=None
+    title, body, description=None, open=None, modal=true, dismiss_on_scrim=true,
+    height=None, header_action=None, actions=None, on_dismiss=None,
+    *, shown=None,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn py_bottom_sheet(
     title: String,
     body: PyRef<'_, PyWidget>,
     description: Option<String>,
-    shown: Option<&Bound<'_, PyAny>>,
+    open: Option<&Bound<'_, PyAny>>,
     modal: bool,
     dismiss_on_scrim: bool,
     height: Option<f32>,
     header_action: Option<PyRef<'_, PyWidget>>,
     actions: Option<&Bound<'_, PyAny>>,
     on_dismiss: Option<Py<PyAny>>,
+    shown: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
-    let shown = shown
+    let open = renamed_kwarg(open, shown, "shown", "open")?;
+    let open = open
         .map(binding_bool_from_py)
         .transpose()?
         .unwrap_or(BindingBool::Static(true));
@@ -2410,7 +2444,7 @@ pub fn py_bottom_sheet(
         title,
         body.binding_widget()?,
         description,
-        shown,
+        open,
         modal,
         dismiss_on_scrim,
         height,
@@ -2547,31 +2581,35 @@ pub fn py_dock_workspace(
 }
 
 #[pyfunction(name = "VirtualScrollView")]
-#[pyo3(signature = (children, name=None, padding=None, spacing=0.0))]
+#[pyo3(signature = (children, name=None, padding=None, gap=None, *, spacing=None))]
 pub fn py_virtual_scroll_view(
     children: &Bound<'_, PyAny>,
     name: Option<String>,
     padding: Option<f32>,
-    spacing: f32,
+    gap: Option<f32>,
+    spacing: Option<f32>,
 ) -> PyResult<PyWidget> {
+    let gap = renamed_kwarg(gap, spacing, "spacing", "gap")?.unwrap_or(0.0);
     Ok(PyWidget::from_binding(BindingWidget::virtual_scroll_view(
         extract_binding_widgets(children)?,
         name,
         optional_uniform_insets(padding),
-        Some(spacing),
+        Some(gap),
     )))
 }
 
 #[pyfunction(name = "ReorderableList")]
-#[pyo3(signature = (name, children, spacing=8.0, drag_threshold=4.0, preview_label=None, on_reorder=None))]
+#[pyo3(signature = (name, children, gap=None, drag_threshold=4.0, preview_label=None, on_reorder=None, *, spacing=None))]
 pub fn py_reorderable_list(
     name: String,
     children: &Bound<'_, PyAny>,
-    spacing: f32,
+    gap: Option<f32>,
     drag_threshold: f32,
     preview_label: Option<String>,
     on_reorder: Option<Py<PyAny>>,
+    spacing: Option<f32>,
 ) -> PyResult<PyWidget> {
+    let gap = renamed_kwarg(gap, spacing, "spacing", "gap")?.unwrap_or(8.0);
     let action = on_reorder.map(|callback| {
         BindingReorderAction::new(move |item, from_index, to_index| {
             Python::attach(|py| {
@@ -2585,7 +2623,7 @@ pub fn py_reorderable_list(
     Ok(PyWidget::from_binding(BindingWidget::reorderable_list(
         name,
         extract_binding_widgets(children)?,
-        spacing,
+        gap,
         drag_threshold,
         preview_label,
         action,
@@ -2765,16 +2803,18 @@ pub fn py_rich_document_view(
 }
 
 #[pyfunction(name = "Image")]
-#[pyo3(signature = (image, label=None, fit="contain", size=None))]
+#[pyo3(signature = (image, semantic_name=None, fit="contain", size=None, *, label=None))]
 pub fn py_image(
     image: PyRef<'_, PyImageHandle>,
-    label: Option<String>,
+    semantic_name: Option<String>,
     fit: &str,
     size: Option<PySize>,
+    label: Option<String>,
 ) -> PyResult<PyWidget> {
+    let semantic_name = renamed_kwarg(semantic_name, label, "label", "semantic_name")?;
     Ok(PyWidget::from_binding(BindingWidget::image(
         image.inner,
-        label,
+        semantic_name,
         py_image_fit(fit)?,
         size.map(Into::into),
     )))
@@ -2854,25 +2894,27 @@ pub fn py_empty_state(
 }
 
 #[pyfunction(name = "Surface")]
-#[pyo3(signature = (child, role="panel", name=None, border=None, elevation=None, radius=None, padding=None, fill_width=false, fill_height=false))]
+#[pyo3(signature = (child, role="panel", name=None, border=None, elevation=None, corner_radius=None, padding=None, fill_width=false, fill_height=false, *, radius=None))]
 pub fn py_surface(
     child: PyRef<'_, PyWidget>,
     role: &str,
     name: Option<String>,
     border: Option<String>,
     elevation: Option<String>,
-    radius: Option<f32>,
+    corner_radius: Option<f32>,
     padding: Option<f32>,
     fill_width: bool,
     fill_height: bool,
+    radius: Option<f32>,
 ) -> PyResult<PyWidget> {
+    let corner_radius = renamed_kwarg(corner_radius, radius, "radius", "corner_radius")?;
     Ok(PyWidget::from_binding(BindingWidget::surface(
         child.binding_widget()?,
         py_surface_role(role)?,
         name,
         border.as_deref().map(py_surface_border).transpose()?,
         elevation.as_deref().map(py_surface_elevation).transpose()?,
-        radius,
+        corner_radius,
         padding,
         fill_width,
         fill_height,
@@ -2880,24 +2922,26 @@ pub fn py_surface(
 }
 
 #[pyfunction(name = "Toolbar")]
-#[pyo3(signature = (children, axis="horizontal", name=None, extent=None, padding=None, spacing=None, background=None, divider=true))]
+#[pyo3(signature = (children, axis="horizontal", name=None, extent=None, padding=None, gap=None, background=None, divider=true, *, spacing=None))]
 pub fn py_toolbar(
     children: &Bound<'_, PyAny>,
     axis: &str,
     name: Option<String>,
     extent: Option<f32>,
     padding: Option<f32>,
-    spacing: Option<f32>,
+    gap: Option<f32>,
     background: Option<PyColor>,
     divider: bool,
+    spacing: Option<f32>,
 ) -> PyResult<PyWidget> {
+    let gap = renamed_kwarg(gap, spacing, "spacing", "gap")?;
     Ok(PyWidget::from_binding(BindingWidget::toolbar(
         extract_binding_widgets(children)?,
         py_axis(axis)?,
         name,
         extent,
         padding,
-        spacing,
+        gap,
         background.map(Into::into),
         divider,
     )))
@@ -3153,17 +3197,18 @@ pub fn py_notification_host(
 
 #[pyfunction(name = "VirtualList")]
 #[pyo3(signature = (
-    name, model, estimated_row_height=32.0, spacing=0.0, padding=None,
+    name, model, estimated_row_height=32.0, gap=None, padding=None,
     row_padding=None, overscan_viewports=1.0, cache_capacity=128,
     selectable=true, transparent=false, stick_to_end=false,
-    overlay_scroll_bars=true, on_change=None, on_near_start=None, on_near_end=None
+    overlay_scroll_bars=true, on_change=None, on_near_start=None, on_near_end=None,
+    *, spacing=None,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn py_virtual_list(
     name: String,
     model: PyRef<'_, PyVirtualListModel>,
     estimated_row_height: f32,
-    spacing: f32,
+    gap: Option<f32>,
     padding: Option<f32>,
     row_padding: Option<f32>,
     overscan_viewports: f32,
@@ -3175,7 +3220,9 @@ pub fn py_virtual_list(
     on_change: Option<Py<PyAny>>,
     on_near_start: Option<Py<PyAny>>,
     on_near_end: Option<Py<PyAny>>,
+    spacing: Option<f32>,
 ) -> PyResult<PyWidget> {
+    let gap = renamed_kwarg(gap, spacing, "spacing", "gap")?.unwrap_or(0.0);
     let id_action = on_change.map(|callback| {
         BindingIdAction::new(move |key| {
             Python::attach(|py| {
@@ -3200,7 +3247,7 @@ pub fn py_virtual_list(
         name,
         model.inner.clone(),
         estimated_row_height,
-        spacing,
+        gap,
         optional_uniform_insets(padding),
         optional_uniform_insets(row_padding),
         overscan_viewports,
@@ -3588,33 +3635,37 @@ pub fn py_tabs(
 }
 
 #[pyfunction(name = "Dialog")]
-#[pyo3(signature = (title, content, shown=None))]
+#[pyo3(signature = (title, content, open=None, *, shown=None))]
 pub fn py_dialog(
     title: &Bound<'_, PyAny>,
     content: PyRef<'_, PyWidget>,
+    open: Option<&Bound<'_, PyAny>>,
     shown: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
-    let shown = shown
+    let open = renamed_kwarg(open, shown, "shown", "open")?;
+    let open = open
         .map(binding_bool_from_py)
         .transpose()?
         .unwrap_or(BindingBool::Static(true));
     Ok(PyWidget::from_binding(BindingWidget::dialog(
         binding_text_from_py(title)?,
         content.binding_widget()?,
-        shown,
+        open,
     )))
 }
 
 #[pyfunction(name = "CommandPalette")]
-#[pyo3(signature = (name, content, description=None, shown=None, max_width=None, on_dismiss=None))]
+#[pyo3(signature = (name, content, description=None, open=None, max_width=None, on_dismiss=None, *, shown=None))]
 pub fn py_command_palette(
     name: String,
     content: PyRef<'_, PyWidget>,
     description: Option<String>,
-    shown: Option<&Bound<'_, PyAny>>,
+    open: Option<&Bound<'_, PyAny>>,
     max_width: Option<f32>,
     on_dismiss: Option<Py<PyAny>>,
+    shown: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
+    let open = renamed_kwarg(open, shown, "shown", "open")?;
     let action = on_dismiss.map(|callback| {
         BindingAction::new(move || {
             Python::attach(|py| {
@@ -3629,7 +3680,7 @@ pub fn py_command_palette(
         name,
         content.binding_widget()?,
         description,
-        shown
+        open
             .map(binding_bool_from_py)
             .transpose()?
             .unwrap_or(BindingBool::Static(true)),
@@ -3703,17 +3754,19 @@ pub fn py_sized_box(
 }
 
 #[pyfunction(name = "Stack")]
-#[pyo3(signature = (children, axis="vertical", spacing=0.0, alignment="start"))]
+#[pyo3(signature = (children, axis="vertical", gap=None, alignment="start", *, spacing=None))]
 pub fn py_stack(
     children: &Bound<'_, PyAny>,
     axis: &str,
-    spacing: f32,
+    gap: Option<f32>,
     alignment: &str,
+    spacing: Option<f32>,
 ) -> PyResult<PyWidget> {
+    let gap = renamed_kwarg(gap, spacing, "spacing", "gap")?.unwrap_or(0.0);
     Ok(PyWidget::from_binding(BindingWidget::stack(
         extract_binding_widgets(children)?,
         py_axis(axis)?,
-        spacing,
+        gap,
         py_alignment(alignment)?,
     )))
 }
@@ -3755,17 +3808,19 @@ pub fn py_form_row(
 }
 
 #[pyfunction(name = "FieldGroup")]
-#[pyo3(signature = (children, spacing=None, padding=None, max_width=None, fill_width=false))]
+#[pyo3(signature = (children, gap=None, padding=None, max_width=None, fill_width=false, *, spacing=None))]
 pub fn py_field_group(
     children: &Bound<'_, PyAny>,
-    spacing: Option<f32>,
+    gap: Option<f32>,
     padding: Option<f32>,
     max_width: Option<f32>,
     fill_width: bool,
+    spacing: Option<f32>,
 ) -> PyResult<PyWidget> {
+    let gap = renamed_kwarg(gap, spacing, "spacing", "gap")?;
     Ok(PyWidget::from_binding(BindingWidget::field_group(
         extract_binding_widgets(children)?,
-        spacing,
+        gap,
         padding,
         max_width,
         fill_width,
@@ -3773,7 +3828,7 @@ pub fn py_field_group(
 }
 
 #[pyfunction(name = "FormSection")]
-#[pyo3(signature = (title, child, description=None, header_action=None, padding=None, body_gap=None, header_gap=None, max_width=None, fill_width=false, radius=None, elevation=None))]
+#[pyo3(signature = (title, child, description=None, header_action=None, padding=None, body_gap=None, header_gap=None, max_width=None, fill_width=false, corner_radius=None, elevation=None, *, radius=None))]
 pub fn py_form_section(
     title: String,
     child: PyRef<'_, PyWidget>,
@@ -3784,9 +3839,11 @@ pub fn py_form_section(
     header_gap: Option<f32>,
     max_width: Option<f32>,
     fill_width: bool,
-    radius: Option<f32>,
+    corner_radius: Option<f32>,
     elevation: Option<String>,
+    radius: Option<f32>,
 ) -> PyResult<PyWidget> {
+    let corner_radius = renamed_kwarg(corner_radius, radius, "radius", "corner_radius")?;
     Ok(PyWidget::from_binding(BindingWidget::form_section(
         title,
         child.binding_widget()?,
@@ -3800,7 +3857,7 @@ pub fn py_form_section(
         header_gap,
         max_width,
         fill_width,
-        radius,
+        corner_radius,
         elevation.as_deref().map(py_surface_elevation).transpose()?,
     )))
 }
@@ -3920,7 +3977,7 @@ pub fn py_context_menu(
 }
 
 #[pyfunction(name = "ToolPalette")]
-#[pyo3(signature = (name, items, selected=None, axis="vertical", on_change=None, extent=None, padding=None, spacing=None, item_size=None, icon_size=None, background=None, divider=true))]
+#[pyo3(signature = (name, items, selected=None, axis="vertical", on_change=None, extent=None, padding=None, gap=None, item_size=None, icon_size=None, background=None, divider=true, *, spacing=None))]
 pub fn py_tool_palette(
     name: String,
     items: &Bound<'_, PyAny>,
@@ -3929,12 +3986,14 @@ pub fn py_tool_palette(
     on_change: Option<Py<PyAny>>,
     extent: Option<f32>,
     padding: Option<f32>,
-    spacing: Option<f32>,
+    gap: Option<f32>,
     item_size: Option<f32>,
     icon_size: Option<f32>,
     background: Option<PyColor>,
     divider: bool,
+    spacing: Option<f32>,
 ) -> PyResult<PyWidget> {
+    let gap = renamed_kwarg(gap, spacing, "spacing", "gap")?;
     let selected = selected.map(binding_number_from_py).transpose()?;
     let action = on_change.map(|callback| {
         BindingSelectAction::new(move |index, value| {
@@ -3954,7 +4013,7 @@ pub fn py_tool_palette(
         action,
         extent,
         padding,
-        spacing,
+        gap,
         item_size,
         icon_size,
         background.map(Into::into),

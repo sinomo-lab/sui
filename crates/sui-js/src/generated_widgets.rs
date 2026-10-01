@@ -1724,13 +1724,13 @@ pub fn js_button(
 #[napi(js_name = "Icon")]
 pub fn js_icon(
     glyph: String,
-    label: Option<String>,
+    semantic_name: Option<String>,
     size: Option<f64>,
     color: Option<&JsColor>,
 ) -> Result<JsWidget> {
     Ok(JsWidget::from_binding(BindingWidget::icon(
         icon_glyph_from_js(&glyph)?,
-        label,
+        semantic_name,
         size.map(|value| value as f32),
         color.map(|value| (*value).into()),
     )))
@@ -1819,9 +1819,9 @@ pub fn js_checkbox(
     env: Env,
     label: JsBindingTextArg,
     checked: Option<JsBindingBoolArg>,
-    on_toggle: Option<Function<'_, FnArgs<(bool,)>, ()>>,
+    on_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
 ) -> Result<JsWidget> {
-    let action = on_toggle
+    let action = on_change
         .map(|callback| {
             let env = JsEnvHandle::from_env(env);
             let callback = callback.create_ref()?;
@@ -1849,10 +1849,10 @@ pub fn js_checkbox(
 pub fn js_switch(
     env: Env,
     label: JsBindingTextArg,
-    on: Option<JsBindingBoolArg>,
-    on_toggle: Option<Function<'_, FnArgs<(bool,)>, ()>>,
+    checked: Option<JsBindingBoolArg>,
+    on_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
 ) -> Result<JsWidget> {
-    let action = on_toggle
+    let action = on_change
         .map(|callback| {
             let env = JsEnvHandle::from_env(env);
             let callback = callback.create_ref()?;
@@ -1869,7 +1869,7 @@ pub fn js_switch(
         .transpose()?;
     Ok(JsWidget::from_binding(BindingWidget::switch(
         binding_text_from_js(label),
-        on.map(binding_bool_from_js)
+        checked.map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(false)),
         action,
     )))
@@ -1879,10 +1879,10 @@ pub fn js_switch(
 pub fn js_radio_button(
     env: Env,
     label: JsBindingTextArg,
-    selected: Option<JsBindingBoolArg>,
-    on_select: Option<Function<'_, (), ()>>,
+    checked: Option<JsBindingBoolArg>,
+    on_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
 ) -> Result<JsWidget> {
-    let action = on_select
+    let action = on_change
         .map(|callback| {
             let env = JsEnvHandle::from_env(env);
             let callback = callback.create_ref()?;
@@ -1891,15 +1891,16 @@ pub fn js_radio_button(
                 let callback = callback
                     .borrow_back(&env)
                     .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                // A radio button only reports becoming checked.
                 callback
-                    .call(())
+                    .call(FnArgs::from((true,)))
                     .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
             }))
         })
         .transpose()?;
     Ok(JsWidget::from_binding(BindingWidget::radio_button(
         binding_text_from_js(label),
-        selected
+        checked
             .map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(false)),
         action,
@@ -2425,13 +2426,13 @@ pub fn js_rich_document_view(
 #[napi(js_name = "Image")]
 pub fn js_image(
     image: &JsImageHandle,
-    label: Option<String>,
+    semantic_name: Option<String>,
     fit: Option<String>,
     size: Option<&JsSize>,
 ) -> Result<JsWidget> {
     Ok(JsWidget::from_binding(BindingWidget::image(
         image.inner,
-        label,
+        semantic_name,
         js_image_fit(fit.as_deref().unwrap_or("contain"))?,
         size.map(|value| (*value).into()),
     )))
@@ -2517,7 +2518,7 @@ pub fn js_surface(
     name: Option<String>,
     border: Option<String>,
     elevation: Option<String>,
-    radius: Option<f64>,
+    corner_radius: Option<f64>,
     padding: Option<f64>,
     fill_width: Option<bool>,
     fill_height: Option<bool>,
@@ -2531,7 +2532,7 @@ pub fn js_surface(
             .as_deref()
             .map(surface_elevation_from_js)
             .transpose()?,
-        radius.map(|value| value as f32),
+        corner_radius.map(|value| value as f32),
         padding.map(|value| value as f32),
         fill_width.unwrap_or(false),
         fill_height.unwrap_or(false),
@@ -2545,7 +2546,7 @@ pub fn js_toolbar(
     name: Option<String>,
     extent: Option<f64>,
     padding: Option<f64>,
-    spacing: Option<f64>,
+    gap: Option<f64>,
     background: Option<&JsColor>,
     divider: Option<bool>,
 ) -> Result<JsWidget> {
@@ -2555,7 +2556,7 @@ pub fn js_toolbar(
         name,
         extent.map(|value| value as f32),
         padding.map(|value| value as f32),
-        spacing.map(|value| value as f32),
+        gap.map(|value| value as f32),
         background.map(|value| (*value).into()),
         divider.unwrap_or(true),
     )))
@@ -2770,7 +2771,7 @@ pub fn js_virtual_list(
     name: String,
     model: &JsVirtualListModel,
     estimated_row_height: Option<f64>,
-    spacing: Option<f64>,
+    gap: Option<f64>,
     padding: Option<f64>,
     row_padding: Option<f64>,
     overscan_viewports: Option<f64>,
@@ -2802,7 +2803,7 @@ pub fn js_virtual_list(
         name,
         model.inner.clone(),
         estimated_row_height.unwrap_or(32.0) as f32,
-        spacing.unwrap_or(0.0) as f32,
+        gap.unwrap_or(0.0) as f32,
         optional_uniform_insets(padding),
         optional_uniform_insets(row_padding),
         overscan_viewports.unwrap_or(1.0) as f32,
@@ -3168,12 +3169,12 @@ pub fn js_tabs(
 pub fn js_dialog(
     title: JsBindingTextArg,
     content: ClassInstance<'_, JsWidget>,
-    shown: Option<JsBindingBoolArg>,
+    open: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     Ok(JsWidget::from_binding(BindingWidget::dialog(
         binding_text_from_js(title),
         content.binding_widget()?,
-        shown
+        open
             .map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(true)),
     )))
@@ -3185,7 +3186,7 @@ pub fn js_command_palette(
     name: String,
     content: &JsWidget,
     description: Option<String>,
-    shown: Option<JsBindingBoolArg>,
+    open: Option<JsBindingBoolArg>,
     max_width: Option<f64>,
     on_dismiss: Option<Function<'_, (), ()>>,
 ) -> Result<JsWidget> {
@@ -3193,7 +3194,7 @@ pub fn js_command_palette(
         name,
         content.binding_widget()?,
         description,
-        shown
+        open
             .map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(true)),
         max_width.map(|value| value as f32),
@@ -3267,13 +3268,13 @@ pub fn js_sized_box(
 pub fn js_stack(
     children: Array<'_>,
     axis: Option<String>,
-    spacing: Option<f64>,
+    gap: Option<f64>,
     alignment: Option<String>,
 ) -> Result<JsWidget> {
     Ok(JsWidget::from_binding(BindingWidget::stack(
         extract_binding_widgets(&children)?,
         js_axis(axis.as_deref().unwrap_or("vertical"))?,
-        spacing.unwrap_or(0.0) as f32,
+        gap.unwrap_or(0.0) as f32,
         alignment_from_js(alignment.as_deref().unwrap_or("start"))?,
     )))
 }
@@ -3315,14 +3316,14 @@ pub fn js_form_row(
 #[napi(js_name = "FieldGroup")]
 pub fn js_field_group(
     children: Array<'_>,
-    spacing: Option<f64>,
+    gap: Option<f64>,
     padding: Option<f64>,
     max_width: Option<f64>,
     fill_width: Option<bool>,
 ) -> Result<JsWidget> {
     Ok(JsWidget::from_binding(BindingWidget::field_group(
         extract_binding_widgets(&children)?,
-        spacing.map(|value| value as f32),
+        gap.map(|value| value as f32),
         padding.map(|value| value as f32),
         max_width.map(|value| value as f32),
         fill_width.unwrap_or(false),
@@ -3340,7 +3341,7 @@ pub fn js_form_section(
     header_gap: Option<f64>,
     max_width: Option<f64>,
     fill_width: Option<bool>,
-    radius: Option<f64>,
+    corner_radius: Option<f64>,
     elevation: Option<String>,
 ) -> Result<JsWidget> {
     Ok(JsWidget::from_binding(BindingWidget::form_section(
@@ -3355,7 +3356,7 @@ pub fn js_form_section(
         header_gap.map(|value| value as f32),
         max_width.map(|value| value as f32),
         fill_width.unwrap_or(false),
-        radius.map(|value| value as f32),
+        corner_radius.map(|value| value as f32),
         elevation
             .as_deref()
             .map(surface_elevation_from_js)
@@ -3487,7 +3488,7 @@ pub fn js_tool_palette(
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
     extent: Option<f64>,
     padding: Option<f64>,
-    spacing: Option<f64>,
+    gap: Option<f64>,
     item_size: Option<f64>,
     icon_size: Option<f64>,
     background: Option<&JsColor>,
@@ -3516,7 +3517,7 @@ pub fn js_tool_palette(
         action,
         extent.map(|value| value as f32),
         padding.map(|value| value as f32),
-        spacing.map(|value| value as f32),
+        gap.map(|value| value as f32),
         item_size.map(|value| value as f32),
         icon_size.map(|value| value as f32),
         background.map(|value| (*value).into()),
@@ -3838,7 +3839,7 @@ pub fn js_command_group(
     children: Array<'_>,
     axis: Option<String>,
     padding: Option<f64>,
-    spacing: Option<f64>,
+    gap: Option<f64>,
     corner_radius: Option<f64>,
     background: Option<&JsColor>,
     border: Option<&JsColor>,
@@ -3848,7 +3849,7 @@ pub fn js_command_group(
         extract_binding_widgets(&children)?,
         js_axis(axis.as_deref().unwrap_or("vertical"))?,
         optional_uniform_insets(padding),
-        spacing.map(|value| value as f32),
+        gap.map(|value| value as f32),
         corner_radius.map(|value| value as f32),
         background.map(|value| (*value).into()),
         border.map(|value| (*value).into()),
@@ -4034,7 +4035,7 @@ pub fn js_side_sheet(
     title: String,
     body: ClassInstance<'_, JsWidget>,
     description: Option<String>,
-    shown: Option<JsBindingBoolArg>,
+    open: Option<JsBindingBoolArg>,
     modal: Option<bool>,
     dismiss_on_scrim: Option<bool>,
     placement: Option<String>,
@@ -4056,7 +4057,7 @@ pub fn js_side_sheet(
         title,
         body.binding_widget()?,
         description,
-        shown
+        open
             .map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(true)),
         modal.unwrap_or(true),
@@ -4082,7 +4083,7 @@ pub fn js_bottom_sheet(
     title: String,
     body: ClassInstance<'_, JsWidget>,
     description: Option<String>,
-    shown: Option<JsBindingBoolArg>,
+    open: Option<JsBindingBoolArg>,
     modal: Option<bool>,
     dismiss_on_scrim: Option<bool>,
     height: Option<f64>,
@@ -4094,7 +4095,7 @@ pub fn js_bottom_sheet(
         title,
         body.binding_widget()?,
         description,
-        shown
+        open
             .map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(true)),
         modal.unwrap_or(true),
@@ -4226,13 +4227,13 @@ pub fn js_virtual_scroll_view(
     children: Array<'_>,
     name: Option<String>,
     padding: Option<f64>,
-    spacing: Option<f64>,
+    gap: Option<f64>,
 ) -> Result<JsWidget> {
     Ok(JsWidget::from_binding(BindingWidget::virtual_scroll_view(
         extract_binding_widgets(&children)?,
         name,
         optional_uniform_insets(padding),
-        spacing.map(|value| value as f32),
+        gap.map(|value| value as f32),
     )))
 }
 
@@ -4241,7 +4242,7 @@ pub fn js_reorderable_list(
     env: Env,
     name: String,
     children: Array<'_>,
-    spacing: Option<f64>,
+    gap: Option<f64>,
     drag_threshold: Option<f64>,
     preview_label: Option<String>,
     on_reorder: Option<JsReorderCallback<'_>>,
@@ -4264,7 +4265,7 @@ pub fn js_reorderable_list(
     Ok(JsWidget::from_binding(BindingWidget::reorderable_list(
         name,
         extract_binding_widgets(&children)?,
-        spacing.unwrap_or(8.0) as f32,
+        gap.unwrap_or(8.0) as f32,
         drag_threshold.unwrap_or(4.0) as f32,
         preview_label,
         action,

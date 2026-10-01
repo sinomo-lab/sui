@@ -373,7 +373,10 @@ class Shadow:
         blur: float,
         spread: float,
         color: Color,
+        placement: Literal["behind", "outside", "inside"] = "behind",
     ) -> None: ...
+    @property
+    def placement(self) -> Literal["behind", "outside", "inside"]: ...
 
 
 class Constraints:

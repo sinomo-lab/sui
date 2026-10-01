@@ -23,8 +23,30 @@ pub(crate) enum ApiType {
 pub(crate) struct ApiParameter {
     pub name: String,
     pub python_name: Option<String>,
+    /// The parameter's deprecated former name, still accepted by keyword or
+    /// option, written `name? was former: type`.
+    pub former_name: Option<String>,
+    /// The former name's type when it differs, written
+    /// `name? was former(type): type`.
+    pub former_ty: Option<ApiType>,
     pub ty: ApiType,
     pub optional: bool,
+}
+
+impl ApiParameter {
+    pub fn python_identifier(&self) -> String {
+        self.python_name
+            .clone()
+            .unwrap_or_else(|| to_snake_case(&self.name))
+    }
+
+    pub fn former_python_identifier(&self) -> Option<String> {
+        self.former_name.as_deref().map(to_snake_case)
+    }
+
+    pub fn former_type(&self) -> &ApiType {
+        self.former_ty.as_ref().unwrap_or(&self.ty)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,6 +187,25 @@ impl Parser {
             } else {
                 None
             };
+            let mut former_ty = None;
+            let former_name = if self.take(Token::Word("was".into())) {
+                let former = self.word()?;
+                if self.take(Token::Punct('(')) {
+                    former_ty = Some(self.ty()?);
+                    self.expect(Token::Punct(')'))?;
+                }
+                if !optional {
+                    return Err(format!(
+                        "renamed parameter `{name}` must be optional to accept `{former}`"
+                    ));
+                }
+                if !names.insert(former.clone()) {
+                    return Err(format!("duplicate API parameter `{former}`"));
+                }
+                Some(former)
+            } else {
+                None
+            };
             self.expect(Token::Punct(':'))?;
             let ty = self.ty()?;
             if optional_seen && !optional {
@@ -174,6 +215,8 @@ impl Parser {
             parameters.push(ApiParameter {
                 name,
                 python_name,
+                former_name,
+                former_ty,
                 ty,
                 optional,
             });
@@ -363,19 +406,37 @@ fn python_parameters(parameters: &[ApiParameter], has_self: bool) -> String {
     } else {
         Vec::new()
     };
-    for parameter in parameters {
-        let mut ty = parameter.ty.python();
-        if parameter.optional && !ty.split('|').any(|part| part.trim() == "None") {
+    let optional_python_type = |ty: &ApiType, optional: bool| {
+        let mut ty = ty.python();
+        if optional && !ty.split('|').any(|part| part.trim() == "None") {
             ty.push_str(" | None");
         }
+        ty
+    };
+    for parameter in parameters {
         values.push(format!(
-            "{}: {ty}{}",
-            parameter
-                .python_name
-                .clone()
-                .unwrap_or_else(|| to_snake_case(&parameter.name)),
+            "{}: {}{}",
+            parameter.python_identifier(),
+            optional_python_type(&parameter.ty, parameter.optional),
             if parameter.optional { " = ..." } else { "" }
         ));
+    }
+    // Former names stay accepted by keyword only, after every current
+    // parameter, so positional calls keep their meaning.
+    let former = parameters
+        .iter()
+        .filter_map(|parameter| {
+            parameter.former_python_identifier().map(|name| {
+                format!(
+                    "{name}: {} = ...",
+                    optional_python_type(parameter.former_type(), true)
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if !former.is_empty() {
+        values.push("*".to_string());
+        values.extend(former);
     }
     values.join(", ")
 }
