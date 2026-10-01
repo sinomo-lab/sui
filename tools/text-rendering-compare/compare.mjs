@@ -28,6 +28,14 @@ if (!['grayscale', 'lcd'].includes(renderMode) || !['rgb', 'bgr', 'none'].includ
   throw new Error('Expected mode grayscale/lcd and subpixel order rgb/bgr/none/off');
 }
 const browserChannel = process.env.SUI_TEXT_COMPARE_BROWSER ?? 'chrome';
+// Chrome's own antialiasing: `match` follows the requested SUI mode, so a
+// grayscale run compares against grayscale. Otherwise Chrome follows the
+// system's LCD smoothing, so grayscale runs compared against ClearType.
+const browserText = (process.env.SUI_TEXT_COMPARE_BROWSER_TEXT ?? 'match').toLowerCase();
+if (!['match', 'lcd', 'grayscale'].includes(browserText)) {
+  throw new Error('Expected SUI_TEXT_COMPARE_BROWSER_TEXT match/lcd/grayscale');
+}
+const browserTextMode = browserText === 'match' ? renderMode : browserText;
 const dpiScale = Number.parseFloat(process.env.SUI_TEXT_COMPARE_DPI_SCALE ?? '1');
 if (!Number.isFinite(dpiScale) || dpiScale <= 0) {
   throw new Error(`invalid SUI_TEXT_COMPARE_DPI_SCALE: ${process.env.SUI_TEXT_COMPARE_DPI_SCALE}`);
@@ -110,11 +118,19 @@ function writeDiff(sui, browser, filename) {
 function comparisonSummary(sui, browser, diffPixels, rowStats) {
   const stats = channelDeltaStats(sui, browser);
   const totalPixels = sui.width * sui.height;
+  const suiLcdChromaticEdges = detectsLcdEdges(sui);
+  const browserLcdChromaticEdges = detectsLcdEdges(browser);
   return {
     dpiScale,
     requestedRenderMode: renderMode,
-    suiLcdChromaticEdges: detectsLcdEdges(sui),
-    browserLcdChromaticEdges: detectsLcdEdges(browser),
+    requestedBrowserTextMode: browserTextMode,
+    suiLcdChromaticEdges,
+    browserLcdChromaticEdges,
+    // Whether both sides antialiased the same way (both LCD or both gray).
+    // Null without the neutral RGB probe row.
+    likeForLike: suiLcdChromaticEdges === null || browserLcdChromaticEdges === null
+      ? null
+      : suiLcdChromaticEdges === browserLcdChromaticEdges,
     subpixelOrder,
     hinting: process.env.SUI_TEXT_COMPARE_HINTING ?? 'slight',
     surface: dark ? 'dark' : 'light',
@@ -188,7 +204,10 @@ async function writeBrowserReference() {
 <body>${sampleHtml}</body>
 </html>`;
 
-  const browser = await chromium.launch({ channel: browserChannel });
+  const browser = await chromium.launch({
+    channel: browserChannel,
+    args: browserTextMode === 'grayscale' ? ['--disable-lcd-text'] : []
+  });
   browserVersion = browser.version();
   const page = await browser.newPage({
     viewport: { width, height },
@@ -254,7 +273,33 @@ async function main() {
     }
   };
   writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
-  console.log(JSON.stringify({ ...summary, outputDir }, null, 2));
+  printHeadline(summary, summaryPath);
+}
+
+function printHeadline(summary, summaryPath) {
+  const { raw, aligned } = summary.textQuality;
+  const histogram = rows => Object.entries(rows)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([shift, count]) => `${shift}:${count}`)
+    .join(' ');
+  const mode = lcd => lcd === null ? 'unknown' : lcd ? 'LCD' : 'grayscale';
+  console.log([
+    `${summary.browserChannel} ${summary.browserVersion} vs SUI, ${summary.surface} surface, ${summary.dpiScale}x`,
+    `  antialiasing   SUI ${mode(summary.suiLcdChromaticEdges)}, browser ${mode(summary.browserLcdChromaticEdges)}`,
+    `  weight         SUI/browser ink ${aligned.inkMassRatio.toFixed(3)} (1 = same, below 1 = SUI lighter)`,
+    `  differing ink  ${(aligned.differingInkRatio * 100).toFixed(1)}% of ink pixels after alignment`,
+    `  mean error     ${raw.meanInkChannelError.toFixed(1)} raw, ${aligned.meanInkChannelError.toFixed(1)} aligned (0-255 channel units)`,
+    `  rows by shift  x ${histogram(summary.alignment.suiShiftXRows)} | y ${histogram(summary.alignment.suiShiftYRows)} (negative y: SUI drew lower)`,
+    `  details        ${summaryPath}`
+  ].join('\n'));
+  if (summary.likeForLike === false) {
+    console.warn(
+      `warning: SUI rendered ${mode(summary.suiLcdChromaticEdges)} text but the browser rendered ` +
+      `${mode(summary.browserLcdChromaticEdges)}, so these scores mix antialiasing modes. ` +
+      'SUI falls back to grayscale where LCD is ineligible; the browser cannot render LCD ' +
+      'when the system has LCD smoothing off.'
+    );
+  }
 }
 
 main().catch((error) => {

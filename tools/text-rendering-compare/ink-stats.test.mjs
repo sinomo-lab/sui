@@ -82,6 +82,8 @@ test('independent rows retain their own offsets and image-sheet coordinates', ()
   const result = compare(sui, browser, white, [sample, { ...sample, y: 34 }]);
   assert.deepEqual(result.alignedRowInkStats.map(row => [row.alignment.suiShiftX, row.alignment.suiShiftY]), [[0, -1], [1, 1]]);
   assert.equal(result.alignment.shiftedRows, 2);
+  assert.deepEqual(result.alignment.suiShiftXRows, { 0: 1, 1: 1 });
+  assert.deepEqual(result.alignment.suiShiftYRows, { '-1': 1, 1: 1 });
   const [first, second] = result.alignedRowInkStats.map(row => row.alignedImageRect);
   assert.equal(first.y, 0);
   assert.equal(second.y, first.height);
@@ -158,4 +160,25 @@ test('stacked crops with different widths preserve each row and report their bou
       assert.deepEqual(result.alignedSui.data.subarray(dest, dest + rect.width * 4), source.data.subarray(start, start + rect.width * 4));
     }
   }
+});
+
+test('aggregate weight and differing ink cover every row', () => {
+  const browser = picture(white, [...points, ...points.map(([x, y]) => [x, y + 30])]);
+  // The second SUI row drops half its ink: lighter overall, and those pixels differ.
+  const sui = picture(white, [...points, ...points.slice(0, 5).map(([x, y]) => [x, y + 30])]);
+  const result = compare(sui, browser, white, [sample, { ...sample, y: 34 }]);
+  for (const stats of [result.textQuality.raw, result.textQuality.aligned]) {
+    assert.equal(stats.suiInkMass, 15 * 255);
+    assert.equal(stats.browserInkMass, 20 * 255);
+    assert.equal(stats.inkMassRatio, 0.75);
+    assert.equal(stats.differingInkPixels, 5);
+    assert.equal(stats.differingInkRatio, 5 / 20);
+  }
+});
+
+test('aggregate weight reports heavier SUI text above one', () => {
+  const browser = picture(white, points.slice(0, 5));
+  const sui = picture(white, points);
+  const { raw } = compare(sui, browser).textQuality;
+  assert.equal(raw.inkMassRatio, 2);
 });

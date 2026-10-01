@@ -143,11 +143,38 @@ LCD rendering; setting the order alone does not select LCD mode.
 `SUI_TEXT_COMPARE_COVERAGE=legacy-perceptual` selects a foreground-only coverage
 boost as a control, without adapting to the actual backdrop.
 
-The tool writes original captures to `sui.png`, `browser.png`, and `diff.png`.
-`summary.json` records Chrome's version, the font SHA-256, requested
-mode/order/hinting, and observed chromatic edges in a neutral RGB probe. Check
-`suiLcdChromaticEdges` when requesting LCD: unavailable or ineligible LCD
-correctly falls back to gray.
+Chrome antialiases the same way as the requested SUI mode: a grayscale run
+launches it with `--disable-lcd-text`, and an LCD run lets it use the system's
+LCD smoothing. Otherwise Chrome uses ClearType wherever the system does, and a
+grayscale comparison would measure SUI against LCD text.
+`SUI_TEXT_COMPARE_BROWSER_TEXT=lcd` or `grayscale` overrides this for a
+deliberately mixed control; the default is `match`.
+
+The tool prints a short summary: the antialiasing each side actually produced,
+the weight ratio, the share of differing ink, the mean error before and after
+alignment, and how many rows needed each vertical and horizontal shift. It
+warns when the two sides antialiased differently.
+
+It writes original captures to `sui.png`, `browser.png`, and `diff.png`.
+`summary.json` records Chrome's version, the font SHA-256, the requested
+SUI and browser modes, order and hinting, and observed chromatic edges in a
+neutral RGB probe. `likeForLike` is true when both sides rendered the same kind
+of antialiasing. Check it, and `suiLcdChromaticEdges` when requesting LCD:
+unavailable or ineligible LCD correctly falls back to gray, and a browser with
+system LCD smoothing off cannot produce LCD.
+
+To compare across the whole matrix, run:
+
+```bash
+npm run text:compare:matrix
+```
+
+It runs every combination of light and dark surfaces, scales 1, 1.25, 1.5 and
+2, and grayscale and LCD modes, then prints one table and writes
+`matrix.json`. `SUI_TEXT_COMPARE_MATRIX_SURFACES`, `_SCALES`, and `_MODES`
+take comma-separated lists to narrow it; `SUI_TEXT_COMPARE_OUTPUT` sets the
+root directory (default `target/text-rendering-compare/matrix`), with one
+subdirectory per run.
 
 Judge glyph shape and coverage with `alignedRowInkStats` or
 `textQuality.aligned.meanInkChannelError`. Each isolated sample row is registered
@@ -168,6 +195,9 @@ Keep placement visible alongside the quality score:
   each side and clipped to the capture. Unrelated canvas borders are excluded.
 - Each aligned row reports `alignment.suiShiftX` / `suiShiftY`: the translation
   applied to SUI toward Chrome, in physical pixels; negative Y moves SUI up.
+- `alignment.suiShiftXRows` / `suiShiftYRows` count the rows needing each
+  shift. A shift shared by most rows is a placement difference, such as
+  baseline rounding, rather than per-glyph noise.
 - `atSearchBoundary` flags a best shift at the search limit. Inspect that row's
   placement before assuming alignment is complete.
 - `absoluteErrorReduction` uses summed errors before/after alignment. It does
@@ -186,8 +216,9 @@ original captures, so their full-image diff percentages are not interchangeable.
 Per-row `inkMassRatio` compares the total encoded-luminance difference from the
 background (ideal ratio 1). `meanInkChannelError` measures absolute RGB error over
 the union of ink pixels, in **0–255 channel units**, not percent mismatch.
-`textQuality` aggregates errors and ink-pixel counts across all rows; it is
-weighted by each row's ink union, rather than an equal average of row scores.
+`textQuality` aggregates errors, ink mass, and ink-pixel counts across all rows,
+including an overall `inkMassRatio` and `differingInkRatio`; it is weighted by
+each row's ink, rather than an equal average of row scores.
 Matching weight alone does not establish matching sharpness.
 
 Run the comparison-metric regressions without a browser or GPU:

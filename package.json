@@ -7,6 +7,7 @@
   },
   "scripts": {
     "text:compare": "node tools/text-rendering-compare/compare.mjs",
+    "text:compare:matrix": "node tools/text-rendering-compare/matrix.mjs",
     "text:compare:test": "node --test tools/text-rendering-compare/ink-stats.test.mjs",
     "web:smoke:editorial": "node tools/web-smoke/editorial.mjs"
   },

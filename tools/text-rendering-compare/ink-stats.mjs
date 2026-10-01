@@ -96,13 +96,34 @@ function stackRows(rows, background) {
 }
 
 function aggregate(rows) {
-  const unionPixels = rows.reduce((sum, row) => sum + row.unionPixels, 0);
-  const absoluteInkChannelError = rows.reduce((sum, row) => sum + row.absoluteInkChannelError, 0);
+  const total = key => rows.reduce((sum, row) => sum + row[key], 0);
+  const unionPixels = total('unionPixels');
+  const differingInkPixels = total('differingInkPixels');
+  const suiInkMass = total('suiInkMass');
+  const browserInkMass = total('browserInkMass');
+  const absoluteInkChannelError = total('absoluteInkChannelError');
   return {
     unionPixels,
+    differingInkPixels,
+    differingInkRatio: unionPixels === 0 ? 0 : differingInkPixels / unionPixels,
+    suiInkMass,
+    browserInkMass,
+    // Above 1, SUI draws heavier text than the browser; below 1, lighter.
+    inkMassRatio: browserInkMass <= 0 ? 1 : suiInkMass / browserInkMass,
     absoluteInkChannelError,
     meanInkChannelError: unionPixels === 0 ? 0 : absoluteInkChannelError / (unionPixels * 3)
   };
+}
+
+// How many rows needed each shift. A shift shared by most rows is a placement
+// difference (e.g. baseline rounding), not per-glyph noise.
+function shiftHistogram(rows, axis) {
+  const histogram = {};
+  for (const row of rows) {
+    const shift = String(row.alignment[axis]);
+    histogram[shift] = (histogram[shift] ?? 0) + 1;
+  }
+  return histogram;
 }
 
 export function compareTextRows(sui, browser, { samples, background, dpiScale }) {
@@ -178,6 +199,10 @@ export function compareTextRows(sui, browser, { samples, background, dpiScale })
       searchRadius: radius,
       objective: 'minimum absoluteInkChannelError; ties prefer the smallest shift',
       shiftedRows: alignedRowInkStats.filter(row => row.alignment.suiShiftX !== 0 || row.alignment.suiShiftY !== 0).length,
+      // Keys are SUI's shift toward the browser: -1 in Y means SUI drew one
+      // physical pixel lower.
+      suiShiftXRows: shiftHistogram(alignedRowInkStats, 'suiShiftX'),
+      suiShiftYRows: shiftHistogram(alignedRowInkStats, 'suiShiftY'),
       boundaryRows: alignedRowInkStats.filter(row => row.alignment.atSearchBoundary).length
     },
     textQuality: {
