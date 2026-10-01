@@ -324,7 +324,7 @@ pub(crate) fn build_markdown_render_demo_with_theme(theme_reader: DevThemeReader
     let view_document = document.clone();
     let retained_view_state = view_state.clone();
     let view_activity = activity.clone();
-    let rendered = RebuildOnChange::new(
+    let rendered = RebuildOnChange::key_when(
         move || view_theme_reader(),
         move |theme| {
             let link_activity = view_activity.clone();

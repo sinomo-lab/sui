@@ -61,4 +61,10 @@ impl<T: Clone + 'static> Binding<T> {
     pub(crate) fn is_live(&self) -> bool {
         self.reader.is_some() || self.source.is_some()
     }
+
+    /// The current value when it is read or observed, and `None` when it is
+    /// fixed, for widgets that keep the applied value in their own state.
+    pub(crate) fn live(&self) -> Option<T> {
+        self.is_live().then(|| self.get())
+    }
 }

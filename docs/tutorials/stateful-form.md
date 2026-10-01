@@ -157,11 +157,12 @@ conversion to an instant. This avoids silently guessing a timezone.
 
 ## 4. Update dependent readouts
 
-`Label::dynamic` reads current model data instead of owning a fixed string:
+`Label::text_when` reads current model data instead of owning a fixed string:
 
 ```rust,ignore
 let status_state = Rc::clone(&state);
-let status = Label::dynamic("Draft", move || status_state.borrow().status())
+let status = Label::new("Draft")
+    .text_when(move || status_state.borrow().status())
     .theme(theme)
     .color(theme.palette.text_muted);
 ```

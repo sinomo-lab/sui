@@ -54,6 +54,7 @@ impl Label {
         self
     }
 
+    #[deprecated(note = "use `Label::new(fallback).text_when(reader)`")]
     pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
     where
         F: Fn() -> String + 'static,

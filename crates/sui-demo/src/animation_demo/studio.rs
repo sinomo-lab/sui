@@ -826,11 +826,13 @@ fn toolbar(state: StudioState, theme_reader: DevThemeReader) -> impl Widget {
                 ),
         )
         .with_child(
-            Label::dynamic(summary.summary(), move || summary.summary()).text_style_when(
-                demo_text_style_when(&theme_reader, DemoTextRole::Metadata, |theme| {
-                    theme.palette.text_muted
-                }),
-            ),
+            Label::new(summary.summary())
+                .text_when(move || summary.summary())
+                .text_style_when(demo_text_style_when(
+                    &theme_reader,
+                    DemoTextRole::Metadata,
+                    |theme| theme.palette.text_muted,
+                )),
         )
 }
 

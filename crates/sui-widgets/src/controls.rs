@@ -392,6 +392,7 @@ impl Widget for Separator {
 
 pub struct Icon {
     theme: Box<DefaultTheme>,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     glyph: IconGlyph,
     size: Option<f32>,
     color: Option<Color>,
@@ -403,6 +404,7 @@ impl Icon {
     pub fn new(glyph: IconGlyph) -> Self {
         Self {
             theme: Box::new(DefaultTheme::default()),
+            theme_reader: None,
             glyph,
             size: None,
             color: None,
@@ -413,6 +415,17 @@ impl Icon {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = Box::new(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    /// Resolve the theme each time the icon lays out.
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme = Box::new(theme());
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -455,6 +468,9 @@ impl Icon {
 
 impl Widget for Icon {
     fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if let Some(theme) = &self.theme_reader {
+            *self.theme = theme();
+        }
         let side = self.resolved_size();
         constraints.clamp(Size::new(side, side))
     }
@@ -1418,6 +1434,7 @@ pub struct Button {
     icon_gap: Option<f32>,
     padding: Option<Insets>,
     min_width: Option<f32>,
+    min_width_metric: Option<fn(&DefaultTheme) -> f32>,
     min_height: Option<f32>,
     interaction: PressInteraction,
     focus_animation: AnimatedScalar,
@@ -1456,6 +1473,7 @@ impl Button {
             icon_gap: None,
             padding: None,
             min_width: None,
+            min_width_metric: None,
             min_height: None,
             interaction: PressInteraction::default(),
             focus_animation: AnimatedScalar::new(0.0),
@@ -1566,6 +1584,15 @@ impl Button {
 
     pub fn min_width(mut self, width: f32) -> Self {
         self.min_width = Some(width.max(0.0));
+        self.min_width_metric = None;
+        self
+    }
+
+    /// Take the minimum width from the button's theme when it lays out, so a
+    /// later or live theme still applies.
+    pub(crate) fn min_width_from_theme(mut self, metric: fn(&DefaultTheme) -> f32) -> Self {
+        self.min_width = None;
+        self.min_width_metric = Some(metric);
         self
     }
 
@@ -1704,7 +1731,9 @@ impl Button {
     fn resolved_min_size(&self) -> Size {
         let theme = self.resolved_theme();
         Size::new(
-            self.min_width.unwrap_or(theme.metrics.button_min_width),
+            self.min_width
+                .or_else(|| self.min_width_metric.map(|metric| metric(&theme).max(0.0)))
+                .unwrap_or(theme.metrics.button_min_width),
             self.min_height.unwrap_or(theme.metrics.min_height),
         )
     }
@@ -6847,6 +6876,7 @@ pub struct Select {
     selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     placeholder: String,
     expanded: bool,
+    open_binding: Binding<bool>,
     hovered_option: Option<usize>,
     hovered_header: bool,
     pressed_header: bool,
@@ -6858,6 +6888,8 @@ pub struct Select {
     inline: bool,
     on_change: Option<Box<dyn FnMut(usize, String)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
+    on_open_change: Option<Box<dyn FnMut(bool)>>,
+    on_open_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, bool)>>,
     preview: InteractionPreview,
 }
 
@@ -6874,6 +6906,7 @@ impl Select {
             selected_reader: None,
             placeholder: String::new(),
             expanded: false,
+            open_binding: Binding::new(false),
             hovered_option: None,
             hovered_header: false,
             pressed_header: false,
@@ -6886,6 +6919,8 @@ impl Select {
             inline: false,
             on_change: None,
             on_change_with_ctx: None,
+            on_open_change: None,
+            on_open_change_with_ctx: None,
         }
     }
 
@@ -6973,9 +7008,67 @@ impl Select {
         self
     }
 
-    pub fn expanded(mut self, expanded: bool) -> Self {
-        self.expanded = expanded;
-        if expanded {
+    /// Whether the option list is open. The select still opens and closes
+    /// the list when the user clicks it or dismisses it, reporting each change
+    /// through [`Self::on_open_change`].
+    pub fn open(mut self, open: bool) -> Self {
+        self.open_binding.set(open);
+        self.jump_open(open);
+        self
+    }
+
+    /// [`Self::open`], read each time the select lays out.
+    pub fn open_when<F>(mut self, open: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.open_binding.set_when(open);
+        self.sync_open();
+        self
+    }
+
+    /// [`Self::open`], following an observable and laying out again when it
+    /// changes.
+    pub fn open_from<O>(mut self, open: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.open_binding.set_from(open);
+        self.sync_open();
+        self
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.expanded
+    }
+
+    #[deprecated(note = "use `open`")]
+    pub fn expanded(self, expanded: bool) -> Self {
+        self.open(expanded)
+    }
+
+    /// Call `on_open_change` when the user opens or closes the option list.
+    pub fn on_open_change<F>(mut self, on_open_change: F) -> Self
+    where
+        F: FnMut(bool) + 'static,
+    {
+        self.on_open_change = Some(Box::new(on_open_change));
+        self
+    }
+
+    /// [`Self::on_open_change`], with the event context first.
+    pub fn on_open_change_with_ctx<F>(mut self, on_open_change: F) -> Self
+    where
+        F: FnMut(&mut EventCtx, bool) + 'static,
+    {
+        self.on_open_change_with_ctx = Some(Box::new(on_open_change));
+        self
+    }
+
+    /// Open or close the list at once, without an entrance.
+    fn jump_open(&mut self, open: bool) {
+        self.expanded = open;
+        if open {
             self.hovered_option = self.current_selected_index().or(Some(0));
         } else {
             self.hovered_option = None;
@@ -6983,8 +7076,16 @@ impl Select {
         self.menu_state
             .borrow_mut()
             .reveal
-            .jump_to(expanded as u8 as f32);
-        self
+            .jump_to(open as u8 as f32);
+    }
+
+    fn sync_open(&mut self) {
+        if let Some(open) = self.open_binding.live()
+            && open != self.expanded
+            && !self.is_inline()
+        {
+            self.jump_open(open);
+        }
     }
 
     pub fn selected_when<F>(mut self, selected: F) -> Self
@@ -7003,7 +7104,7 @@ impl Select {
     pub fn show_inline(mut self) -> Self {
         self.inline = true;
         self.menu_state.borrow_mut().inline = true;
-        self.expanded(true)
+        self.open(true)
     }
 
     fn is_inline(&self) -> bool {
@@ -7218,6 +7319,12 @@ impl Select {
         } else {
             None
         };
+        if let Some(on_open_change) = &mut self.on_open_change {
+            on_open_change(expanded);
+        }
+        if let Some(on_open_change) = &mut self.on_open_change_with_ctx {
+            on_open_change(ctx, expanded);
+        }
 
         let surface_id = self.menu_surface.child().id();
         let theme = self.resolved_theme();
@@ -7498,6 +7605,10 @@ impl Widget for Select {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.open_binding.observe(|open| {
+            ctx.observe::<bool, _>(open);
+        });
+        self.sync_open();
         let theme = self.resolved_theme();
         let padding = theme.metrics.text_input_padding;
         let text_style = theme.body_text_style();

@@ -784,32 +784,29 @@ fn build_vector_status_bar(
         .height(28.0)
         .segment(StatusBarSegment::new("Select / edit").min_width(120.0))
         .segment(
-            StatusBarSegment::dynamic("Zoom --", move || vector_zoom_status_text(&zoom_state))
+            StatusBarSegment::new("Zoom --")
+                .text_when(move || vector_zoom_status_text(&zoom_state))
                 .min_width(92.0),
         )
         .segment(
-            StatusBarSegment::dynamic("Object Blue ellipse", move || {
-                format!("Object {}", object_state.selected_object_label())
-            })
-            .min_width(176.0),
+            StatusBarSegment::new("Object Blue ellipse")
+                .text_when(move || format!("Object {}", object_state.selected_object_label()))
+                .min_width(176.0),
         )
         .segment(
-            StatusBarSegment::dynamic("Stroke 3 px", move || {
-                format!("Stroke {:.1} px", stroke_state.stroke_width())
-            })
-            .min_width(120.0),
+            StatusBarSegment::new("Stroke 3 px")
+                .text_when(move || format!("Stroke {:.1} px", stroke_state.stroke_width()))
+                .min_width(120.0),
         )
         .segment(
-            StatusBarSegment::dynamic("Opacity 78%", move || {
-                format!("Opacity {:.0}%", opacity_state.opacity() * 100.0)
-            })
-            .min_width(126.0),
+            StatusBarSegment::new("Opacity 78%")
+                .text_when(move || format!("Opacity {:.0}%", opacity_state.opacity() * 100.0))
+                .min_width(126.0),
         )
         .segment(
-            StatusBarSegment::dynamic("Fill Nonzero", move || {
-                format!("Fill {}", fill_state.fill_rule_label())
-            })
-            .expand(true),
+            StatusBarSegment::new("Fill Nonzero")
+                .text_when(move || format!("Fill {}", fill_state.fill_rule_label()))
+                .expand(true),
         )
 }
 
@@ -976,15 +973,14 @@ fn build_vector_document_bar(
                 )
                 .with_child(
                     SizedBox::new().width(78.0).with_child(
-                        Label::dynamic("Zoom --", move || {
-                            vector_zoom_status_text(&zoom_reader_state)
-                        })
-                        .semantic_name(VECTOR_ZOOM_READOUT_NAME)
-                        .text_style_when(demo_text_style_when(
-                            &theme_reader,
-                            DemoTextRole::Metadata,
-                            |theme| theme.palette.text,
-                        )),
+                        Label::new("Zoom --")
+                            .text_when(move || vector_zoom_status_text(&zoom_reader_state))
+                            .semantic_name(VECTOR_ZOOM_READOUT_NAME)
+                            .text_style_when(demo_text_style_when(
+                                &theme_reader,
+                                DemoTextRole::Metadata,
+                                |theme| theme.palette.text,
+                            )),
                     ),
                 )
                 .with_child(
@@ -1440,13 +1436,17 @@ where
             .spacing(6.0)
             .alignment(Alignment::Center)
             .with_child(control)
-            .with_child(SizedBox::new().width(44.0).height(28.0).with_child(
-                Label::dynamic("", value_reader).text_style_when(demo_text_style_when(
-                    theme_reader,
-                    DemoTextRole::Metadata,
-                    |theme| theme.palette.text_muted,
-                )),
-            )),
+            .with_child(
+                SizedBox::new().width(44.0).height(28.0).with_child(
+                    Label::new("")
+                        .text_when(value_reader)
+                        .text_style_when(demo_text_style_when(
+                            theme_reader,
+                            DemoTextRole::Metadata,
+                            |theme| theme.palette.text_muted,
+                        )),
+                ),
+            ),
     )
     .theme_when(clone_dev_theme_reader(theme_reader))
     .inline()

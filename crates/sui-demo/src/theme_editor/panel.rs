@@ -26,7 +26,7 @@ pub(super) fn build_panel(
     let content_state = state.clone();
     let content_shell = Rc::clone(&shell);
     Surface::sidebar(
-        ScrollView::vertical(RebuildOnChange::new_observable(
+        ScrollView::vertical(RebuildOnChange::key_from(
             state.structure_signal(),
             move |_| {
                 WidgetPod::new(panel_content(
@@ -122,7 +122,7 @@ fn header(
             DemoTextRole::Supporting,
             DemoTextColor::Muted,
         ))
-        .with_child(RebuildOnChange::new_observable(
+        .with_child(RebuildOnChange::key_from(
             state.summary_signal(),
             move |summary| {
                 WidgetPod::new(demo_label(
@@ -288,7 +288,7 @@ fn role_overrides(state: ThemeEditorState, shell: DevThemeReader) -> impl Widget
 /// Holds `tokens`' editor while one of them is selected.
 fn editor_slot(tokens: Vec<Token>, state: ThemeEditorState, shell: DevThemeReader) -> impl Widget {
     let editor_state = state.clone();
-    RebuildOnChange::new_observable(state.selected_signal(), move |selected| match selected {
+    RebuildOnChange::key_from(state.selected_signal(), move |selected| match selected {
         Some(token) if tokens.contains(token) => WidgetPod::new(color_editor(
             *token,
             editor_state.clone(),
@@ -331,7 +331,7 @@ fn color_editor(token: Token, state: ThemeEditorState, shell: DevThemeReader) ->
                 .theme_when(clone_dev_theme_reader(&shell))
                 .on_press(move || reset_state.reset(token)),
         );
-    let picker = RebuildOnChange::new_observable(state.picker_signal(), move |key| {
+    let picker = RebuildOnChange::key_from(state.picker_signal(), move |key| {
         let color_state = picker_state.clone();
         let change_state = picker_state.clone();
         WidgetPod::new(
@@ -343,7 +343,7 @@ fn color_editor(token: Token, state: ThemeEditorState, shell: DevThemeReader) ->
                 .on_change(move |color| change_state.set_color(token, color, EditOrigin::Picker)),
         )
     });
-    let hex_field = RebuildOnChange::new_observable(state.hex_signal(), move |_| {
+    let hex_field = RebuildOnChange::key_from(state.hex_signal(), move |_| {
         let change_state = hex_state.clone();
         WidgetPod::new(
             TextInput::new(THEME_HEX_NAME)
@@ -457,7 +457,7 @@ impl ScaleRow {
             format,
             ..
         } = self;
-        let value = RebuildOnChange::new_observable(state.theme_signal(), move |_| {
+        let value = RebuildOnChange::key_from(state.theme_signal(), move |_| {
             WidgetPod::new(
                 demo_label(
                     &value_shell,

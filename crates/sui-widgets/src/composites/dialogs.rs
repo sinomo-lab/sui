@@ -5,6 +5,7 @@ use crate::Progress;
 use crate::SemanticTone;
 use crate::animation::AnimationSpec;
 use crate::animation::Reveal;
+use crate::binding::Binding;
 use crate::composites::forms::set_focus_animation_target;
 use crate::composites::indicators::text_token_style;
 use crate::composites::popups::request_child_invalidation;
@@ -30,7 +31,7 @@ use sui_core::Vector;
 use sui_core::WakeEvent;
 use sui_core::WidgetId;
 use sui_layout::Constraints;
-use sui_reactive::Signal;
+use sui_reactive::{Observable, Signal};
 use sui_runtime::ArrangeCtx;
 use sui_runtime::Command;
 use sui_runtime::EventCtx;
@@ -183,6 +184,7 @@ pub struct Dialog {
     pub(super) title: String,
     pub(super) description: Option<String>,
     pub(super) shown: bool,
+    pub(super) open_binding: Binding<bool>,
     pub(super) modal: bool,
     pub(super) dismiss_on_scrim: bool,
     pub(super) max_width: Option<f32>,
@@ -216,6 +218,7 @@ impl Dialog {
             title: title.into(),
             description: None,
             shown: true,
+            open_binding: Binding::new(true),
             modal: true,
             dismiss_on_scrim: false,
             max_width: None,
@@ -246,6 +249,7 @@ impl Dialog {
         self.inline = true;
         self.modal = false;
         self.shown = true;
+        self.open_binding.set(true);
         self.reveal = Reveal::new(1.0);
         self.entrance_started = true;
         self
@@ -275,12 +279,62 @@ impl Dialog {
         self
     }
 
-    pub fn shown(mut self, shown: bool) -> Self {
-        self.set_shown(shown);
+    /// Whether the dialog is open; it is open from the start. A dialog never
+    /// closes itself: when the user asks to close it, it calls
+    /// [`Self::on_dismiss`], and the app closes it.
+    pub fn open(mut self, open: bool) -> Self {
+        self.set_open(open);
         self
     }
 
+    /// [`Self::open`], read each time the dialog lays out.
+    pub fn open_when<F>(mut self, open: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.open_binding.set_when(open);
+        self.sync_open();
+        self
+    }
+
+    /// [`Self::open`], following an observable and laying out again when it
+    /// changes.
+    pub fn open_from<O>(mut self, open: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.open_binding.set_from(open);
+        self.sync_open();
+        self
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.shown
+    }
+
+    /// Open or close a built dialog, returning whether that changed it.
+    pub fn set_open(&mut self, open: bool) -> bool {
+        self.open_binding.set(open);
+        self.apply_open(open)
+    }
+
+    #[deprecated(note = "use `open`")]
+    pub fn shown(self, shown: bool) -> Self {
+        self.open(shown)
+    }
+
+    #[deprecated(note = "use `set_open`")]
     pub fn set_shown(&mut self, shown: bool) -> bool {
+        self.set_open(shown)
+    }
+
+    pub(super) fn sync_open(&mut self) {
+        if let Some(open) = self.open_binding.live() {
+            self.apply_open(open);
+        }
+    }
+
+    fn apply_open(&mut self, shown: bool) -> bool {
         if self.shown == shown {
             return false;
         }
@@ -306,8 +360,10 @@ impl Dialog {
         self
     }
 
+    /// The widest the dialog grows; never narrower than the theme's
+    /// `dialog_min_width`.
     pub fn max_width(mut self, max_width: f32) -> Self {
-        self.max_width = Some(max_width.max(self.resolved_theme().metrics.dialog_min_width));
+        self.max_width = Some(max_width);
         self
     }
 
@@ -347,7 +403,7 @@ impl Dialog {
         self.actions.push(
             Button::primary(label.into())
                 .theme_when(self.theme.reader())
-                .min_width(self.resolved_theme().metrics.dialog_action_min_width)
+                .min_width_from_theme(|theme| theme.metrics.dialog_action_min_width)
                 .on_press(on_press),
         );
         self
@@ -360,15 +416,18 @@ impl Dialog {
         self.actions.push(
             Button::new(label.into())
                 .theme_when(self.theme.reader())
-                .min_width(self.resolved_theme().metrics.dialog_action_min_width)
+                .min_width_from_theme(|theme| theme.metrics.dialog_action_min_width)
                 .on_press(on_press),
         );
         self
     }
 
     pub(super) fn resolved_max_width(&self) -> f32 {
+        let metrics = self.resolved_theme().metrics;
         self.max_width
-            .unwrap_or(self.resolved_theme().metrics.dialog_max_width)
+            .map_or(metrics.dialog_max_width, |max_width| {
+                max_width.max(metrics.dialog_min_width)
+            })
     }
 
     pub(super) fn title_style(&self) -> TextStyle {
@@ -408,6 +467,7 @@ impl Dialog {
 
 impl Widget for Dialog {
     fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
+        self.sync_open();
         if command.get(OVERLAY_DISMISS_REQUEST).is_some() && self.shown {
             self.dismiss(ctx);
             ctx.request_semantics();
@@ -416,6 +476,7 @@ impl Widget for Dialog {
     }
 
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_open();
         if !self.shown {
             return;
         }
@@ -462,6 +523,10 @@ impl Widget for Dialog {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.open_binding.observe(|open| {
+            ctx.observe::<bool, _>(open);
+        });
+        self.sync_open();
         if !self.shown {
             self.dialog_frame = Rect::ZERO;
             self.body_frame = Rect::ZERO;
@@ -881,13 +946,56 @@ impl CommandPalette {
         self
     }
 
-    pub fn shown(mut self, shown: bool) -> Self {
-        self.inner = self.inner.shown(shown);
+    /// Resolve the theme on every layout and paint.
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.inner = self.inner.theme_when(theme);
         self
     }
 
+    /// Whether the palette is open; see [`Dialog::open`].
+    pub fn open(mut self, open: bool) -> Self {
+        self.inner = self.inner.open(open);
+        self
+    }
+
+    /// [`Self::open`], read each time the palette lays out.
+    pub fn open_when<F>(mut self, open: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.inner = self.inner.open_when(open);
+        self
+    }
+
+    /// [`Self::open`], following an observable.
+    pub fn open_from<O>(mut self, open: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.inner = self.inner.open_from(open);
+        self
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.inner.is_open()
+    }
+
+    /// Open or close a built palette, returning whether that changed it.
+    pub fn set_open(&mut self, open: bool) -> bool {
+        self.inner.set_open(open)
+    }
+
+    #[deprecated(note = "use `open`")]
+    pub fn shown(self, shown: bool) -> Self {
+        self.open(shown)
+    }
+
+    #[deprecated(note = "use `set_open`")]
     pub fn set_shown(&mut self, shown: bool) -> bool {
-        self.inner.set_shown(shown)
+        self.set_open(shown)
     }
 
     pub fn description(mut self, description: impl Into<String>) -> Self {
@@ -1036,6 +1144,7 @@ pub struct SideSheet {
     pub(super) title: String,
     pub(super) description: Option<String>,
     pub(super) shown: bool,
+    pub(super) open_binding: Binding<bool>,
     pub(super) state: Option<SheetState>,
     pub(super) modal: bool,
     pub(super) dismiss_on_scrim: bool,
@@ -1069,6 +1178,7 @@ impl SideSheet {
             title: title.into(),
             description: None,
             shown: true,
+            open_binding: Binding::new(true),
             state: None,
             modal: true,
             dismiss_on_scrim: true,
@@ -1111,17 +1221,70 @@ impl SideSheet {
         self
     }
 
-    pub fn shown(mut self, shown: bool) -> Self {
-        self.set_shown(shown);
+    /// Whether the sheet is open; it is open from the start. When the user
+    /// asks to close it, the sheet calls [`Self::on_dismiss`] and stays open
+    /// until the app closes it, unless it follows a [`SheetState`], which it
+    /// hides itself.
+    pub fn open(mut self, open: bool) -> Self {
+        self.set_open(open);
         self
     }
 
-    pub fn is_shown(&self) -> bool {
+    /// [`Self::open`], read each time the sheet lays out.
+    pub fn open_when<F>(mut self, open: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.state = None;
+        self.open_binding.set_when(open);
+        self.sync_open();
+        self
+    }
+
+    /// [`Self::open`], following an observable and laying out again when it
+    /// changes.
+    pub fn open_from<O>(mut self, open: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.state = None;
+        self.open_binding.set_from(open);
+        self.sync_open();
+        self
+    }
+
+    pub fn is_open(&self) -> bool {
         self.shown
     }
 
+    #[deprecated(note = "use `is_open`")]
+    pub fn is_shown(&self) -> bool {
+        self.is_open()
+    }
+
+    #[deprecated(note = "use `open`")]
+    pub fn shown(self, shown: bool) -> Self {
+        self.open(shown)
+    }
+
+    #[deprecated(note = "use `set_open`")]
     pub fn set_shown(&mut self, shown: bool) -> bool {
+        self.set_open(shown)
+    }
+
+    /// Read the open state from the sheet's [`SheetState`] or bound value.
+    pub(super) fn sync_open(&mut self) {
+        if let Some(state) = &self.state {
+            self.shown = state.is_shown();
+        } else if let Some(open) = self.open_binding.live() {
+            self.shown = open;
+        }
+    }
+
+    /// Open or close a built sheet, returning whether that changed it.
+    pub fn set_open(&mut self, shown: bool) -> bool {
         self.state = None;
+        self.open_binding.set(shown);
         if self.shown == shown {
             return false;
         }
@@ -1138,6 +1301,7 @@ impl SideSheet {
 
     pub fn state(mut self, state: SheetState) -> Self {
         self.shown = state.is_shown();
+        self.open_binding.set(self.shown);
         self.state = Some(state);
         self
     }
@@ -1188,11 +1352,10 @@ impl SideSheet {
     where
         F: FnMut() + 'static,
     {
-        let theme = self.resolved_theme();
         self.actions.push(
             Button::primary(label)
                 .theme_when(self.theme.reader())
-                .min_width(theme.metrics.dialog_action_min_width)
+                .min_width_from_theme(|theme| theme.metrics.dialog_action_min_width)
                 .on_press(on_press),
         );
         self
@@ -1202,13 +1365,12 @@ impl SideSheet {
     where
         F: FnMut() + 'static,
     {
-        let theme = self.resolved_theme();
         self.actions.push(
             Button::new(label)
                 .theme_when(self.theme.reader())
                 .appearance(ButtonAppearance::Outline)
                 .tone(SemanticTone::Neutral)
-                .min_width(theme.metrics.dialog_action_min_width)
+                .min_width_from_theme(|theme| theme.metrics.dialog_action_min_width)
                 .on_press(on_press),
         );
         self
@@ -1355,16 +1517,15 @@ impl SideSheet {
 
 impl Widget for SideSheet {
     fn command(&mut self, ctx: &mut EventCtx, command: &Command<'_>) {
-        if command.get(OVERLAY_DISMISS_REQUEST).is_some() && self.is_shown() {
+        self.sync_open();
+        if command.get(OVERLAY_DISMISS_REQUEST).is_some() && self.is_open() {
             self.dismiss(ctx);
             ctx.set_handled();
         }
     }
 
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
-        if let Some(state) = &self.state {
-            self.shown = state.is_shown();
-        }
+        self.sync_open();
         if !self.shown {
             return;
         }
@@ -1421,6 +1582,11 @@ impl Widget for SideSheet {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         if let Some(state) = &self.state {
             self.shown = ctx.observe(&state.shown);
+        } else {
+            self.open_binding.observe(|open| {
+                ctx.observe::<bool, _>(open);
+            });
+            self.sync_open();
         }
         if !self.shown {
             self.sheet_frame = Rect::ZERO;
@@ -1696,7 +1862,7 @@ impl Widget for SideSheet {
     }
 
     fn overlay_options(&self) -> Option<OverlayOptions> {
-        self.is_shown().then_some(
+        self.is_open().then_some(
             OverlayOptions::new(OverlayKind::Sheet)
                 .modal(self.modal)
                 .dismiss(OverlayDismissPolicy {
@@ -1802,9 +1968,42 @@ impl BottomSheet {
         self
     }
 
-    pub fn shown(mut self, shown: bool) -> Self {
-        self.inner = self.inner.shown(shown);
+    /// Whether the sheet is open; see [`SideSheet::open`].
+    pub fn open(mut self, open: bool) -> Self {
+        self.inner = self.inner.open(open);
         self
+    }
+
+    /// [`Self::open`], read each time the sheet lays out.
+    pub fn open_when<F>(mut self, open: F) -> Self
+    where
+        F: Fn() -> bool + 'static,
+    {
+        self.inner = self.inner.open_when(open);
+        self
+    }
+
+    /// [`Self::open`], following an observable.
+    pub fn open_from<O>(mut self, open: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.inner = self.inner.open_from(open);
+        self
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.inner.is_open()
+    }
+
+    /// Open or close a built sheet, returning whether that changed it.
+    pub fn set_open(&mut self, open: bool) -> bool {
+        self.inner.set_open(open)
+    }
+
+    #[deprecated(note = "use `open`")]
+    pub fn shown(self, shown: bool) -> Self {
+        self.open(shown)
     }
 
     pub fn state(mut self, state: SheetState) -> Self {

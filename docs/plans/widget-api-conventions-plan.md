@@ -72,6 +72,9 @@ Status: done.
 
 ## Phase 4: Overlays and Themes
 
+Status: done. `FloatingStack::theme` never had an effect, so it is deprecated
+instead of gaining `theme_when`.
+
 - Overlays share `open`, `open_when`, `open_from`, and `on_open_change`.
   `Dialog::shown` and `Select::expanded` become `open`.
 - `theme_when` is added where it is missing: `Icon`, `Tooltip`, `Popover`,

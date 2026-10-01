@@ -119,10 +119,11 @@ state. Use `RebuildOnChange` for genuinely structural changes, not as the
 default way to update a label or selected value.
 
 When a structural key is observable, prefer
-`RebuildOnChange::new_observable(selector, build)`. It subscribes the host,
+`RebuildOnChange::key_from(selector, build)`. It subscribes the host,
 wakes the runtime, rebuilds only when the selected key changes, and reports the
-reason through rebuild diagnostics. The closure-based constructor remains
-available for existing state adapters that are polled during a runtime pass.
+reason through rebuild diagnostics. `RebuildOnChange::key_when(key_fn, build)`
+remains available for existing state adapters that are polled during a runtime
+pass.
 
 For dynamic collections, `KeyedChildren<K, T>` reconciles items by stable key.
 Existing `WidgetPod`s move into their new order instead of being recreated.

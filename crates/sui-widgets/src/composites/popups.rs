@@ -868,6 +868,7 @@ pub struct Tooltip {
     pub(super) child: SingleChild,
     pub(super) overlay: SingleChild,
     pub(super) state: Rc<RefCell<TooltipPresentationState>>,
+    pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
 }
 
 impl Tooltip {
@@ -880,11 +881,23 @@ impl Tooltip {
             child: SingleChild::new(child),
             overlay: SingleChild::new(TooltipOverlay::new(Rc::clone(&state))),
             state,
+            theme_reader: None,
         }
     }
 
-    pub fn theme(self, theme: DefaultTheme) -> Self {
+    pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.state.borrow_mut().theme = theme;
+        self.theme_reader = None;
+        self
+    }
+
+    /// Resolve the theme each time the tooltip lays out.
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.state.borrow_mut().theme = theme();
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -994,6 +1007,9 @@ impl Widget for Tooltip {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         let mut state = self.state.borrow_mut();
+        if let Some(theme) = &self.theme_reader {
+            state.theme = theme();
+        }
         if state.reveal.settle(ctx.frame_time()) {
             // Finished hiding: the bubble leaves the overlay stack.
             request_measure_child(ctx, self.overlay.child().id(), InvalidationKind::Visibility);
@@ -1441,7 +1457,8 @@ pub struct Popover {
     pub(super) surface: SingleChild,
     pub(super) focus_surface: SingleChild,
     pub(super) open: bool,
-    pub(super) open_reader: Option<Box<dyn Fn() -> bool>>,
+    pub(super) open_binding: Binding<bool>,
+    pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     pub(super) on_open_change: Option<Box<dyn FnMut(bool)>>,
     pub(super) on_open_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, bool)>>,
     pub(super) alignment: PopoverAlignment,
@@ -1463,7 +1480,8 @@ impl Popover {
             surface: SingleChild::new(PopoverSurface::new(Rc::clone(&state), content)),
             focus_surface: SingleChild::new(PopoverFocusSurface::new(Rc::clone(&state))),
             open: false,
-            open_reader: None,
+            open_binding: Binding::new(false),
+            theme_reader: None,
             on_open_change: None,
             on_open_change_with_ctx: None,
             alignment: PopoverAlignment::Start,
@@ -1474,27 +1492,67 @@ impl Popover {
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
+        self.apply_theme(theme);
+        self.theme_reader = None;
+        self
+    }
+
+    /// Resolve the theme each time the popover lays out.
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.apply_theme(theme());
+        self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    fn apply_theme(&mut self, theme: DefaultTheme) {
         self.gap = theme.metrics.popover_gap;
         self.state.borrow_mut().theme = theme;
-        self
     }
 
+    /// Whether the surface is open. The popover still opens and closes
+    /// itself when the user clicks the trigger or dismisses it, reporting
+    /// each change through [`Self::on_open_change`].
     pub fn open(mut self, open: bool) -> Self {
-        self.open = open;
-        self.open_reader = None;
-        {
-            let mut state = self.state.borrow_mut();
-            state.reveal.jump_to(if open { 1.0 } else { 0.0 });
-        }
+        self.open_binding.set(open);
+        self.jump_open(open);
         self
     }
 
+    /// [`Self::open`], read each time the popover lays out. The popover
+    /// follows the reader, so a reader that ignores
+    /// [`Self::on_open_change`] keeps the popover in the state it reads.
     pub fn open_when<F>(mut self, open: F) -> Self
     where
         F: Fn() -> bool + 'static,
     {
-        self.open_reader = Some(Box::new(open));
+        self.open_binding.set_when(open);
+        self.sync_external_open();
         self
+    }
+
+    /// [`Self::open`], following an observable and laying out again when it
+    /// changes.
+    pub fn open_from<O>(mut self, open: O) -> Self
+    where
+        O: Observable<bool> + 'static,
+    {
+        self.open_binding.set_from(open);
+        self.sync_external_open();
+        self
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    fn jump_open(&mut self, open: bool) {
+        self.open = open;
+        let mut state = self.state.borrow_mut();
+        state.reveal.jump_to(if open { 1.0 } else { 0.0 });
+        state.arrival_active = false;
     }
 
     pub fn on_open_change<F>(mut self, on_open_change: F) -> Self
@@ -1528,7 +1586,7 @@ impl Popover {
     /// documentation use this to show an open popover beside other content.
     pub fn show_inline(mut self) -> Self {
         self.open = true;
-        self.open_reader = None;
+        self.open_binding.set(true);
         {
             let mut state = self.state.borrow_mut();
             state.inline = true;
@@ -1542,16 +1600,12 @@ impl Popover {
     }
 
     pub(super) fn sync_external_open(&mut self) {
-        let Some(open) = self.open_reader.as_ref().map(|open| open()) else {
+        let Some(open) = self.open_binding.live() else {
             return;
         };
-        if self.open == open {
-            return;
+        if self.open != open {
+            self.jump_open(open);
         }
-        self.open = open;
-        let mut state = self.state.borrow_mut();
-        state.reveal.jump_to(if open { 1.0 } else { 0.0 });
-        state.arrival_active = false;
     }
 
     pub(super) fn start_arrival(&mut self, ctx: &mut EventCtx) {
@@ -1708,6 +1762,13 @@ impl Widget for Popover {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if let Some(theme) = &self.theme_reader {
+            let theme = theme();
+            self.apply_theme(theme);
+        }
+        self.open_binding.observe(|open| {
+            ctx.observe::<bool, _>(open);
+        });
         self.sync_external_open();
         settle_surfaces(
             ctx,

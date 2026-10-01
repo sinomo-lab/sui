@@ -208,7 +208,7 @@ fn task_row(
             .gap(8.0)
             .align_items(Alignment::Center)
             .with_item(
-                Label::dynamic(title, move || task.get().title),
+                Label::new(title).text_when(move || task.get().title),
                 FlexItem::fill(),
             )
             .with_child(

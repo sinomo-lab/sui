@@ -1036,7 +1036,9 @@ fn label_dynamic_text_updates_named_semantic_value() -> Result<()> {
     let text = Rc::new(RefCell::new("Zoom 25%".to_string()));
     let text_reader = Rc::clone(&text);
     let (mut runtime, window_id) = build_runtime(
-        Label::dynamic("Zoom --", move || text_reader.borrow().clone()).semantic_name("Zoom level"),
+        Label::new("Zoom --")
+            .text_when(move || text_reader.borrow().clone())
+            .semantic_name("Zoom level"),
     );
 
     let output = runtime.render(window_id)?;
@@ -6350,6 +6352,88 @@ fn select_can_choose_option_from_keyboard() -> Result<()> {
 }
 
 #[test]
+fn select_reports_open_changes_and_follows_an_observed_open_state() -> Result<()> {
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let (on_open_change, on_open_change_with_ctx) = (Rc::clone(&changes), Rc::clone(&changes));
+    let (mut runtime, window_id) = build_runtime(
+        Select::new("Mode")
+            .options(["Draft", "Final"])
+            .on_open_change(move |open| on_open_change.borrow_mut().push(("plain", open)))
+            .on_open_change_with_ctx(move |_ctx, open| {
+                on_open_change_with_ctx.borrow_mut().push(("ctx", open))
+            }),
+    );
+    let _ = runtime.render(window_id)?;
+    click(&mut runtime, window_id, Point::new(20.0, 20.0))?;
+    runtime.handle_event(
+        window_id,
+        Event::Keyboard(KeyboardEvent::new("Enter", KeyState::Pressed)),
+    )?;
+    assert_eq!(
+        changes.borrow().as_slice(),
+        &[
+            ("plain", true),
+            ("ctx", true),
+            ("plain", false),
+            ("ctx", false)
+        ]
+    );
+
+    let open = Signal::named("select_open", false);
+    let (mut runtime, window_id) = build_runtime(
+        Select::new("Mode")
+            .options(["Draft", "Final"])
+            .open_from(open.clone()),
+    );
+    let expanded = |runtime: &mut Runtime| -> Result<Option<bool>> {
+        Ok(runtime
+            .render(window_id)?
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::ComboBox)
+            .and_then(|node| node.state.expanded))
+    };
+    assert_eq!(expanded(&mut runtime)?, Some(false));
+    assert!(open.set(true));
+    assert_eq!(expanded(&mut runtime)?, Some(true));
+    assert!(Select::new("Mode").open(true).is_open());
+    Ok(())
+}
+
+#[test]
+fn icon_resolves_a_live_theme_when_it_lays_out() -> Result<()> {
+    let large = Rc::new(Cell::new(false));
+    let reader = Rc::clone(&large);
+    let (mut runtime, window_id) = build_runtime(
+        Stack::vertical().with_child(Icon::new(IconGlyph::Storage).label("Storage").theme_when(
+            move || {
+                let mut theme = DefaultTheme::default();
+                theme.metrics.icon_size = if reader.get() { 40.0 } else { 16.0 };
+                theme
+            },
+        )),
+    );
+    let width = |runtime: &mut Runtime| -> Result<f32> {
+        Ok(runtime
+            .render(window_id)?
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Storage"))
+            .expect("icon semantics present")
+            .bounds
+            .width())
+    };
+    assert_eq!(width(&mut runtime)?, 16.0);
+    large.set(true);
+    runtime.handle_event(
+        window_id,
+        Event::Window(WindowEvent::Resized(Size::new(640.0, 420.0))),
+    )?;
+    assert_eq!(width(&mut runtime)?, 40.0);
+    Ok(())
+}
+
+#[test]
 fn select_handles_the_accessibility_actions_it_advertises() -> Result<()> {
     let changes = Rc::new(RefCell::new(Vec::new()));
     let on_change = Rc::clone(&changes);
@@ -6989,7 +7073,7 @@ fn expanded_select_in_modal_dialog_paints_and_hits_above_later_body_content() ->
             Select::new("Mode")
                 .theme(menu_theme)
                 .options(["Automatic", "Linear", "Gamma"])
-                .expanded(true)
+                .open(true)
                 .on_change(move |_, value| on_change.borrow_mut().push(value)),
         )
         .with_child(

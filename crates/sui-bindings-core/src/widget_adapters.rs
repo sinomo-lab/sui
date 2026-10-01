@@ -56,7 +56,7 @@ impl BindingSideSheetWidget {
     pub(crate) fn sync_state(&mut self) {
         let shown = self.shown.resolve();
         if shown != self.last_shown {
-            self.inner.set_shown(shown);
+            self.inner.set_open(shown);
             self.last_shown = shown;
         }
     }
@@ -131,7 +131,7 @@ impl BindingCommandPaletteWidget {
     pub(crate) fn sync_state(&mut self) {
         let shown = self.shown.resolve();
         if shown != self.last_shown {
-            self.inner.set_shown(shown);
+            self.inner.set_open(shown);
             self.last_shown = shown;
         }
     }

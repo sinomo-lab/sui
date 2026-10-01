@@ -207,7 +207,7 @@ where
     F: Fn(DefaultTheme) -> WidgetPod + 'static,
 {
     let key = Rc::clone(theme_reader);
-    RebuildOnChange::new(move || key(), move |theme| build(*theme))
+    RebuildOnChange::key_when(move || key(), move |theme| build(*theme))
 }
 
 pub(super) fn card<W>(
@@ -230,14 +230,13 @@ where
                 |theme| theme.palette.text,
             )))
             .with_child(
-                Label::dynamic(token_line(&theme_reader()), move || {
-                    token_line(&token_theme())
-                })
-                .text_style_when(demo_text_style_when(
-                    theme_reader,
-                    DemoTextRole::Metadata,
-                    |theme| theme.palette.text_muted,
-                )),
+                Label::new(token_line(&theme_reader()))
+                    .text_when(move || token_line(&token_theme()))
+                    .text_style_when(demo_text_style_when(
+                        theme_reader,
+                        DemoTextRole::Metadata,
+                        |theme| theme.palette.text_muted,
+                    )),
             )
             .with_child(SizedBox::new().height(8.0))
             .with_child(Align::new(Alignment::Start, Alignment::Start, widget)),

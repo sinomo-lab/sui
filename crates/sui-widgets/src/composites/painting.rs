@@ -1479,6 +1479,9 @@ pub fn paint_section_panel(
 
 impl Widget for StatusBadge {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.label.observe(|label| {
+            ctx.observe::<String, _>(label);
+        });
         let theme = self.resolved_theme();
         let (height, icon_size, gap, padding) = self.metrics(&theme);
         let label = self.label();

@@ -7,6 +7,7 @@ use crate::Progress;
 use crate::ResolvedEffectStyle;
 use crate::SemanticTone;
 use crate::ThemeTextToken;
+use crate::binding::Binding;
 use crate::composites::popups::TooltipPlacement;
 use crate::composites::status::{StatusBadge, paint_status_badge};
 use crate::controls::apply_hdr_policy_cap;
@@ -27,6 +28,7 @@ use sui_core::Size;
 use sui_core::Vector;
 use sui_layout::Constraints;
 use sui_layout::Padding as Insets;
+use sui_reactive::Observable;
 use sui_runtime::MeasureCtx;
 use sui_runtime::PaintCtx;
 use sui_runtime::SemanticsCtx;
@@ -266,8 +268,7 @@ impl Widget for CoverageDots {
 pub struct PlacementBadge {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
-    pub(super) label: String,
-    pub(super) label_reader: Option<Box<dyn Fn() -> String>>,
+    pub(super) label: Binding<String>,
     pub(super) icon: Option<IconGlyph>,
     pub(super) tone: SemanticTone,
     pub(super) tone_reader: Option<Box<dyn Fn() -> SemanticTone>>,
@@ -281,8 +282,7 @@ impl PlacementBadge {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
-            label: label.into(),
-            label_reader: None,
+            label: Binding::new(label.into()),
             icon: None,
             tone: SemanticTone::Neutral,
             tone_reader: None,
@@ -292,13 +292,31 @@ impl PlacementBadge {
         }
     }
 
+    #[deprecated(note = "use `PlacementBadge::new(fallback).label_when(reader)`")]
     pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
     where
         F: Fn() -> String + 'static,
     {
-        let mut badge = Self::new(fallback);
-        badge.label_reader = Some(Box::new(reader));
-        badge
+        Self::new(fallback).label_when(reader)
+    }
+
+    /// The label, read each time the badge lays out.
+    pub fn label_when<F>(mut self, label: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.label.set_when(label);
+        self
+    }
+
+    /// The label, following an observable and laying out again when it
+    /// changes.
+    pub fn label_from<O>(mut self, label: O) -> Self
+    where
+        O: Observable<String> + 'static,
+    {
+        self.label.set_from(label);
+        self
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -361,10 +379,7 @@ impl PlacementBadge {
     }
 
     pub(super) fn label(&self) -> String {
-        self.label_reader
-            .as_ref()
-            .map(|reader| reader())
-            .unwrap_or_else(|| self.label.clone())
+        self.label.get()
     }
 
     pub(super) fn resolved_tone(&self) -> SemanticTone {
@@ -500,6 +515,9 @@ pub fn paint_placement_badge_with(
 
 impl Widget for PlacementBadge {
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.label.observe(|label| {
+            ctx.observe::<String, _>(label);
+        });
         let theme = self.resolved_theme();
         let (height, coverage_width, gap) = Self::metrics(&theme);
         let label = self.label();

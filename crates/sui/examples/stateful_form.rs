@@ -102,7 +102,8 @@ fn main() -> Result<()> {
         });
 
     let status_state = Rc::clone(&state);
-    let status = Label::dynamic("Draft", move || status_state.borrow().status())
+    let status = Label::new("Draft")
+        .text_when(move || status_state.borrow().status())
         .theme(theme)
         .color(theme.palette.text_muted);
 

@@ -128,10 +128,9 @@ pub(super) fn build_preview(state: ThemeEditorState) -> impl Widget {
                 right: 0.0,
                 bottom: if index == last { PAGE_PADDING } else { 0.0 },
             };
-            page.with_child(RebuildOnChange::new_observable(
-                theme.clone(),
-                move |theme| item.build(*theme, insets),
-            ))
+            page.with_child(RebuildOnChange::key_from(theme.clone(), move |theme| {
+                item.build(*theme, insets)
+            }))
         },
     );
     ThemeBackdrop::new(theme, page)

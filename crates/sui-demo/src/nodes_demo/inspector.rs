@@ -29,7 +29,7 @@ pub(super) fn inspector(page: &Page) -> impl Widget + use<> {
             )
         });
     let page = page.clone();
-    RebuildOnChange::new_observable(selection, move |(nodes, edges)| {
+    RebuildOnChange::key_from(selection, move |(nodes, edges)| {
         match (nodes.as_slice(), edges.as_slice()) {
             ([], []) => WidgetPod::new(nothing_selected(&page)),
             ([node], []) => WidgetPod::new(node_inspector(&page, node)),

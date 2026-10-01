@@ -756,10 +756,9 @@ fn card_content(page: &Page, card: &Signal<Card>) -> impl Widget + use<> {
                 )
                 .text_from(note),
             )
-            .with_child(RebuildOnChange::new_observable(
-                attachments,
-                move |attachments| WidgetPod::new(attachment_chips(&chips, attachments)),
-            )),
+            .with_child(RebuildOnChange::key_from(attachments, move |attachments| {
+                WidgetPod::new(attachment_chips(&chips, attachments))
+            })),
     )
 }
 

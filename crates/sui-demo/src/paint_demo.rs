@@ -465,31 +465,29 @@ fn build_paint_status_bar(
         .theme_when(clone_dev_theme_reader(&theme_reader))
         .height(28.0)
         .segment(
-            StatusBarSegment::dynamic("Tool Brush", move || {
-                format!("Tool {}", tool_state.tool().label())
-            })
-            .min_width(108.0),
+            StatusBarSegment::new("Tool Brush")
+                .text_when(move || format!("Tool {}", tool_state.tool().label()))
+                .min_width(108.0),
         )
         .segment(
-            StatusBarSegment::dynamic("Zoom --", move || paint_zoom_status_text(&zoom_state))
+            StatusBarSegment::new("Zoom --")
+                .text_when(move || paint_zoom_status_text(&zoom_state))
                 .min_width(92.0),
         )
         .segment(
-            StatusBarSegment::dynamic("Brush 18 px", move || {
-                paint_tool_parameter_status_text(&brush_state)
-            })
-            .min_width(150.0),
+            StatusBarSegment::new("Brush 18 px")
+                .text_when(move || paint_tool_parameter_status_text(&brush_state))
+                .min_width(150.0),
         )
         .segment(
-            StatusBarSegment::dynamic("Blend Normal", move || {
-                format!("Blend {}", blend_state.blend_mode().label())
-            })
-            .min_width(132.0),
+            StatusBarSegment::new("Blend Normal")
+                .text_when(move || format!("Blend {}", blend_state.blend_mode().label()))
+                .min_width(132.0),
         )
-        .segment(StatusBarSegment::dynamic(
-            "Layer Paint / Normal / 100% / Unlocked",
-            move || paint_layer_status_text(&layer_state),
-        ))
+        .segment(
+            StatusBarSegment::new("Layer Paint / Normal / 100% / Unlocked")
+                .text_when(move || paint_layer_status_text(&layer_state)),
+        )
         .segment(
             StatusBarSegment::new(format!(
                 "Document {} x {} px",
@@ -498,7 +496,8 @@ fn build_paint_status_bar(
             .min_width(180.0),
         )
         .segment(
-            StatusBarSegment::dynamic("Cursor --", move || paint_cursor_status_text(&cursor_state))
+            StatusBarSegment::new("Cursor --")
+                .text_when(move || paint_cursor_status_text(&cursor_state))
                 .min_width(140.0)
                 .expand(true),
         )
@@ -708,7 +707,8 @@ fn build_paint_document_bar(
                 )
                 .with_child(
                     SizedBox::new().width(78.0).with_child(
-                        Label::dynamic("Zoom --", move || paint_zoom_status_text(&zoom_state))
+                        Label::new("Zoom --")
+                            .text_when(move || paint_zoom_status_text(&zoom_state))
                             .semantic_name(PAINT_ZOOM_READOUT_NAME)
                             .text_style_when(demo_text_style_when(
                                 &theme_reader,

@@ -110,6 +110,24 @@ Versioning, with the usual expectation that the API may change during the
   `DateTimeInput` gain `on_submit`, `on_focus_change`, `text_style`, and
   `appearance`. `TextArea` submits when only `on_submit_with_ctx` is set;
   before, `Enter` inserted a newline unless `on_submit` was set too.
+- Overlays share one vocabulary: `Dialog`, `CommandPalette`, `SideSheet`,
+  `BottomSheet`, `Popover`, and `Select` take `open`, `open_when`, and
+  `open_from` and report `is_open()`; dialogs and sheets also take
+  `set_open`. `Select` gains `on_open_change` and its `_with_ctx` twin.
+  `shown`, `set_shown`, `is_shown`, and `Select::expanded` are deprecated.
+- `Icon`, `Tooltip`, `Popover`, `CommandPalette`, and `NotificationHost`
+  take `theme_when`. `FloatingStack::theme` is deprecated: it never had an
+  effect.
+- `Dialog::max_width` and the dialog and sheet `primary_action` and
+  `secondary_action` buttons resolve theme metrics when they lay out, so a
+  theme set after them still applies.
+- Bound values use `_when` and `_from` builders: `StatusBadge` and
+  `PlacementBadge` take `label_when` and `label_from`, and
+  `StatusBarSegment` takes `text_when`. `Label::dynamic`,
+  `StatusBadge::dynamic`, `PlacementBadge::dynamic`,
+  `StatusBarSegment::dynamic`, `StatusBar::dynamic_segment`, and
+  `RichText::dynamic` are deprecated, as are `RebuildOnChange::new` and
+  `new_observable`, in favor of `RebuildOnChange::key_when` and `key_from`.
 
 ### Breaking: a clearer `sui` facade
 

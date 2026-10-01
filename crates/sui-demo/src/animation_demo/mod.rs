@@ -217,7 +217,7 @@ fn header(state: MotionDemoState, theme_reader: DevThemeReader) -> impl Widget {
         .with_child(controls)
         .with_child(NamedSection::new(
             MOTION_STATUS_NAME,
-            Label::dynamic(policy_summary(), policy_summary).text_style_when(demo_text_style_when(
+            Label::new(policy_summary()).text_when(policy_summary).text_style_when(demo_text_style_when(
                 &theme_reader,
                 DemoTextRole::Metadata,
                 |theme| theme.palette.text_muted,

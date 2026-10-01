@@ -358,7 +358,7 @@ let tasks = Signal::named("tasks", vec![(1, "Draft".to_string())]);
 let list = KeyedStack::vertical(
     tasks.clone(),
     |(id, _)| *id,
-    |_, task| Label::dynamic(task.get().1, move || task.get().1),
+    |_, task| Label::new(task.get().1).text_when(move || task.get().1),
 )
 .spacing(6.0);
 ```

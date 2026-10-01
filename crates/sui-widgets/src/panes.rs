@@ -2206,7 +2206,6 @@ impl Widget for FloatingStackSurface {
 }
 
 pub struct FloatingStack {
-    theme: Box<DefaultTheme>,
     name: Option<String>,
     windows: Vec<FloatingWindowEntry>,
 }
@@ -2214,14 +2213,15 @@ pub struct FloatingStack {
 impl FloatingStack {
     pub fn new() -> Self {
         Self {
-            theme: Box::new(DefaultTheme::default()),
             name: None,
             windows: Vec::new(),
         }
     }
 
-    pub fn theme(mut self, theme: DefaultTheme) -> Self {
-        self.theme = Box::new(theme);
+    /// Has no effect: the stack draws nothing of its own, so theme the
+    /// windows' content instead.
+    #[deprecated(note = "has no effect; theme the windows' content instead")]
+    pub fn theme(self, _theme: DefaultTheme) -> Self {
         self
     }
 

@@ -547,6 +547,7 @@ pub struct NotificationHost {
     scheduled: HashMap<NotificationId, TimerToken>,
     frames: Vec<(NotificationId, Rect)>,
     theme: DefaultTheme,
+    theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     width: f32,
     margin: f32,
     gap: f32,
@@ -562,6 +563,7 @@ impl NotificationHost {
             scheduled: HashMap::new(),
             frames: Vec::new(),
             theme: DefaultTheme::default(),
+            theme_reader: None,
             width: 340.0,
             margin: 16.0,
             gap: 8.0,
@@ -570,6 +572,17 @@ impl NotificationHost {
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
         self.theme = theme;
+        self.theme_reader = None;
+        self
+    }
+
+    /// Resolve the theme each time the host lays out.
+    pub fn theme_when<F>(mut self, theme: F) -> Self
+    where
+        F: Fn() -> DefaultTheme + 'static,
+    {
+        self.theme = theme();
+        self.theme_reader = Some(Box::new(theme));
         self
     }
 
@@ -691,6 +704,9 @@ impl Widget for NotificationHost {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if let Some(theme) = &self.theme_reader {
+            self.theme = theme();
+        }
         let _ = ctx.observe(&self.center.revision);
         self.notifications = self.center.snapshot();
         self.reconcile_toasts(ctx);

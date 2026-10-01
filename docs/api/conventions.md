@@ -52,6 +52,9 @@ something else invalidating the widget, as described in
 [state, events, and background work](state-events-and-async.md). Not every
 property offers all three forms, but none is spelled any other way.
 
+A widget that exists to follow one value takes it in a constructor named for
+the form: `RebuildOnChange::key_when(...)` and `RebuildOnChange::key_from(...)`.
+
 ## Events
 
 A callback is named `on_<event>` and receives the event's payload. Its
@@ -101,6 +104,13 @@ The same kind of state has the same name on every widget:
 | Availability of an interactive widget or item | `enabled(bool)`, `enabled_when`, `enabled_from` | `is_enabled` | |
 | Editability of an input | `read_only(bool)` | `is_read_only` | |
 | Whether an overlay is open | `open(bool)`, `open_when`, `open_from` | `is_open` | `on_open_change(bool)` |
+
+An overlay that opens and closes itself, such as `Popover` or `Select`,
+reports each change through `on_open_change`; when it follows `open_when` or
+`open_from`, the app keeps the bound value in step from that callback. A
+`Dialog`, `SideSheet`, `BottomSheet`, or `CommandPalette` never closes itself:
+it reports the user's request through `on_dismiss`, and the app closes it. A
+sheet that follows a `SheetState` is the exception, and hides itself.
 
 `selected` takes `impl Into<Option<usize>>`, so `selected(2)` and
 `selected(None)` both work. A widget that always shows one choice, such as

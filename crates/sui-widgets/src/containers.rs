@@ -1849,7 +1849,18 @@ pub struct RebuildOnChange<K: PartialEq + Clone> {
 }
 
 impl<K: PartialEq + Clone> RebuildOnChange<K> {
+    #[deprecated(note = "use `RebuildOnChange::key_when`")]
     pub fn new<KF, BF>(key_fn: KF, build: BF) -> Self
+    where
+        KF: Fn() -> K + 'static,
+        BF: Fn(&K) -> WidgetPod + 'static,
+    {
+        Self::key_when(key_fn, build)
+    }
+
+    /// Rebuild from the key `key_fn` returns, read during measure, on
+    /// pointer release, and on redraw.
+    pub fn key_when<KF, BF>(key_fn: KF, build: BF) -> Self
     where
         KF: Fn() -> K + 'static,
         BF: Fn(&K) -> WidgetPod + 'static,
@@ -1865,11 +1876,21 @@ impl<K: PartialEq + Clone> RebuildOnChange<K> {
         }
     }
 
+    #[deprecated(note = "use `RebuildOnChange::key_from`")]
+    pub fn new_observable<O, BF>(key_source: O, build: BF) -> Self
+    where
+        O: Observable<K> + 'static,
+        BF: Fn(&K) -> WidgetPod + 'static,
+        K: 'static,
+    {
+        Self::key_from(key_source, build)
+    }
+
     /// Rebuild from an observable structural key.
     ///
-    /// Unlike [`Self::new`], this form wakes the runtime and targets this host
-    /// automatically when the key changes.
-    pub fn new_observable<O, BF>(key_source: O, build: BF) -> Self
+    /// Unlike [`Self::key_when`], this form wakes the runtime and targets
+    /// this host automatically when the key changes.
+    pub fn key_from<O, BF>(key_source: O, build: BF) -> Self
     where
         O: Observable<K> + 'static,
         BF: Fn(&K) -> WidgetPod + 'static,
@@ -5576,7 +5597,7 @@ mod tests {
         let key_reader = Rc::clone(&key);
         let build_log = Rc::clone(&builds);
 
-        let mut host = RebuildOnChange::new(
+        let mut host = RebuildOnChange::key_when(
             move || key_reader.get(),
             move |value| {
                 build_log.borrow_mut().push(*value);
@@ -5600,7 +5621,7 @@ mod tests {
     fn rebuild_on_change_reports_structural_reason() -> sui_core::Result<()> {
         let key = Rc::new(Cell::new(1usize));
         let key_reader = Rc::clone(&key);
-        let (mut runtime, window_id) = build_runtime(RebuildOnChange::new(
+        let (mut runtime, window_id) = build_runtime(RebuildOnChange::key_when(
             move || key_reader.get(),
             |value| {
                 WidgetPod::new(FixedBox::new(
@@ -5627,7 +5648,7 @@ mod tests {
     fn rebuild_on_change_observable_rebuilds_without_redraw_polling() -> sui_core::Result<()> {
         let key = Signal::named("structural_mode", 1usize);
         let (mut runtime, window_id) =
-            build_runtime(RebuildOnChange::new_observable(key.clone(), |value| {
+            build_runtime(RebuildOnChange::key_from(key.clone(), |value| {
                 WidgetPod::new(FixedBox::new(
                     Size::new(*value as f32 * 20.0, 20.0),
                     Color::BLACK,

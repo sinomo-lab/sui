@@ -865,17 +865,21 @@ impl StatusBarSegment {
         }
     }
 
+    #[deprecated(note = "use `StatusBarSegment::new(fallback).text_when(reader)`")]
     pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
     where
         F: Fn() -> String + 'static,
     {
-        Self {
-            text: fallback.into(),
-            reader: Some(Box::new(reader)),
-            min_width: None,
-            tone: SemanticTone::Neutral,
-            expand: false,
-        }
+        Self::new(fallback).text_when(reader)
+    }
+
+    /// The text, read each time the status bar lays out.
+    pub fn text_when<F>(mut self, text: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.reader = Some(Box::new(text));
+        self
     }
 
     pub fn min_width(mut self, min_width: f32) -> Self {
@@ -973,11 +977,12 @@ impl StatusBar {
         self.segment(StatusBarSegment::new(text))
     }
 
+    #[deprecated(note = "use `segment(StatusBarSegment::new(fallback).text_when(reader))`")]
     pub fn dynamic_segment<F>(self, fallback: impl Into<String>, reader: F) -> Self
     where
         F: Fn() -> String + 'static,
     {
-        self.segment(StatusBarSegment::dynamic(fallback, reader))
+        self.segment(StatusBarSegment::new(fallback).text_when(reader))
     }
 
     pub(super) fn text_style(&self) -> TextStyle {
@@ -1332,8 +1337,7 @@ pub(super) fn segmented_control_item_id(parent: WidgetId, index: usize) -> Widge
 pub struct StatusBadge {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
-    pub(super) label: String,
-    pub(super) label_reader: Option<Box<dyn Fn() -> String>>,
+    pub(super) label: Binding<String>,
     pub(super) icon: Option<IconGlyph>,
     pub(super) tone: SemanticTone,
     pub(super) tone_reader: Option<Box<dyn Fn() -> SemanticTone>>,
@@ -1345,8 +1349,7 @@ impl StatusBadge {
         Self {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
-            label: label.into(),
-            label_reader: None,
+            label: Binding::new(label.into()),
             icon: None,
             tone: SemanticTone::Neutral,
             tone_reader: None,
@@ -1354,15 +1357,31 @@ impl StatusBadge {
         }
     }
 
+    #[deprecated(note = "use `StatusBadge::new(fallback).label_when(reader)`")]
     pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
     where
         F: Fn() -> String + 'static,
     {
-        Self {
-            label: fallback.into(),
-            label_reader: Some(Box::new(reader)),
-            ..Self::new("")
-        }
+        Self::new(fallback).label_when(reader)
+    }
+
+    /// The label, read each time the badge lays out.
+    pub fn label_when<F>(mut self, label: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.label.set_when(label);
+        self
+    }
+
+    /// The label, following an observable and laying out again when it
+    /// changes.
+    pub fn label_from<O>(mut self, label: O) -> Self
+    where
+        O: Observable<String> + 'static,
+    {
+        self.label.set_from(label);
+        self
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -1411,10 +1430,7 @@ impl StatusBadge {
     }
 
     pub(super) fn label(&self) -> String {
-        self.label_reader
-            .as_ref()
-            .map(|reader| reader())
-            .unwrap_or_else(|| self.label.clone())
+        self.label.get()
     }
 
     pub(super) fn resolved_tone(&self) -> SemanticTone {

@@ -523,7 +523,7 @@ fn grid_section(theme_reader: &DevThemeReader, page: &PageState) -> impl Widget 
 
     let reader = Rc::clone(theme_reader);
     let show_sizes = page.show_sizes.clone();
-    let example = RebuildOnChange::new_observable(settings.clone(), move |settings| {
+    let example = RebuildOnChange::key_from(settings.clone(), move |settings| {
         WidgetPod::new(grid_example(&reader, settings, &show_sizes))
     });
 
@@ -914,7 +914,7 @@ fn safe_area_section(theme_reader: &DevThemeReader, page: &PageState) -> impl Wi
                 .select(|keyboard| insets_text(phone_insets(*keyboard))),
         );
     let reader = Rc::clone(theme_reader);
-    let screen = RebuildOnChange::new_observable(page.keyboard.clone(), move |keyboard| {
+    let screen = RebuildOnChange::key_from(page.keyboard.clone(), move |keyboard| {
         WidgetPod::new(
             SafeArea::new(phone_content(&reader))
                 .edges(SafeAreaEdges::ALL)

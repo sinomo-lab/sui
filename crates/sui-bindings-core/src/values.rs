@@ -214,7 +214,7 @@ impl BindingStatusBarSegment {
 
     pub(crate) fn into_sui(&self) -> StatusBarSegment {
         let mut segment = if matches!(self.text, BindingText::State(_)) {
-            StatusBarSegment::dynamic(self.text.resolve(), {
+            StatusBarSegment::new(self.text.resolve()).text_when({
                 let text = self.text.clone();
                 move || text.resolve()
             })

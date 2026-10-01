@@ -140,7 +140,7 @@ where
     F: Fn(DefaultTheme) -> W + 'static,
 {
     let theme_reader = Rc::clone(theme_reader);
-    RebuildOnChange::new(
+    RebuildOnChange::key_when(
         move || theme_reader(),
         move |theme| WidgetPod::new(build(*theme)),
     )

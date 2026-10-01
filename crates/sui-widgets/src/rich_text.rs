@@ -194,6 +194,7 @@ impl RichText {
         }
     }
 
+    #[deprecated(note = "use `RichText::new(fallback).document_when(reader)`")]
     pub fn dynamic<F>(fallback: TextDocument, reader: F) -> Self
     where
         F: Fn() -> TextDocument + 'static,

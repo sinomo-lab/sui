@@ -240,7 +240,7 @@ impl InspectorState {
 
 pub fn live_inspector_view(state: InspectorState) -> impl Widget {
     let snapshot = Rc::clone(&state.snapshot);
-    let body = RebuildOnChange::new_observable(state.revision.clone(), move |_| {
+    let body = RebuildOnChange::key_from(state.revision.clone(), move |_| {
         WidgetPod::new(inspector_snapshot_body(snapshot.borrow().clone()))
     });
     ScrollView::vertical(body).state(state.scroll.clone())

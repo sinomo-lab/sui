@@ -136,7 +136,7 @@ impl BindingWidget {
         let errors = context;
         match self.inner.as_ref() {
             BindingWidgetKind::Label { text } => {
-                let mut label = Label::dynamic(text.resolve(), {
+                let mut label = Label::new(text.resolve()).text_when({
                     let text = text.clone();
                     move || text.resolve()
                 });
@@ -751,7 +751,7 @@ impl BindingWidget {
             } => {
                 let dialog =
                     Dialog::new(title.resolve(), content.into_runtime_widget(errors.clone()))
-                        .shown(shown.resolve());
+                        .open(shown.resolve());
                 BindingRuntimeWidget::new(dialog)
             }
             BindingWidgetKind::SignalMeter {
@@ -783,7 +783,7 @@ impl BindingWidget {
                 min_width,
             } => {
                 let mut badge = if matches!(label, BindingText::State(_)) {
-                    StatusBadge::dynamic(label.resolve(), {
+                    StatusBadge::new(label.resolve()).label_when({
                         let label = label.clone();
                         move || label.resolve()
                     })
@@ -1582,7 +1582,7 @@ impl BindingWidget {
                 min_width,
             } => {
                 let mut badge = if matches!(label, BindingText::State(_)) {
-                    PlacementBadge::dynamic(label.resolve(), {
+                    PlacementBadge::new(label.resolve()).label_when({
                         let label = label.clone();
                         move || label.resolve()
                     })
@@ -1669,7 +1669,7 @@ impl BindingWidget {
                         title.clone(),
                         body.into_runtime_widget(build_errors.clone()),
                     )
-                    .shown(is_shown)
+                    .open(is_shown)
                     .modal(modal)
                     .dismiss_on_scrim(dismiss_on_scrim)
                     .placement(placement);
@@ -2169,7 +2169,7 @@ impl BindingWidget {
                         name.clone(),
                         content.into_runtime_widget(build_errors.clone()),
                     )
-                    .shown(is_shown);
+                    .open(is_shown);
                     if let Some(description) = &description {
                         palette = palette.description(description.clone());
                     }

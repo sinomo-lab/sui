@@ -1146,6 +1146,128 @@ fn dialog_actions_follow_live_theme_switches() -> Result<(), String> {
 }
 
 #[test]
+fn dialogs_sheets_and_popovers_follow_an_observed_open_state() -> Result<(), String> {
+    fn dialog_count(runtime: &mut Runtime, window_id: sui_core::WindowId) -> Result<usize, String> {
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        Ok(output
+            .semantics
+            .iter()
+            .filter(|node| node.role == SemanticsRole::Dialog)
+            .count())
+    }
+
+    let open = Signal::named("dialog_open", false);
+    let (mut runtime, window_id) = build_runtime(
+        Dialog::new("Export", crate::Label::new("Export settings")).open_from(open.clone()),
+    );
+    assert_eq!(dialog_count(&mut runtime, window_id)?, 0);
+    assert!(open.set(true));
+    assert_eq!(dialog_count(&mut runtime, window_id)?, 1);
+    assert!(open.set(false));
+    assert_eq!(dialog_count(&mut runtime, window_id)?, 0);
+
+    let open = Signal::named("sheet_open", false);
+    let (mut runtime, window_id) = build_runtime(
+        SideSheet::new("Inspector", crate::Label::new("Selection details")).open_from(open.clone()),
+    );
+    assert_eq!(dialog_count(&mut runtime, window_id)?, 0);
+    assert!(open.set(true));
+    assert_eq!(dialog_count(&mut runtime, window_id)?, 1);
+
+    let open = Signal::named("popover_open", false);
+    let (mut runtime, window_id) = build_runtime(
+        Popover::new(
+            "Health center",
+            crate::Button::new("Open"),
+            crate::Label::new("All systems operational"),
+        )
+        .open_from(open.clone()),
+    );
+    let expanded = |runtime: &mut Runtime| -> Result<Option<bool>, String> {
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        Ok(output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Popover)
+            .and_then(|node| node.state.expanded))
+    };
+    assert_eq!(expanded(&mut runtime)?, Some(false));
+    assert!(open.set(true));
+    assert_eq!(expanded(&mut runtime)?, Some(true));
+    Ok(())
+}
+
+#[test]
+fn dialog_open_builders_and_setters_agree() {
+    let mut dialog = Dialog::new("Export", crate::Label::new("Export settings")).open(false);
+    assert!(!dialog.is_open());
+    assert!(dialog.set_open(true));
+    assert!(!dialog.set_open(true));
+    assert!(dialog.is_open());
+
+    let mut sheet = SideSheet::new("Inspector", crate::Label::new("Body")).open(false);
+    assert!(!sheet.is_open());
+    assert!(sheet.set_open(true));
+    assert!(sheet.is_open());
+}
+
+#[test]
+fn dialog_widths_resolve_against_a_theme_set_after_them() {
+    let mut theme = DefaultTheme::default();
+    theme.metrics.dialog_min_width = 300.0;
+    theme.metrics.dialog_action_min_width = 180.0;
+    let dialog = Dialog::new("Export", crate::Label::new("Export settings"))
+        .max_width(100.0)
+        .primary_action("Apply", || {})
+        .theme(theme);
+    assert_eq!(dialog.resolved_max_width(), 300.0);
+
+    let output = render(dialog);
+    let apply = output
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::Button && node.name.as_deref() == Some("Apply"))
+        .expect("primary action semantics present");
+    assert!(
+        apply.bounds.width() >= 180.0 - 0.01,
+        "the action takes its minimum width from the later theme: {}",
+        apply.bounds.width()
+    );
+}
+
+#[test]
+fn badges_follow_an_observed_label() -> Result<(), String> {
+    let label = Signal::named("badge_label", "Idle".to_string());
+    let (mut runtime, window_id) = build_runtime(
+        Stack::vertical()
+            .with_child(StatusBadge::new("--").label_from(label.clone()))
+            .with_child(PlacementBadge::new("--").label_from(label.clone())),
+    );
+    let names = |runtime: &mut Runtime| -> Result<usize, String> {
+        let output = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        Ok(output
+            .semantics
+            .iter()
+            .filter(|node| {
+                node.name
+                    .as_deref()
+                    .is_some_and(|name| name.contains("Syncing"))
+            })
+            .count())
+    };
+    assert_eq!(names(&mut runtime)?, 0);
+    assert!(label.set("Syncing".to_string()));
+    assert_eq!(names(&mut runtime)?, 2);
+    Ok(())
+}
+
+#[test]
 fn dialog_and_side_sheet_titles_follow_the_lg_theme_token() {
     let mut theme = DefaultTheme::default();
     theme.text.lg = ThemeTextToken {
@@ -2981,7 +3103,8 @@ fn status_bar_exposes_dynamic_segment_semantics() {
             .name("Editor status")
             .segment(StatusBarSegment::new("Ready").min_width(80.0))
             .segment(
-                StatusBarSegment::dynamic("Zoom --", move || zoom_reader.borrow().clone())
+                StatusBarSegment::new("Zoom --")
+                    .text_when(move || zoom_reader.borrow().clone())
                     .min_width(120.0),
             ),
     );
