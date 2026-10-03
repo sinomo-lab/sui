@@ -100,8 +100,8 @@ pub use sui_platform::{
     HeadlessPlatform, NativeFileDialogs, PlatformFile, PlatformWindow, Waker, show_file_dialog,
 };
 pub use sui_reactive::{
-    Change as ObservableChange, Observable, Observer, Selector, Signal, SourceId, Subscription,
-    Task, TaskHandle, TaskState, WeakObserver, batch,
+    Change as ObservableChange, Changed, Observable, Observer, Selector, Signal, SourceId,
+    Subscription, Task, TaskHandle, TaskState, WeakObserver, Zip, batch, combine, combine_named,
 };
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{

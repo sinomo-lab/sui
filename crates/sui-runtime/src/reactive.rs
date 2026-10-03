@@ -67,7 +67,11 @@ impl ReactiveInvalidationHub {
                     && pending.sample.source_id == change.source_id
                     && pending.sample.kind == kind
             }) {
-                existing.sample = sample;
+                // Racing writers may deliver versions out of order; report
+                // the newest one.
+                if sample.version >= existing.sample.version {
+                    existing.sample = sample;
+                }
                 existing.local_output &= local_output;
             } else {
                 pending.push(PendingReactiveInvalidation {
@@ -425,4 +429,27 @@ where
     }
 
     observable.get()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_invalidation_keeps_the_newest_version() {
+        let hub = ReactiveInvalidationHub::new();
+        let widget_id = WidgetId::new(1);
+        let source_id = SourceId::new();
+        let change = |version| Change {
+            source_id,
+            source_name: Arc::from("racing"),
+            version,
+        };
+        hub.enqueue(widget_id, InvalidationKind::Paint, change(3), true);
+        // A slower writer's earlier change arrives second.
+        hub.enqueue(widget_id, InvalidationKind::Paint, change(2), true);
+        let drained = hub.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].1.version, 3);
+    }
 }

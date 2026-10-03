@@ -104,6 +104,26 @@ Closures passed to `with`, `modify`, `update`, and selectors run while the
 value is locked and must not write to the same signal. In debug builds, doing
 so panics with the signal's name instead of deadlocking.
 
+### Deriving from Several Sources
+
+`combine` derives a value from two to four observables and behaves like a
+selector: it notifies only when the result changes, runs once per input change
+however many widgets observe it, and caches the result between changes.
+
+```rust
+let visible = sui::combine((items.clone(), filter.clone()), |(items, filter)| {
+    items.iter().filter(|item| filter.matches(item)).count()
+});
+let label = Label::new("").text_from(sui::combine_named(
+    "visible count",
+    (visible, total.clone()),
+    |(visible, total)| format!("{visible} of {total}"),
+));
+```
+
+Unlike a single-source selector, `combine` clones each input to build its
+tuple. Combine narrow selectors or `Arc` values rather than large state.
+
 ### Batching Writes
 
 `sui::batch` defers notifications for writes made on the calling thread until
@@ -525,8 +545,8 @@ runtime. Clone the sender before moving it into worker-owned code; use
 ## Tutorial: Track Background Work with `Task`
 
 `Task<T, E = String>` is an observable `TaskState`: `Idle`,
-`Loading { progress }`, `Ready(T)`, or `Failed(E)`. `start` enters `Loading`
-and returns a `TaskHandle` for the worker:
+`Loading { progress, previous }`, `Ready(T)`, or `Failed(E)`. `start` enters
+`Loading` and returns a `TaskHandle` for the worker:
 
 ```rust
 let thumbnails: Task<Arc<Vec<Thumbnail>>> = Task::named("thumbnails");
@@ -559,6 +579,35 @@ newer result. `set_progress` clamps to `0..=1` and skips repeated values.
 Writing a `Task` needs no `Clone` or `PartialEq` on the result; wrap large
 results in `Arc` so reading the state stays cheap. Like any signal, the task
 notifies on the worker thread and widgets observing it redraw on the UI thread.
+
+To reload without blanking the view, use `refresh` instead of `start`. The
+last result stays available as `Loading { previous }` until the new one lands,
+and `state.latest()` returns whichever is current. `handle.cancel()` abandons
+a run, restoring the previous result after a refresh or `Idle` otherwise.
+
+### Async Work
+
+`TaskHandle::run` turns a future into one that completes the task. Spawn it on
+whatever executor you use; SUI does not provide one. Dropping the future
+before it finishes cancels the run.
+
+```rust
+let handle = results.refresh();
+let progress = handle.clone();
+wasm_bindgen_futures::spawn_local(async move {
+    handle
+        .run(async move {
+            progress.set_progress(0.5);
+            fetch_results().await
+        })
+        .await;
+});
+```
+
+To wait for state in async code, `signal.changed().await`, `task.changed()`,
+or `Observable::changed` resolve at the next change notification. The future
+subscribes when created, so a change made before the first poll is not
+missed.
 
 ## Command Scope, Multicast, and Controllers
 

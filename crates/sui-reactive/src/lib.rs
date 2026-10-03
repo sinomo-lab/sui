@@ -33,19 +33,24 @@
 //! and copy only while a reader still holds the previous snapshot.
 
 mod batch;
+mod combine;
 mod task;
 
 use std::{
     fmt,
+    future::Future,
     marker::PhantomData,
     ops::{Deref, DerefMut},
+    pin::Pin,
     sync::{
         Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
         atomic::{AtomicU64, Ordering},
     },
+    task::{Context, Poll, Waker},
 };
 
 pub use batch::batch;
+pub use combine::{Zip, combine, combine_named};
 pub use task::{Task, TaskHandle, TaskState};
 
 static NEXT_SOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -214,6 +219,78 @@ pub trait Observable<T> {
     /// than the one read. Return `None` if that cannot be guaranteed.
     fn value_version(&self) -> Option<u64> {
         None
+    }
+
+    /// A future that resolves with the next change notification after this
+    /// call. It subscribes immediately, so a change made before the first
+    /// poll is not missed. It needs no particular executor.
+    fn changed(&self) -> Changed
+    where
+        Self: Sized,
+    {
+        Changed::new(|observer| self.subscribe(observer))
+    }
+}
+
+/// Future returned by [`Observable::changed`] and [`Signal::changed`].
+///
+/// Resolves with the most recent [`Change`] once at least one has arrived.
+/// Dropping it unsubscribes.
+#[must_use = "futures do nothing unless awaited"]
+pub struct Changed {
+    state: Arc<Mutex<ChangedState>>,
+    _subscription: Subscription,
+}
+
+#[derive(Default)]
+struct ChangedState {
+    change: Option<Change>,
+    waker: Option<Waker>,
+}
+
+impl Changed {
+    fn new(subscribe: impl FnOnce(Observer) -> Subscription) -> Self {
+        let state = Arc::new(Mutex::new(ChangedState::default()));
+        let observed = Arc::clone(&state);
+        let subscription = subscribe(Observer::new(move |change| {
+            let waker = {
+                let mut state = lock(&observed);
+                state.change = Some(change);
+                state.waker.take()
+            };
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+        }));
+        Self {
+            state,
+            _subscription: subscription,
+        }
+    }
+}
+
+impl Future for Changed {
+    type Output = Change;
+
+    fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Change> {
+        let mut state = lock(&self.state);
+        if let Some(change) = state.change.take() {
+            return Poll::Ready(change);
+        }
+        if !state
+            .waker
+            .as_ref()
+            .is_some_and(|waker| waker.will_wake(context.waker()))
+        {
+            state.waker = Some(context.waker().clone());
+        }
+        Poll::Pending
+    }
+}
+
+impl fmt::Debug for Changed {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("Changed").finish_non_exhaustive()
     }
 }
 
@@ -447,6 +524,12 @@ impl<T> Signal<T> {
     pub fn subscribe(&self, observer: Observer) -> Subscription {
         self.inner.core.add_observer(&observer);
         Subscription::new(observer)
+    }
+
+    /// A future that resolves at the next change; see [`Observable::changed`].
+    /// Unlike the trait method, this does not require `T: Clone`.
+    pub fn changed(&self) -> Changed {
+        Changed::new(|observer| self.subscribe(observer))
     }
 
     pub fn select<U>(
@@ -813,7 +896,7 @@ where
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1195,5 +1278,75 @@ mod tests {
         }));
         assert!(caught.is_err());
         assert!(first.set(3));
+    }
+
+    #[test]
+    fn mixed_concurrent_use_neither_deadlocks_nor_loses_the_final_value() {
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let a = Signal::named("a", 0_u32);
+            let b = Signal::named("b", 0_u32);
+            let parity = a.select(|value| value % 2);
+            let sum = combine((parity.clone(), b.clone()), |(parity, b)| parity + b);
+            let task: Task<u32> = Task::new();
+            let workers = (0..4_u32)
+                .map(|thread| {
+                    let (a, b, parity, sum, task) = (
+                        a.clone(),
+                        b.clone(),
+                        parity.clone(),
+                        sum.clone(),
+                        task.clone(),
+                    );
+                    std::thread::spawn(move || {
+                        for step in 0..300_u32 {
+                            match (thread + step) % 5 {
+                                0 => {
+                                    a.set(step);
+                                }
+                                1 => batch(|| {
+                                    a.update(|value| *value += 1);
+                                    b.set(step % 7);
+                                }),
+                                2 => {
+                                    // Subscription churn on shared selectors.
+                                    let _parity = parity.subscribe(Observer::new(|_| {}));
+                                    let _sum = sum.subscribe(Observer::new(|_| {}));
+                                    let _ = sum.get();
+                                }
+                                3 => {
+                                    let handle = task.refresh();
+                                    handle.set_progress(0.5);
+                                    handle.finish(step);
+                                }
+                                _ => {
+                                    let _ = (parity.get(), sum.get(), task.progress());
+                                }
+                            }
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            let latest = Arc::new(Mutex::new(None));
+            let observed = Arc::clone(&latest);
+            let reader = sum.clone();
+            let _watch = sum.subscribe(Observer::new(move |_| {
+                *observed.lock().unwrap() = Some(reader.get());
+            }));
+            for worker in workers {
+                worker.join().unwrap();
+            }
+            // Quiescent: a final write must reach a live observer.
+            a.set(1_001);
+            b.set(41);
+            let expected = 1 + 41;
+            done.send((sum.get(), *latest.lock().unwrap(), expected))
+                .unwrap();
+        });
+        let (sum, latest, expected) = finished
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("concurrent signal use deadlocked");
+        assert_eq!(sum, expected);
+        assert_eq!(latest, Some(expected));
     }
 }
