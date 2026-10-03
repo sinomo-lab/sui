@@ -19,6 +19,10 @@ use winit::window::Window;
 #[allow(unsafe_code)]
 mod windows_display;
 
+#[cfg(target_os = "linux")]
+#[allow(unsafe_code)]
+mod linux_text;
+
 #[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 struct WebCapabilityHints {
@@ -554,7 +558,31 @@ pub fn detect_window_display_capabilities(window: &Window) -> DisplayCapabilitie
         display_capabilities_from_web_signals(&monitor_name, hints, media_wide_gamut, media_hdr)
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_arch = "wasm32")))]
+    #[cfg(target_os = "linux")]
+    {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let x11 = window.window_handle().is_ok_and(|handle| {
+            matches!(
+                handle.as_raw(),
+                RawWindowHandle::Xlib(_) | RawWindowHandle::Xcb(_)
+            )
+        });
+        let text_subpixel_order = linux_text::query_text_subpixel_order(x11);
+        DisplayCapabilities {
+            text_subpixel_order,
+            notes: format!(
+                "Linux monitor {monitor_name}: SDR/sRGB defaults; system text smoothing {text_subpixel_order:?} (fontconfig/Xft)"
+            ),
+            ..DisplayCapabilities::default()
+        }
+    }
+
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_arch = "wasm32"
+    )))]
     {
         DisplayCapabilities {
             supports_wide_gamut: false,

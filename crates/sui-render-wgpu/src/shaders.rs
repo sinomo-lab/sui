@@ -31,6 +31,7 @@ pub(crate) const GRADIENT_RECT_SHADER_SOURCE: &str = concat!(
     include_str!("shaders/gradient_rect.wgsl")
 );
 pub(crate) const TEXT_ATLAS_SHADER_SOURCE: &str = concat!(
+    crate::text_policy::text_coverage_shader_parameters!(),
     include_str!("shaders/sdr_fit.wgsl"),
     include_str!("shaders/sdr_target.wgsl"),
     include_str!("shaders/text_atlas.wgsl")
@@ -38,6 +39,7 @@ pub(crate) const TEXT_ATLAS_SHADER_SOURCE: &str = concat!(
 pub(crate) const TEXT_ATLAS_DUAL_SOURCE_SHADER_SOURCE: &str = concat!(
     "enable dual_source_blending;
 ",
+    crate::text_policy::text_coverage_shader_parameters!(),
     include_str!("shaders/sdr_fit.wgsl"),
     include_str!("shaders/sdr_target.wgsl"),
     include_str!("shaders/text_atlas_dual_source.wgsl")

@@ -414,6 +414,11 @@ impl TextSystemState {
     pub(crate) fn new() -> Result<Self> {
         let mut font_db = fontdb::Database::new();
         font_db.load_system_fonts();
+        // fontdb's system loader has no Android branch. Include native fonts
+        // before portable fallbacks so system-ui and script fallback can use
+        // the device's own families (including Roboto and color emoji).
+        #[cfg(target_os = "android")]
+        load_android_font_dirs(&mut font_db, &["/system/fonts", "/product/fonts"]);
         load_bundled_fallback_fonts(&mut font_db);
         Self::from_font_database(font_db)
     }
@@ -564,6 +569,13 @@ const PLATFORM_SERIF_FAMILIES: &[&str] = &["New York", "Times New Roman", "Georg
 #[cfg(target_os = "macos")]
 const PLATFORM_MONO_FAMILIES: &[&str] = &["SFMono-Regular", "SF Mono", "Menlo", "Monaco"];
 
+#[cfg(target_os = "android")]
+const PLATFORM_SANS_FAMILIES: &[&str] = &["Roboto", "Noto Sans", "Droid Sans"];
+#[cfg(target_os = "android")]
+const PLATFORM_SERIF_FAMILIES: &[&str] = &["Noto Serif", "Droid Serif"];
+#[cfg(target_os = "android")]
+const PLATFORM_MONO_FAMILIES: &[&str] = &["Droid Sans Mono", "Noto Sans Mono"];
+
 #[cfg(all(
     target_arch = "wasm32",
     not(any(target_os = "windows", target_os = "macos"))
@@ -582,19 +594,26 @@ const PLATFORM_MONO_FAMILIES: &[&str] = &["Noto Sans Mono"];
 
 #[cfg(all(
     not(target_arch = "wasm32"),
-    not(any(target_os = "windows", target_os = "macos"))
+    not(any(target_os = "windows", target_os = "macos", target_os = "android"))
 ))]
 const PLATFORM_SANS_FAMILIES: &[&str] = &["Noto Sans", "Inter", "DejaVu Sans", "Liberation Sans"];
 #[cfg(all(
     not(target_arch = "wasm32"),
-    not(any(target_os = "windows", target_os = "macos"))
+    not(any(target_os = "windows", target_os = "macos", target_os = "android"))
 ))]
 const PLATFORM_SERIF_FAMILIES: &[&str] = &["Noto Serif", "DejaVu Serif", "Liberation Serif"];
 #[cfg(all(
     not(target_arch = "wasm32"),
-    not(any(target_os = "windows", target_os = "macos"))
+    not(any(target_os = "windows", target_os = "macos", target_os = "android"))
 ))]
 const PLATFORM_MONO_FAMILIES: &[&str] = &["Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono"];
+
+#[cfg(any(target_os = "android", test))]
+fn load_android_font_dirs(font_db: &mut fontdb::Database, directories: &[&str]) {
+    for directory in directories {
+        font_db.load_fonts_dir(directory);
+    }
+}
 
 fn configure_platform_generic_families(font_db: &mut fontdb::Database) {
     if let Some(family) = first_installed_family(font_db, PLATFORM_SANS_FAMILIES) {
@@ -855,6 +874,47 @@ mod font_database_tests {
             first_installed_family(&font_db, &["Missing UI Family", "Noto Sans"]).as_deref(),
             Some("Noto Sans")
         );
+    }
+
+    #[test]
+    fn android_font_discovery_loads_device_fonts_and_keeps_portable_fallbacks() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("device.ttf"),
+            include_bytes!("../assets/NotoSans-Regular.ttf"),
+        )
+        .unwrap();
+        std::fs::write(directory.path().join("invalid.ttf"), b"not a font").unwrap();
+        let missing = directory.path().join("missing");
+        let mut font_db = fontdb::Database::new();
+        load_android_font_dirs(
+            &mut font_db,
+            &[
+                missing.to_str().unwrap(),
+                directory.path().to_str().unwrap(),
+            ],
+        );
+        assert_eq!(
+            first_installed_family(&font_db, &["Noto Sans"]).as_deref(),
+            Some("Noto Sans")
+        );
+        load_bundled_portable_fallback_fonts(&mut font_db);
+        configure_platform_generic_families(&mut font_db);
+        for family in [
+            fontdb::Family::SansSerif,
+            fontdb::Family::Serif,
+            fontdb::Family::Monospace,
+        ] {
+            assert!(
+                font_db
+                    .query(&fontdb::Query {
+                        families: &[family],
+                        ..fontdb::Query::default()
+                    })
+                    .is_some(),
+                "native discovery must retain portable generics"
+            );
+        }
     }
 
     #[cfg(target_os = "windows")]

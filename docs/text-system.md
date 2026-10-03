@@ -10,6 +10,12 @@ For application examples, see [Input and text editing](api/input-and-editing.md)
 For the performance and image-quality procedure, see
 [Text rendering benchmarks](text-rendering-benchmarks.md).
 
+Android font discovery reads `/system/fonts` and `/product/fonts` once when
+the text system initializes. Generic sans-serif prefers the installed Roboto
+family, and monospace prefers Droid Sans Mono. Bundled Noto fonts remain
+available when device fonts are missing and for script fallback. Explicit font
+handles and family stacks still choose the application's requested fonts.
+
 ## Architecture at a Glance
 
 ```text
@@ -350,10 +356,12 @@ Window defaults are deliberately conservative:
 - no explicit LCD subpixel order: windows follow the system's text smoothing.
 
 Following the system (`WindowRenderOptions::use_system_text_smoothing`, on by
-default) means that when Windows uses ClearType, windows render LCD text in
-ClearType's RGB or BGR orientation at every scale, as Windows itself does.
-Without ClearType, on other platforms, and in headless rendering, text stays
-grayscale. An explicit RGB/BGR
+default) uses Windows ClearType's RGB/BGR orientation and Linux's configured
+fontconfig `rgba` order. X11 windows give `Xft.rgba` and `Xft.antialias`
+resources precedence over fontconfig. Fontconfig is loaded dynamically and is
+optional at runtime. Disabled smoothing, missing preferences, and unsupported
+vertical subpixel orders retain grayscale. Android, macOS, and headless
+rendering stay grayscale by default. An explicit RGB/BGR
 `text_subpixel_order` still chooses the channel order; on its own, without the
 system preference or an LCD render mode, an order does not select LCD. Each
 glyph still falls back to grayscale wherever LCD is unsafe, so a window can
@@ -361,7 +369,15 @@ show both: text on a solid panel in LCD, text over an image in grayscale.
 Hosts report the preference in `DisplayCapabilities::text_subpixel_order`, so
 it is read again whenever a window's display capabilities are refreshed.
 
-When hinting is enabled, a valid version-1 OpenType `gasp` table selects the
+Linux and Android use Skrifa's light hinting target with preserved horizontal
+metrics: ordinary TrueType outlines use vertical auto-hinting, while CFF and
+fonts requiring native instructions keep their interpreter. Font script/style
+analysis is shared across sizes in a 16-font LRU; hint instances use a separate
+16-entry LRU. Color outlines and bitmap emoji retain Swash's color path.
+This follows [FreeType's slight hinting model](https://freetype.org/freetype2/docs/hinting/text-rendering-general.html),
+keeping stems aligned vertically without snapping letter spacing horizontally.
+
+On other platforms, when hinting is enabled, a valid version-1 OpenType `gasp` table selects the
 font's symmetric/non-symmetric smoothing range at the requested physical ppem.
 The non-symmetric path uses Skrifa with `symmetric_rendering: false`, a target
 matching the grayscale/LCD mask, and preserved horizontal metrics. Swash handles
@@ -372,9 +388,13 @@ raster-size bucketing and the resolved target is part of glyph cache identity.
 The font-table and hint-instance LRUs hold at most 32 and 16 entries respectively.
 
 For grayscale, `TextCoveragePolicy::Perceptual` compensates edge coverage using
-foreground and solid-backdrop luminance. The curve uses a perceptual exponent
-of 1.8 and contrast of 0.5, converted to the renderer's linear-light blend space.
-It adjusts thin-stroke weight through mask coverage, independently of the
+foreground and solid-backdrop luminance. Linux uses a perceptual exponent of
+1.4 and contrast of 0.5; Android uses 1.4 and no added contrast; other platforms
+retain 1.8 and 0.5. The result is converted to the renderer's linear-light blend
+space. CPU policy evaluation and both atlas shaders share these parameters.
+Android's parameters follow
+[Chromium's Android text settings](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/skia/BUILD.gn).
+The curve adjusts thin-stroke weight through mask coverage, independently of the
 framebuffer transfer function.
 
 Eligible LCD text uses independent R/G/B corrections modeled on
@@ -456,9 +476,9 @@ practical editable controls. These boundaries remain:
 - Unwrapped multiline surfaces incrementally shape visible per-line layouts;
   wrapped surfaces still lay out the complete document before submitting a
   visible line window.
-- Only Windows reports a system subpixel preference; Linux (fontconfig/Xft
-  `rgba`) is not read yet, and macOS no longer uses subpixel antialiasing.
-  ClearType's orientation is one setting for the session, not per monitor.
+- Windows ClearType and Linux fontconfig/Xft preferences are session settings,
+  not per-monitor panel probes. GTK XSettings and compositor output rotation
+  are not queried. macOS and Android do not request LCD text automatically.
 - Large transformed or artistic text still uses the glyph atlas; there is no
   separate outline/vector text rendering path.
 - The shared `EditorState` is private. Applications that build a wholly custom

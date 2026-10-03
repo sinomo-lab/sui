@@ -228,6 +228,12 @@ npm run text:compare:test
 ```
 
 Browser antialiasing and font metrics depend on the platform and output path.
+For Linux, also compare an installed font such as DejaVu Sans with
+`SUI_TEXT_COMPARE_FONT=/usr/share/fonts/TTF/DejaVuSans.ttf`. For Android,
+use the device's Roboto font when checking the portable rasterizer on a desktop;
+this checks those font bytes, not Android presentation. Run native device checks
+separately. Include grayscale light/dark rows at every scale before assessing
+LCD captures: a headless browser can remain grayscale even with LCD requested.
 Check the observed render modes in `summary.json` when comparing with SUI's
 grayscale default. Aligned scores separate line placement from glyph shape and
 coverage; they do not imply identical hinting or rasterization. For coverage and

@@ -23,6 +23,9 @@ rustybuzz = { workspace = true }
 sui-core = { workspace = true }
 ttf-parser = { workspace = true }
 
+[dev-dependencies]
+tempfile = "3.27.0"
+
 [[bench]]
 name = "text_layout"
 harness = false

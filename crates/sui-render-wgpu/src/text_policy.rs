@@ -41,6 +41,34 @@ pub type TextHinting = sui_scene::TextRenderHinting;
 /// The renderer's name for [`sui_scene::TextRenderStemDarkening`].
 pub type StemDarkening = sui_scene::TextRenderStemDarkening;
 
+// Share platform calibration between CPU policy evaluation and both shaders.
+macro_rules! text_coverage_parameters {
+    ($gamma:literal, $contrast:literal) => {
+        const PERCEPTUAL_GAMMA: f32 = $gamma;
+        const PERCEPTUAL_CONTRAST: f32 = $contrast;
+        macro_rules! text_coverage_shader_parameters {
+            () => {
+                concat!(
+                    "const TEXT_PERCEPTUAL_GAMMA: f32 = ",
+                    stringify!($gamma),
+                    ";\n",
+                    "const TEXT_PERCEPTUAL_CONTRAST: f32 = ",
+                    stringify!($contrast),
+                    ";\n",
+                )
+            };
+        }
+        pub(crate) use text_coverage_shader_parameters;
+    };
+}
+
+#[cfg(target_os = "linux")]
+text_coverage_parameters!(1.4, 0.5);
+#[cfg(target_os = "android")]
+text_coverage_parameters!(1.4, 0.0);
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+text_coverage_parameters!(1.8, 0.5);
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TextCoveragePolicy {
     #[default]
@@ -128,17 +156,16 @@ pub(crate) fn is_sdr_color(color: Color) -> bool {
 }
 
 /// Contrast/gamma compensation modeled on Skia's mask-gamma construction,
-/// converted back to coverage for our linear-light framebuffer. The 1.8
-/// perceptual exponent is calibrated against Chrome's light/dark UI text;
-/// it is not the framebuffer transfer function. Keep in sync with both text
-/// atlas shaders. Endpoint preservation also keeps glyph padding transparent.
+/// converted back to coverage for our linear-light framebuffer. The platform
+/// perceptual exponent is independent of the framebuffer transfer function.
+/// Endpoint preservation also keeps glyph padding transparent.
 pub(crate) fn perceptual_text_coverage(coverage: f32, text: f32, background: f32) -> f32 {
     let c = coverage.clamp(0.0, 1.0);
     if c == 0.0 || c == 1.0 {
         return c;
     }
-    let gamma = 1.8;
-    let a = apply_coverage_boost(c, 0.5 * background.powf(gamma));
+    let gamma = PERCEPTUAL_GAMMA;
+    let a = apply_coverage_boost(c, PERCEPTUAL_CONTRAST * background.powf(gamma));
     let fg = encoded_srgb_to_linear_unit(text);
     let bg = encoded_srgb_to_linear_unit(background);
     if (fg - bg).abs() < 1e-4 {
@@ -219,8 +246,8 @@ pub(crate) fn linear_srgb_to_encoded_unit(channel: f32) -> f32 {
 ///
 /// `system_order` is the subpixel order the system antialiases text for on
 /// the window's display, or `None` when the window does not follow the
-/// system. A system that uses ClearType turns on LCD text at every scale, as
-/// Windows does; an explicit RGB/BGR `order` still chooses the channel order.
+/// system. A system that requests RGB/BGR smoothing turns on LCD text at every
+/// scale; an explicit RGB/BGR `order` still chooses the channel order.
 /// Otherwise the configured mode and order stand, so an order alone still does
 /// not select LCD mode.
 pub(crate) fn resolve_window_text_mode(
