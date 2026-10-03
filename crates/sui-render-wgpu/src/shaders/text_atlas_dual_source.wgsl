@@ -84,8 +84,8 @@ fn apply_text_coverage(coverage: f32, policy: f32, parameter: f32) -> f32 {
         if c <= 0.0 || c >= 1.0 { return c; }
         let foreground = floor(parameter / 4096.0) / 4095.0;
         let background = (parameter % 4096.0) / 4095.0;
-        let gamma = 1.8;
-        let a = c + c * (1.0 - c) * 0.5 * pow(background, gamma);
+        let gamma = TEXT_PERCEPTUAL_GAMMA;
+        let a = c + c * (1.0 - c) * TEXT_PERCEPTUAL_CONTRAST * pow(background, gamma);
         let endpoints = srgb_to_linear(vec3<f32>(foreground, background, 0.0));
         if abs(endpoints.x - endpoints.y) < 1e-4 { return a; }
         let value = pow(pow(foreground, gamma) * a + pow(background, gamma) * (1.0 - a), 1.0 / gamma);

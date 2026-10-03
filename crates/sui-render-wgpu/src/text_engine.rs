@@ -481,6 +481,8 @@ impl TextEngine {
                 _ => {
                     let target = if !text_policy.hinting.should_hint(requested_ppem) {
                         GlyphHintingTarget::None
+                    } else if cfg!(any(target_os = "linux", target_os = "android")) {
+                        GlyphHintingTarget::Slight
                     } else if self
                         .font_aware_hinter
                         .uses_asymmetric_smoothing(glyph_face, requested_ppem)
@@ -772,12 +774,15 @@ pub(crate) fn build_cached_glyph_atlas(
         .hint(hinting_target != GlyphHintingTarget::None)
         .build();
     let lcd = text_render_mode == TextRenderMode::LcdSubpixel;
-    let mut renderer =
-        SwashRender::new(if hinting_target == GlyphHintingTarget::Asymmetric || lcd {
-            &sources[..2]
-        } else {
-            &sources
-        });
+    let directed = matches!(
+        hinting_target,
+        GlyphHintingTarget::Asymmetric | GlyphHintingTarget::Slight
+    );
+    let mut renderer = SwashRender::new(if directed || lcd {
+        &sources[..2]
+    } else {
+        &sources
+    });
     renderer.format(match text_render_mode {
         TextRenderMode::Grayscale => SwashFormat::Alpha,
         TextRenderMode::LcdSubpixel => crate::text::lcd_bgra_format(),
@@ -785,17 +790,18 @@ pub(crate) fn build_cached_glyph_atlas(
     renderer.offset(subpixel_offset.as_swash_offset());
     let (image, font_directed) = if let Some(image) = renderer.render(&mut scaler, glyph_id) {
         (image, false)
-    } else if !lcd && hinting_target != GlyphHintingTarget::Asymmetric {
+    } else if !lcd && !directed {
         return Ok(None);
     } else {
-        let font_directed = if hinting_target == GlyphHintingTarget::Asymmetric {
-            font_aware_hinter.render_asymmetric(
+        let font_directed = if directed {
+            font_aware_hinter.render_outline(
                 face,
                 glyph_id,
                 font_size_physical,
                 subpixel_offset,
                 weight,
                 text_render_mode,
+                hinting_target,
             )
         } else {
             None

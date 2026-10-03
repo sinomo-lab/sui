@@ -601,6 +601,68 @@ pub(crate) fn slight_hinting_enables_below_threshold() {
     assert!(!config.should_hint(24.0));
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn slight_hinting_threshold_uses_physical_size_before_atlas_bucketing() {
+    let handle = FontHandle::new(9018);
+    let mut fonts = FontRegistry::new();
+    fonts.insert(
+        handle,
+        sui_text::RegisteredFont::from_bytes(sui_text::BUNDLED_NOTO_SANS_REGULAR_FONT.to_vec()),
+    );
+    let mut frame = SceneFrame::new(WindowId::new(9018), Size::new(200.0, 100.0));
+    frame.font_registry = Arc::new(fonts);
+    for (row, ppem) in [17.999, 18.001].into_iter().enumerate() {
+        frame.scene.push(SceneCommand::DrawText(TextRun {
+            rect: Rect::new(10.0, 8.0 + row as f32 * 30.0, 100.0, 28.0),
+            text: "H".into(),
+            style: TextStyle {
+                font: Some(handle),
+                font_size: ppem / 1.5,
+                line_height: 20.0,
+                ..TextStyle::default()
+            },
+        }));
+    }
+    frame.scale_factor = 1.5;
+    frame.surface_size = Size::new(300.0, 150.0);
+    let mut engine = TextEngine::new().unwrap();
+    engine.set_text_hinting(TextHinting::Slight { max_ppem: 18.0 });
+    build_vertices(&frame, &mut engine).unwrap();
+    let keys = engine.glyph_cache.keys().collect::<Vec<_>>();
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].scale_bucket, keys[1].scale_bucket);
+    assert!(
+        keys.iter()
+            .any(|key| key.hinting_target == GlyphHintingTarget::Slight)
+    );
+    assert!(
+        keys.iter()
+            .any(|key| key.hinting_target == GlyphHintingTarget::None)
+    );
+    let entries = engine.glyph_cache.len();
+    build_vertices(&frame, &mut engine).unwrap();
+    assert_eq!(
+        engine.glyph_cache.len(),
+        entries,
+        "warm text reuses its raster"
+    );
+
+    engine.set_text_hinting(TextHinting::None);
+    build_vertices(&frame, &mut engine).unwrap();
+    let unhinted = engine
+        .glyph_cache
+        .keys()
+        .filter(|key| key.text_hinting == crate::text::TextHintingCacheKey::None)
+        .collect::<Vec<_>>();
+    assert!(!unhinted.is_empty());
+    assert!(
+        unhinted
+            .iter()
+            .all(|key| key.hinting_target == GlyphHintingTarget::None)
+    );
+}
+
 #[test]
 pub(crate) fn stem_darkening_boosts_partial_coverage() {
     let darkened = apply_stem_darkening_to_coverage(128, 0.1);

@@ -1,19 +1,22 @@
-//! Font-directed hint targets unavailable through Swash's Boolean hint switch.
-//! Keep Swash's color-glyph handling; only override outline
-//! hinting when a version-1 gasp range asks for non-symmetric smoothing.
+//! Hint targets unavailable through Swash's Boolean hint switch. Keep Swash's
+//! color-glyph handling while supporting vertical-only slight hinting on
+//! Linux/Android and font-directed non-symmetric smoothing on other platforms.
 use std::num::NonZeroUsize;
 
 use lru::LruCache;
 use skrifa::{
     MetadataProvider,
     instance::Size,
-    outline::{HintingInstance, OutlinePen, SmoothMode, Target},
+    outline::{
+        Engine, GlyphStyles, HintingInstance, HintingOptions, OutlineGlyphFormat, OutlinePen,
+        SmoothMode, Target,
+    },
 };
 use swash::scale::image::{Content, Image};
 use swash::zeno::{Command, Format, Mask, Origin, PathBuilder, Scratch, Vector};
 
-use crate::text::GlyphFaceCacheKey;
 use crate::text::GlyphSubpixelOffsetKey;
+use crate::text::{GlyphFaceCacheKey, GlyphHintingTarget};
 use crate::text_engine::SwashFaceState;
 use crate::text_policy::TextRenderMode;
 
@@ -23,11 +26,13 @@ struct HintKey {
     ppem: u32,
     weight: u16,
     lcd: bool,
+    target: GlyphHintingTarget,
 }
 
 pub(crate) struct FontAwareHinter {
     gasp_tables: LruCache<GlyphFaceCacheKey, Option<Vec<u8>>>,
     instances: LruCache<HintKey, HintingInstance>,
+    glyph_styles: LruCache<[u64; 2], Option<GlyphStyles>>,
     path: Pen,
     scratch: Scratch,
     lcd_mask: crate::text_raster::LcdMaskRasterizer,
@@ -38,6 +43,7 @@ impl Default for FontAwareHinter {
         Self {
             gasp_tables: LruCache::new(NonZeroUsize::new(32).unwrap()),
             instances: LruCache::new(NonZeroUsize::new(16).unwrap()),
+            glyph_styles: LruCache::new(NonZeroUsize::new(16).unwrap()),
             path: Pen::default(),
             scratch: Scratch::new(),
             lcd_mask: Default::default(),
@@ -100,7 +106,8 @@ impl FontAwareHinter {
             == Some(false)
     }
 
-    pub(crate) fn render_asymmetric(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn render_outline(
         &mut self,
         face: &SwashFaceState<'_>,
         glyph: u16,
@@ -108,6 +115,7 @@ impl FontAwareHinter {
         offset: GlyphSubpixelOffsetKey,
         weight: u16,
         mode: TextRenderMode,
+        hinting_target: GlyphHintingTarget,
     ) -> Option<Image> {
         let font = skrifa::FontRef::from_index(face.font_ref.data, face.face_index).ok()?;
         let outlines = font.outline_glyphs();
@@ -118,20 +126,44 @@ impl FontAwareHinter {
             ppem: ppem.to_bits(),
             weight,
             lcd,
+            target: hinting_target,
         };
         if !self.instances.contains(&key) {
             let location = font.axes().location([("wght", f32::from(weight))]);
             let target = Target::Smooth {
-                mode: if lcd {
+                mode: if hinting_target == GlyphHintingTarget::Slight {
+                    SmoothMode::Light
+                } else if lcd {
                     SmoothMode::Lcd
                 } else {
                     SmoothMode::Normal
                 },
-                symmetric_rendering: false,
+                symmetric_rendering: hinting_target != GlyphHintingTarget::Asymmetric,
                 preserve_linear_metrics: true,
             };
-            let instance =
-                HintingInstance::new(&outlines, Size::new(ppem), &location, target).ok()?;
+            // Slight TrueType hinting uses the auto-hinter so native bytecode
+            // cannot snap stems horizontally. CFF keeps its native hinter.
+            let engine = if hinting_target == GlyphHintingTarget::Slight {
+                if !self.glyph_styles.contains(&face.font_id) {
+                    let styles = (outlines.format() == Some(OutlineGlyphFormat::Glyf)
+                        && !outlines.require_interpreter())
+                    .then(|| GlyphStyles::new(&outlines));
+                    self.glyph_styles.put(face.font_id, styles);
+                }
+                match self.glyph_styles.get(&face.font_id).cloned().flatten() {
+                    Some(styles) => Engine::Auto(Some(styles)),
+                    None => Engine::AutoFallback,
+                }
+            } else {
+                Engine::AutoFallback
+            };
+            let instance = HintingInstance::new(
+                &outlines,
+                Size::new(ppem),
+                &location,
+                HintingOptions { engine, target },
+            )
+            .ok()?;
             self.instances.put(key, instance);
         }
         self.path.0.clear();
@@ -143,7 +175,11 @@ impl FontAwareHinter {
             return Some(self.lcd_mask.render(
                 self.path.0.as_slice(),
                 offset,
-                crate::text_raster::LcdSampling::Asymmetric,
+                if hinting_target == GlyphHintingTarget::Asymmetric {
+                    crate::text_raster::LcdSampling::Asymmetric
+                } else {
+                    crate::text_raster::LcdSampling::Symmetric
+                },
             ));
         }
         let mut image = Image {
@@ -185,6 +221,79 @@ impl OutlinePen for Pen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slight_hinting_preserves_horizontal_outlines_and_antialiases_edges() {
+        let face = sui_text::ResolvedTextFace::from_bytes(
+            std::sync::Arc::from(sui_text::BUNDLED_NOTO_SANS_REGULAR_FONT),
+            0,
+        );
+        let swash_face = SwashFaceState::new(&face, GlyphFaceCacheKey::new(&face)).unwrap();
+        let font = skrifa::FontRef::new(face.bytes()).unwrap();
+        let outlines = font.outline_glyphs();
+        let mut hinter = FontAwareHinter::default();
+        let points = |path: &[Command]| {
+            path.iter()
+                .flat_map(|command| match *command {
+                    Command::MoveTo(p) | Command::LineTo(p) => vec![p],
+                    Command::QuadTo(a, b) => vec![a, b],
+                    Command::CurveTo(a, b, c) => vec![a, b, c],
+                    Command::Close => vec![],
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut adjusted_vertically = false;
+        for ppem in [11.0, 13.75, 16.0, 22.5] {
+            for ch in ['H', 'm', 'o'] {
+                let glyph = ttf_parser::Face::parse(face.bytes(), 0)
+                    .unwrap()
+                    .glyph_index(ch)
+                    .unwrap()
+                    .0;
+                let mut unhinted = Pen::default();
+                outlines
+                    .get(skrifa::GlyphId::new(u32::from(glyph)))
+                    .unwrap()
+                    .draw(
+                        skrifa::outline::DrawSettings::unhinted(Size::new(ppem), &[][..]),
+                        &mut unhinted,
+                    )
+                    .unwrap();
+                let image = hinter
+                    .render_outline(
+                        &swash_face,
+                        glyph,
+                        ppem,
+                        GlyphSubpixelOffsetKey::new(1, 0),
+                        400,
+                        TextRenderMode::Grayscale,
+                        GlyphHintingTarget::Slight,
+                    )
+                    .unwrap();
+                assert_eq!(image.content, Content::Mask);
+                assert!(image.data.iter().any(|&value| value > 0 && value < 255));
+                let original = points(&unhinted.0);
+                let hinted = points(&hinter.path.0);
+                assert_eq!(original.len(), hinted.len());
+                for (original, hinted) in original.iter().zip(&hinted) {
+                    // The auto-hinter uses a 26.6 fixed-point grid internally.
+                    assert!(
+                        (original.x - hinted.x).abs() <= 1.0 / 64.0,
+                        "{ch} at {ppem}: horizontal hinting moved {} to {}",
+                        original.x,
+                        hinted.x
+                    );
+                    adjusted_vertically |= (original.y - hinted.y).abs() > 1.0 / 64.0;
+                }
+            }
+        }
+        assert!(
+            adjusted_vertically,
+            "slight hinting must grid-fit the vertical axis"
+        );
+        assert_eq!(hinter.glyph_styles.len(), 1, "sizes share font analysis");
+    }
+
     #[test]
     fn gasp_selects_font_ranges_at_physical_ppem_and_rejects_malformed_tables() {
         // The installed Segoe UI ranges: <=8 symmetric, 9..19 natural, >=20 symmetric.

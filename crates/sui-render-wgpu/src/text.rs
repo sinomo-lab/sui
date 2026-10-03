@@ -166,6 +166,8 @@ pub(crate) fn lcd_bgra_format() -> swash::zeno::Format {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum GlyphHintingTarget {
     None,
+    /// Vertical grid fitting with preserved horizontal outlines and advances.
+    Slight,
     Symmetric,
     Asymmetric,
 }

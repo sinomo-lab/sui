@@ -709,7 +709,7 @@ pub struct WindowRenderOptions {
     pub stem_darkening: WindowStemDarkening,
     pub text_coverage_policy: WindowTextCoveragePolicy,
     pub text_subpixel_order: WindowTextSubpixelOrder,
-    /// Follow the system's text smoothing: when it uses ClearType, render LCD
+    /// Follow the system's text smoothing: when it requests RGB/BGR, render LCD
     /// text in its subpixel order. An explicit RGB or BGR
     /// `text_subpixel_order` still chooses the order. On by default.
     pub use_system_text_smoothing: bool,
