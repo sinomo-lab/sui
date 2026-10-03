@@ -65,6 +65,64 @@ Signal writes from a background thread wake the running platform event loop.
 Writes made in an event callback join the current runtime turn. Repeated
 changes are coalesced by the platform wake path and equality checks.
 
+### Which Thread Observers Run On
+
+A `Signal` may be written from any thread, and its observers run synchronously
+on **the thread that wrote it**, after the value lock is released and before
+`set` returns. SUI never moves an observer call to another thread. Widget
+subscriptions are built for this: their observer only queues an invalidation
+and wakes the event loop, and the widget re-reads the value on the UI thread.
+
+Observers you register yourself with `subscribe` follow the same rule, so they
+must be `Send + Sync`, quick, and non-blocking. If an observer needs UI-thread
+state, forward a command through `UiHandle` or `CommandSender` instead of
+touching that state directly. A value read inside an observer can already be
+newer than the `version` it was given when other threads write concurrently.
+
+### Large State
+
+`get` clones the value, and `update` clones it to detect a change. For large
+state, avoid both:
+
+- `signal.with(|state| ...)` reads by reference.
+- `signal.modify(|state| { ...; changed })` mutates in place and notifies only
+  when the closure returns `true`. No `Clone` or `PartialEq` is required.
+- `signal.mark_changed()` bumps the version and notifies after a change the
+  signal cannot see, such as data behind interior mutability.
+- `Signal<Arc<T>>` makes `get` a pointer copy. `set_arc` deduplicates by
+  pointer, and `modify_arc` mutates through `Arc::make_mut`, copying only while
+  a reader still holds the previous snapshot.
+
+Selectors read their source by reference, so `state.select(|s| s.selected)`
+does not clone the whole state on every change. A selector and its clones
+share one subscription to the source and one cached result: however many
+widgets observe it, the closure runs once per source change, and repeated
+reads reuse the result until the source's version changes. The source
+subscription is dropped with the last observer.
+
+Closures passed to `with`, `modify`, `update`, and selectors run while the
+value is locked and must not write to the same signal. In debug builds, doing
+so panics with the signal's name instead of deadlocking.
+
+### Batching Writes
+
+`sui::batch` defers notifications for writes made on the calling thread until
+the closure returns, then notifies each changed signal once:
+
+```rust
+std::thread::spawn(move || {
+    let rows = load_rows();
+    sui::batch(|| {
+        rows_signal.set(rows);
+        status.set(Status::Loaded);
+        selection.set(None);
+    });
+});
+```
+
+Values update immediately, so reads inside the batch see the new state. Nested
+batches flush when the outermost one ends, and other threads are not affected.
+
 Reader closures must be fast, deterministic, and non-blocking. They run on the
 UI thread and may be evaluated in more than one phase. Do not perform I/O,
 network access, or expensive parsing inside them.
@@ -463,6 +521,44 @@ Button::new("Refresh every window").on_press_with_ctx(|ctx| {
 The command is delivered after the current input dispatch yields back to the
 runtime. Clone the sender before moving it into worker-owned code; use
 `UiHandle` when starting work from `App::run_with_handle`.
+
+## Tutorial: Track Background Work with `Task`
+
+`Task<T, E = String>` is an observable `TaskState`: `Idle`,
+`Loading { progress }`, `Ready(T)`, or `Failed(E)`. `start` enters `Loading`
+and returns a `TaskHandle` for the worker:
+
+```rust
+let thumbnails: Task<Arc<Vec<Thumbnail>>> = Task::named("thumbnails");
+let progress = thumbnails.select_named("thumbnail progress", |state| {
+    state.progress().unwrap_or(0.0)
+});
+let status = Label::new("").text_from(thumbnails.select(|state| match state {
+    TaskState::Idle => String::new(),
+    TaskState::Loading { .. } => "Loading thumbnails…".into(),
+    TaskState::Ready(images) => format!("{} thumbnails", images.len()),
+    TaskState::Failed(error) => error.clone(),
+}));
+
+let handle = thumbnails.start();
+std::thread::spawn(move || {
+    for (index, path) in paths.iter().enumerate() {
+        if !handle.is_current() {
+            return; // superseded by a newer start or a reset
+        }
+        handle.set_progress(index as f32 / paths.len() as f32);
+        // ...
+    }
+    handle.complete(load_all(&paths).map(Arc::new));
+});
+```
+
+Calling `start` again, `reset`, or completing the run retires every earlier
+handle; their later reports are ignored, so a slow worker cannot overwrite a
+newer result. `set_progress` clamps to `0..=1` and skips repeated values.
+Writing a `Task` needs no `Clone` or `PartialEq` on the result; wrap large
+results in `Arc` so reading the state stays cheap. Like any signal, the task
+notifies on the worker thread and widgets observing it redraw on the UI thread.
 
 ## Command Scope, Multicast, and Controllers
 

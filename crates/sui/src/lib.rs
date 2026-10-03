@@ -101,7 +101,7 @@ pub use sui_platform::{
 };
 pub use sui_reactive::{
     Change as ObservableChange, Observable, Observer, Selector, Signal, SourceId, Subscription,
-    WeakObserver,
+    Task, TaskHandle, TaskState, WeakObserver, batch,
 };
 #[cfg(feature = "wgpu")]
 pub use sui_render_wgpu::{
@@ -813,15 +813,15 @@ pub mod prelude {
         SpringSpec, Stack, Stagger, StaggerOrigin, StatusBar, StatusBarHost, StatusBarSegment,
         StrokeStyle, Subscription, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation,
         SurfacePalette, SurfaceRole, Switch, SwitchView, TabBar, TabBarItem, Table, TableColumn,
-        TableColumnAlignment, TableRow, Tabs, TextArea, TextCommand, TextDocument, TextInput,
-        TextLayout, TextMeasurement, TextParagraph, TextParagraphStyle, TextSelectionInfo,
-        TextSpan, TextSpanId, TextStyle, TextWrap, Theme, ThemeAspectRatios, ThemeBlurScale,
-        ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers, ThemeDensity,
-        ThemeExtension, ThemeExtensions, ThemeFontFamilies, ThemeFontStack, ThemeFontWeights,
-        ThemeGlows, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii, ThemeShadow,
-        ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking, Timeline,
-        TimelineMarker, TimelinePlayer, TimelineSnap, TimelineTick, TimerToken, ToolPalette,
-        ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment, TooltipPlacement, Track,
+        TableColumnAlignment, TableRow, Tabs, Task, TaskHandle, TaskState, TextArea, TextCommand,
+        TextDocument, TextInput, TextLayout, TextMeasurement, TextParagraph, TextParagraphStyle,
+        TextSelectionInfo, TextSpan, TextSpanId, TextStyle, TextWrap, Theme, ThemeAspectRatios,
+        ThemeBlurScale, ThemeBreakpoints, ThemeColorScheme, ThemeColors, ThemeContainers,
+        ThemeDensity, ThemeExtension, ThemeExtensions, ThemeFontFamilies, ThemeFontStack,
+        ThemeFontWeights, ThemeGlows, ThemeLeading, ThemeMotion, ThemePerspective, ThemeRadii,
+        ThemeShadow, ThemeShadowLayer, ThemeShadows, ThemeTextScale, ThemeTextToken, ThemeTracking,
+        Timeline, TimelineMarker, TimelinePlayer, TimelineSnap, TimelineTick, TimerToken,
+        ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment, TooltipPlacement, Track,
         TrailingSlotRow, Transform, TransientNotification, Transition, TreeItem, TreeView,
         VirtualCollectionModel, VirtualCollectionSource, VirtualList, VirtualListChrome,
         VirtualListSelectionMode, VirtualListState, VirtualScrollView, VirtualTable,
