@@ -23,6 +23,8 @@ lru = { workspace = true }
 lyon_path = { workspace = true }
 lyon_tessellation = { workspace = true }
 pollster = { workspace = true }
+# Keep in step with the skrifa that swash uses; a newer one adds a second copy
+# of the font parser (about 590 KiB in the web build).
 skrifa = { version = "0.44.0", default-features = false, features = ["std"] }
 swash = { workspace = true, features = ["scale", "render"] }
 sui-core = { workspace = true }
