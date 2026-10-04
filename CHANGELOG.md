@@ -4,6 +4,66 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
+## [0.4.1] - 2026-10-04
+
+This release adds observable background tasks, makes reactive updates and text
+rendering cheaper, improves platform font rendering, and adds touch scroll
+inertia.
+
+### Highlights
+
+- Added `Task`, `TaskState`, and `TaskHandle` for background work with progress,
+  results, errors, and stale-worker protection. `refresh` keeps the previous
+  result visible while loading, cancellation restores it, and `TaskHandle::run`
+  completes the task from a future on the application's executor.
+- Added `batch` to coalesce notifications, `combine` and `combine_named` to
+  derive values from two to four observables, and `changed().await` to wait for
+  a signal, task, or other observable to change.
+- Added borrowed signal reads and in-place updates with `with`, `modify`, and
+  `mark_changed`, plus pointer-compared and copy-on-write `Arc` updates with
+  `set_arc` and `modify_arc`. Selector clones share one source subscription
+  and a cached result, avoiding repeated work for multiple observers.
+- Skipped clipped glyphs before rasterization and split grayscale masks from
+  color and LCD glyphs. A grayscale atlas page now uses 4 MiB of GPU memory
+  instead of 16 MiB each on the CPU and GPU; only pending uploads keep CPU
+  pixels. Clipping also preserves tall marks and bitmap emoji at line edges.
+- Followed Windows ClearType and Linux fontconfig/Xft smoothing preferences,
+  improved Linux and Android slight hinting and coverage, and loaded Android
+  system fonts with bundled fallbacks. Runtime text-policy changes now update
+  retained text correctly.
+- Added coasting touch scrolling to `ScrollView` and `VirtualScrollView`.
+  Both expose `on_offset_change` and `on_offset_change_with_ctx` for wheel,
+  keyboard, touch, fling, scroll bar, and programmatic moves. The widget book's
+  navigation follows flings and keeps the selected entry after a jump.
+
+### Other changes
+
+- Fixed open contours rendering as fans on Adreno 740 under Chrome's Vulkan
+  WebGPU backend and made tooltip borders continuous around their tails.
+- Kept menu and context-menu keyboard shortcuts on one line so long
+  combinations stay aligned and vertically centered.
+- Added download progress while the web demo loads its Wasm module and fonts,
+  with startup errors displayed on the loading screen.
+- Made Chrome text comparisons match the requested grayscale or LCD mode,
+  added aggregate ink and alignment diagnostics, and added a light/dark,
+  scale, and antialiasing comparison matrix.
+- Fixed concurrent selector updates losing changes and reactive diagnostics
+  recording older versions when notifications arrive out of order.
+- Updated accessibility, Python, Node, Wasm, and Linux dependencies.
+
+### Compatibility and release notes
+
+- Update the SUI crates together to `0.4.1`. `sinomo-ui-lucide` remains at
+  `1.47.1`, with the same bundled Lucide 1.47.0 icons.
+- Selector closures now read signal values while the source is locked; they
+  must not write to that signal. Debug builds report same-signal reentrant
+  writes with a named panic instead of deadlocking. Observers still run
+  synchronously on the writing thread; batching defers them until the batch
+  ends on that thread.
+- Rust 1.90 remains the minimum supported version. Browser support remains
+  alpha, Android remains experimental, and Python and JavaScript bindings
+  remain source-built and are not part of the registry release.
+
 ## [0.4.0] - 2026-10-01
 
 This release refreshes the default theme, gives the built-in widgets one API
@@ -307,3 +367,4 @@ Initial public alpha release of the Rust workspace.
 [0.2.1]: https://github.com/sinomo-lab/sui/compare/v0.2.0...v0.2.1
 [0.3.0]: https://github.com/sinomo-lab/sui/compare/v0.2.1...v0.3.0
 [0.4.0]: https://github.com/sinomo-lab/sui/compare/v0.3.0...v0.4.0
+[0.4.1]: https://github.com/sinomo-lab/sui/compare/v0.4.0...v0.4.1

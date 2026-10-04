@@ -30,7 +30,7 @@ use crate::overlay::OverlaySide;
 use crate::overlay::place_overlay;
 use crate::paint_theme_shadow;
 use crate::resolve_widget_hdr_style;
-use crate::text_align::paint_text;
+use crate::text_align::{paint_text, paint_text_line};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -545,7 +545,7 @@ impl Widget for Menu {
                     row.height(),
                 );
                 ctx.push_clip_rect(shortcut_slot);
-                paint_text(
+                paint_text_line(
                     ctx,
                     shortcut_slot,
                     shortcut,
@@ -2224,7 +2224,7 @@ impl Widget for ContextMenuSurface {
                         row.height(),
                     );
                     ctx.push_clip_rect(shortcut_slot);
-                    paint_text(
+                    paint_text_line(
                         ctx,
                         shortcut_slot,
                         shortcut,

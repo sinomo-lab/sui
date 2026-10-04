@@ -495,6 +495,14 @@ fn embedded_book_follows_the_application_theme_by_default() -> Result<()> {
         SemanticsRole::RadioGroup,
         WIDGET_BOOK_THEME_SWITCH_NAME,
     )
+    // The extra App choice may need the compact control with wider system fonts.
+    .or_else(|| {
+        node(
+            &output.semantics,
+            SemanticsRole::ComboBox,
+            WIDGET_BOOK_THEME_SWITCH_NAME,
+        )
+    })
     .expect("theme switch present");
     assert_eq!(switch.value, Some(SemanticsValue::Text("App".to_string())));
     assert!(solid_fill_colors(&output).contains(&DefaultTheme::dark().colors.neutrals.window));

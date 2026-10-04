@@ -115,7 +115,8 @@ platform host.
 | `web` | Browser/WebAssembly integration; also enables `wgpu` |
 | `mobile` | Mobile integration, currently Android; also enables `wgpu` |
 | `wgpu` | Renderer facade and external texture integration |
-| `testing` | Compatibility flag; high-level test APIs live in `sinomo-ui-testing` |
+
+High-level test APIs live in `sinomo-ui-testing`.
 
 ## Repository development
 

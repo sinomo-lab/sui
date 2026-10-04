@@ -6305,6 +6305,7 @@ fn menu_shortcuts_align_to_trailing_edge_and_row_center() {
         .bounds;
     let first_shortcut = text_run_for(&output, "Ctrl+N");
     let second_shortcut = text_run_for(&output, "Ctrl+Shift+O");
+    assert_eq!(text_layout_for(&output, "Ctrl+Shift+O").lines().len(), 1);
     let first_label_clip = clip_rect_for_text(&output, "New File");
     let second_label_clip = clip_rect_for_text(&output, "Open...");
     let first_edge = first_row.max_x() - theme.metrics.menu_item_padding.right;
@@ -6323,7 +6324,12 @@ fn menu_shortcuts_align_to_trailing_edge_and_row_center() {
     assert!((first_label_clip.max_x() - first_label_edge).abs() < 0.75);
     assert!((second_label_clip.max_x() - second_label_edge).abs() < 0.75);
     assert!((first_shortcut.rect.max_x() - first_edge).abs() < 0.75);
-    assert!((second_shortcut.rect.max_x() - second_edge).abs() < 0.75);
+    assert!(
+        (second_shortcut.rect.max_x() - second_edge).abs() < 0.75,
+        "shortcut {:?}, expected edge {second_edge}, layout {:?}",
+        second_shortcut.rect,
+        text_layout_for(&output, "Ctrl+Shift+O").measurement()
+    );
     assert!((first_shortcut.rect.max_x() - second_shortcut.rect.max_x()).abs() < 0.75);
     assert!(
         (text_run_visual_center(&first_shortcut) - (first_row.y() + first_row.height() * 0.5))
