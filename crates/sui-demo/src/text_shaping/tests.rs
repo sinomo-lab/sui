@@ -87,7 +87,19 @@ fn mixed_directions_describe_their_runs() -> Result<()> {
         .description
         .unwrap_or_default();
     assert!(metrics.contains("ascent"), "{metrics}");
-    assert!(!metrics.contains("cap height unknown"), "{metrics}");
+    let cap_height = metrics
+        .split_once(", cap height ")
+        .expect("cap height is described")
+        .1
+        .trim_end_matches('.');
+    // Cap height is optional font metadata; system fonts may omit it.
+    assert!(
+        cap_height == "unknown"
+            || cap_height
+                .parse::<f32>()
+                .is_ok_and(|height| height.is_finite() && height > 0.0),
+        "{metrics}"
+    );
     Ok(())
 }
 
