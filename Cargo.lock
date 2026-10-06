@@ -4789,6 +4789,7 @@ dependencies = [
  "sinomo-ui-scene",
  "sinomo-ui-text",
  "unicode-segmentation",
+ "web-time",
 ]
 
 [[package]]

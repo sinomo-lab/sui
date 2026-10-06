@@ -6,9 +6,10 @@ use std::{
     fmt,
     ops::Range,
     rc::Rc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use sui_reactive::Observable;
+use web_time::Instant;
 
 use sui_core::{
     Color, Event, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
