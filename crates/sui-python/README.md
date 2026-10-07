@@ -22,68 +22,55 @@ package; prebuilt wheels are not published yet.
 
 ## Prerequisites
 
-- Python 3.10 or newer;
 - Rust 1.90 or newer and Cargo;
-- Maturin 1.x (`maturin>=1.15,<2`);
+- [uv](https://docs.astral.sh/uv/), which provides Python 3.10 and the
+  development tools;
 - for `App.run()`, a desktop supported by SUI's `winit` and `wgpu` backends.
-
-Use a virtual environment. If you are working in the SUI checkout, placing the
-environment outside the repository avoids adding local environment files to the
-worktree:
-
-```bash
-python3 -m venv /tmp/sui-python-venv
-source /tmp/sui-python-venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install "maturin>=1.15,<2"
-```
 
 ## Build for development
 
-From `crates/sui-python`:
+From `crates/sui-python`, create the development environment:
 
 ```bash
-maturin develop
-python -c 'import sinomo_ui as sui; print(sui.__version__)'
+uv sync
 ```
 
-From the workspace root, keep Maturin in the package directory so it reads the
-adjacent `pyproject.toml`:
+This creates `.venv` with the pinned Python version (`.python-version`, the
+oldest supported release), installs maturin, pytest, and mypy from the locked
+`dev` group, and builds `sinomo_ui` in editable mode. After changing Rust
+code, rebuild the extension in place:
 
 ```bash
-(cd crates/sui-python && maturin develop)
-python -c 'import sinomo_ui as sui; print(sui.__version__)'
+uv run maturin develop --uv
 ```
 
-`maturin develop --release` produces an optimized development build. To create
-an installable wheel instead, run one of:
+Add `--release` for an optimized development build. To create an installable
+wheel instead:
 
 ```bash
-# From crates/sui-python
-maturin build --release
-
-# From the workspace root
-(cd crates/sui-python && maturin build --release)
+uv run maturin build --release
 ```
 
-Maturin prints the resulting wheel path when the build completes.
+Maturin prints the resulting wheel path when the build completes. Wheels use
+the stable ABI, so the `cp310-abi3` wheel installs on every supported Python
+version.
 
 ## Run the examples
 
-After `maturin develop`, run these commands from `crates/sui-python`:
+After `uv sync`, run these commands from `crates/sui-python`:
 
 ```bash
-python examples/counter.py
-python examples/custom_widget.py
-python examples/external_surface.py
+uv run python examples/counter.py
+uv run python examples/custom_widget.py
+uv run python examples/external_surface.py
 ```
 
 Or run them from the workspace root:
 
 ```bash
-python crates/sui-python/examples/counter.py
-python crates/sui-python/examples/custom_widget.py
-python crates/sui-python/examples/external_surface.py
+uv run --project crates/sui-python python crates/sui-python/examples/counter.py
+uv run --project crates/sui-python python crates/sui-python/examples/custom_widget.py
+uv run --project crates/sui-python python crates/sui-python/examples/external_surface.py
 ```
 
 The examples deliberately use `App.start()`. They render in process and print

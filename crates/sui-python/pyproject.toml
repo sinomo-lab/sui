@@ -23,3 +23,10 @@ bindings = "pyo3"
 python-source = "python"
 module-name = "sinomo_ui._native"
 features = ["extension-module", "desktop"]
+
+[dependency-groups]
+dev = [
+    "maturin>=1.15,<2",
+    "mypy>=1.15",
+    "pytest>=8",
+]

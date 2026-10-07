@@ -6,3 +6,11 @@
 /.playwright-cli
 /crates/sui-demo/web/dist
 /output
+
+# Python development environment and build artifacts
+.venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+/crates/sui-python/python/sinomo_ui/*.pyd
+/crates/sui-python/python/sinomo_ui/*.so
