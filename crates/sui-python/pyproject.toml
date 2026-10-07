@@ -3,8 +3,8 @@ requires = ["maturin>=1.15,<2"]
 build-backend = "maturin"
 
 [project]
-name = "sui-ui"
-version = "0.4.1"
+name = "sinomo-ui"
+dynamic = ["version"]
 description = "Python bindings for SUI."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,6 +20,6 @@ classifiers = [
 
 [tool.maturin]
 bindings = "pyo3"
-module-name = "sui"
+python-source = "python"
+module-name = "sinomo_ui._native"
 features = ["extension-module", "desktop"]
-include = ["sui.pyi", "py.typed"]

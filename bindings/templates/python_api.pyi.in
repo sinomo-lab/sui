@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, Protocol, TypeAlias, TypedDict
 
+__version__: str
+
 BindingValue: TypeAlias = str | float | bool
 Axis: TypeAlias = Literal["horizontal", "vertical"]
 ScrollAxes: TypeAlias = Axis | Literal["both"]

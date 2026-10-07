@@ -102,7 +102,7 @@ fn bindings_generate(check: bool) -> Result<(), String> {
             python_stub_template_path.display()
         )
     })?;
-    let python_stub_path = root.join("crates/sui-python/sui.pyi");
+    let python_stub_path = root.join("crates/sui-python/python/sinomo_ui/_native.pyi");
     let python_stub = render_generated_python_stub(&python_stub_template, items);
     update_generated_file(&python_stub_path, &python_stub, check)?;
 
@@ -987,7 +987,7 @@ fn validate_rust_template(language: &str, items: &[Item], template: &str) -> Res
             ("python", Some("function")) => rust_name.is_some_and(|name| {
                 source
                     .python_functions
-                    .contains(&(item.name.clone(), name.clone()))
+                    .contains(&(to_snake_case(&item.name), name.clone()))
             }),
             ("js", Some("function")) => rust_name.is_some_and(|name| {
                 source
@@ -1025,9 +1025,7 @@ fn render_generated_rust_template(
     output.push_str(template.trim_end_matches(['\r', '\n']));
     output.push('\n');
     if language == "python" {
-        output.push_str(
-            "\n/// Register generated descriptors, legacy constructors, and idiomatic factories.\n",
-        );
+        output.push_str("\n/// Register generated descriptors and idiomatic factories.\n");
         output.push_str(
             "pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {\n",
         );
@@ -1049,16 +1047,6 @@ fn render_generated_rust_template(
                 }
                 _ => {}
             }
-        }
-        for item in items
-            .iter()
-            .filter(|item| item.python_kind.as_deref() == Some("function"))
-        {
-            output.push_str("    m.add(\"");
-            output.push_str(&to_snake_case(&item.name));
-            output.push_str("\", m.getattr(\"");
-            output.push_str(&item.name);
-            output.push_str("\")?)?;\n");
         }
         output.push_str("    Ok(())\n}\n");
     }
@@ -1192,7 +1180,6 @@ fn render_generated_python_stub(template: &str, items: &[Item]) -> String {
             }
             Some(ApiDecl::Function(signature)) => {
                 let factory = signature;
-                render_python_stub_function(&mut output, &item.name, factory);
                 render_python_stub_function(&mut output, &to_snake_case(&item.name), factory);
                 output.push('\n');
             }
@@ -1656,7 +1643,7 @@ fn check_python(item: &Item, python: &source::RustSource) -> Check {
             declaration_check(&[
                 python
                     .python_functions
-                    .contains(&(item.name.clone(), name.clone())),
+                    .contains(&(to_snake_case(&item.name), name.clone())),
                 python.registered_functions.contains(name),
             ])
         }),
@@ -1739,7 +1726,10 @@ fn check_compat(item: &Item, sources: &Sources) -> Check {
         requirements.push((format!("BindingWidget::{constructor}("), &js_compat));
     }
     if item.python_kind.as_deref() == Some("function") {
-        requirements.push((format!("sui.{}(", item.name), &python_compat));
+        requirements.push((
+            format!("sui.{}(", to_snake_case(&item.name)),
+            &python_compat,
+        ));
     }
 
     if requirements.is_empty() {
@@ -2020,7 +2010,7 @@ pub struct NotAWidget;
             ..Item::default()
         };
         let stub = render_generated_python_stub("class Widget: ...", &[item]);
-        assert!(stub.contains("def Button(label: str, on_press: Callable[[], None] | None = ...)"));
+        assert!(!stub.contains("def Button("));
         assert!(stub.contains("def button(label: str, on_press: Callable[[], None] | None = ...)"));
     }
 

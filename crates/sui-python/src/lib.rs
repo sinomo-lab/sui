@@ -74,7 +74,7 @@ use sui_crate::{
     Transform, Vector, WidgetId, WindowBuilder,
 };
 
-#[pyclass(name = "Point", frozen, module = "sui", from_py_object)]
+#[pyclass(name = "Point", frozen, module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyPoint {
     #[pyo3(get)]
@@ -113,7 +113,7 @@ impl From<PyPoint> for Vector {
     }
 }
 
-#[pyclass(name = "Modifiers", frozen, module = "sui", from_py_object)]
+#[pyclass(name = "Modifiers", frozen, module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PyModifiers {
     #[pyo3(get)]
@@ -169,7 +169,7 @@ impl From<PyModifiers> for BindingModifiers {
     }
 }
 
-#[pyclass(name = "Event", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(name = "Event", frozen, module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyEvent {
     inner: BindingEvent,
@@ -556,7 +556,7 @@ impl PyEvent {
     }
 }
 
-#[pyclass(name = "EventContext", module = "sui", skip_from_py_object)]
+#[pyclass(name = "EventContext", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyEventContext {
     inner: Arc<Mutex<BindingEventContext>>,
@@ -661,7 +661,7 @@ impl PyEventContext {
     }
 }
 
-#[pyclass(name = "Size", frozen, module = "sui", from_py_object)]
+#[pyclass(name = "Size", frozen, module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PySize {
     #[pyo3(get)]
@@ -694,7 +694,7 @@ impl From<PySize> for Size {
     }
 }
 
-#[pyclass(name = "Rect", frozen, module = "sui", from_py_object)]
+#[pyclass(name = "Rect", frozen, module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyRect {
     #[pyo3(get)]
@@ -749,7 +749,7 @@ impl From<PyRect> for Rect {
     }
 }
 
-#[pyclass(name = "Path", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(name = "Path", frozen, module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyPath {
     inner: Path,
@@ -815,7 +815,7 @@ impl Default for PyPath {
     }
 }
 
-#[pyclass(name = "PathBuilder", module = "sui", skip_from_py_object)]
+#[pyclass(name = "PathBuilder", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyPathBuilder {
     inner: PathBuilder,
@@ -874,7 +874,7 @@ impl PyPathBuilder {
     }
 }
 
-#[pyclass(name = "Transform", frozen, module = "sui", from_py_object)]
+#[pyclass(name = "Transform", frozen, module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTransform {
     #[pyo3(get)]
@@ -949,7 +949,7 @@ impl From<PyTransform> for Transform {
     }
 }
 
-#[pyclass(name = "Color", frozen, module = "sui", from_py_object)]
+#[pyclass(name = "Color", frozen, module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyColor {
     #[pyo3(get)]
@@ -1035,7 +1035,12 @@ fn py_easing(value: &str) -> PyResult<sui_crate::Easing> {
     })
 }
 
-#[pyclass(name = "AnimationValue", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(
+    name = "AnimationValue",
+    frozen,
+    module = "sinomo_ui",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAnimationValue {
     inner: BindingAnimationValue,
@@ -1141,7 +1146,7 @@ impl From<BindingAnimationValue> for PyAnimationValue {
     }
 }
 
-#[pyclass(name = "Transition", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(name = "Transition", frozen, module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTransition {
     inner: BindingTransition,
@@ -1182,7 +1187,7 @@ impl PyTransition {
     }
 }
 
-#[pyclass(name = "Spring", module = "sui", skip_from_py_object)]
+#[pyclass(name = "Spring", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PySpring {
     inner: BindingSpring,
@@ -1223,7 +1228,7 @@ impl PySpring {
     }
 }
 
-#[pyclass(name = "AnimatedValue", module = "sui", skip_from_py_object)]
+#[pyclass(name = "AnimatedValue", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAnimatedValue {
     inner: BindingAnimatedValue,
@@ -1285,7 +1290,7 @@ impl PyAnimatedValue {
     }
 }
 
-#[pyclass(name = "Keyframe", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(name = "Keyframe", frozen, module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAnimationKeyframe {
     inner: BindingAnimationKeyframe,
@@ -1312,7 +1317,7 @@ impl PyAnimationKeyframe {
     }
 }
 
-#[pyclass(name = "AnimationTrack", module = "sui", skip_from_py_object)]
+#[pyclass(name = "AnimationTrack", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAnimationTrack {
     inner: BindingAnimationTrack,
@@ -1355,7 +1360,7 @@ impl PyAnimationTrack {
     }
 }
 
-#[pyclass(name = "AnimationClip", module = "sui", skip_from_py_object)]
+#[pyclass(name = "AnimationClip", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAnimationClip {
     inner: BindingAnimationClip,
@@ -1399,7 +1404,12 @@ impl PyAnimationClip {
     }
 }
 
-#[pyclass(name = "AnimationSample", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(
+    name = "AnimationSample",
+    frozen,
+    module = "sinomo_ui",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyAnimationSample {
     #[pyo3(get)]
@@ -1426,7 +1436,12 @@ impl From<BindingAnimationSample> for PyAnimationSample {
     }
 }
 
-#[pyclass(name = "AnimationMarker", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(
+    name = "AnimationMarker",
+    frozen,
+    module = "sinomo_ui",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyAnimationMarker {
     #[pyo3(get)]
@@ -1444,7 +1459,7 @@ impl From<BindingAnimationMarker> for PyAnimationMarker {
     }
 }
 
-#[pyclass(name = "Stagger", module = "sui", skip_from_py_object)]
+#[pyclass(name = "Stagger", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyStagger {
     inner: BindingStagger,
@@ -1472,7 +1487,7 @@ impl PyStagger {
     }
 }
 
-#[pyclass(name = "AnimationTimeline", module = "sui", skip_from_py_object)]
+#[pyclass(name = "AnimationTimeline", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAnimationTimeline {
     inner: BindingAnimationTimeline,
@@ -1519,7 +1534,7 @@ impl PyAnimationTimeline {
     }
 }
 
-#[pyclass(name = "AnimationPlayer", module = "sui", skip_from_py_object)]
+#[pyclass(name = "AnimationPlayer", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAnimationPlayer {
     inner: BindingAnimationPlayer,
@@ -1614,7 +1629,7 @@ impl PyAnimationPlayer {
 #[pyclass(
     name = "AnimationDocument",
     frozen,
-    module = "sui",
+    module = "sinomo_ui",
     skip_from_py_object
 )]
 #[derive(Debug, Clone)]
@@ -1655,7 +1670,7 @@ impl PyAnimationDocument {
     }
 }
 
-#[pyclass(name = "AnimationEditor", module = "sui", skip_from_py_object)]
+#[pyclass(name = "AnimationEditor", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyAnimationEditor {
     inner: BindingAnimationEditor,
@@ -1780,7 +1795,7 @@ impl PyAnimationEditor {
     }
 }
 
-#[pyclass(name = "Shadow", frozen, module = "sui", from_py_object)]
+#[pyclass(name = "Shadow", frozen, module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyShadow {
     #[pyo3(get)]
@@ -1854,7 +1869,7 @@ impl From<PyShadow> for ShadowParams {
     }
 }
 
-#[pyclass(name = "Constraints", frozen, module = "sui", from_py_object)]
+#[pyclass(name = "Constraints", frozen, module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyConstraints {
     #[pyo3(get)]
@@ -1894,7 +1909,7 @@ impl From<Constraints> for PyConstraints {
     }
 }
 
-#[pyclass(name = "FontHandle", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(name = "FontHandle", frozen, module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyFontHandle {
     inner: BindingFontHandle,
@@ -1921,7 +1936,12 @@ impl PyFontHandle {
 
 include!("generated_widgets.rs");
 
-#[pyclass(name = "ImageHandle", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(
+    name = "ImageHandle",
+    frozen,
+    module = "sinomo_ui",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyImageHandle {
     inner: BindingImageHandle,
@@ -1964,7 +1984,7 @@ struct PendingPaintImage {
     image: RegisteredImage,
 }
 
-#[pyclass(name = "Paint", module = "sui", skip_from_py_object)]
+#[pyclass(name = "Paint", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPaint {
     builder: Arc<Mutex<PaintCommandBuilder>>,
@@ -2198,7 +2218,7 @@ enum PySemanticsCommand {
     Child(usize),
 }
 
-#[pyclass(name = "Semantics", module = "sui", skip_from_py_object)]
+#[pyclass(name = "Semantics", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PySemantics {
     widget_id: WidgetId,
@@ -2304,7 +2324,7 @@ impl PySemantics {
     }
 }
 
-#[pyclass(name = "Shader", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(name = "Shader", frozen, module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyShader {
     inner: BindingShader,
@@ -2377,7 +2397,7 @@ impl From<BindingShader> for PyShader {
     }
 }
 
-#[pyclass(name = "Widget", module = "sui")]
+#[pyclass(name = "Widget", module = "sinomo_ui")]
 pub struct PyWidget {
     kind: PyWidgetKind,
 }
@@ -2449,7 +2469,7 @@ impl PyWidget {
     }
 }
 
-#[pyclass(name = "State", module = "sui", from_py_object)]
+#[pyclass(name = "State", module = "sinomo_ui", from_py_object)]
 #[derive(Clone)]
 pub struct PyState {
     inner: BindingState,
@@ -2510,7 +2530,7 @@ impl PyState {
     }
 }
 
-#[pyclass(name = "StateSubscription", module = "sui", skip_from_py_object)]
+#[pyclass(name = "StateSubscription", module = "sinomo_ui", skip_from_py_object)]
 pub struct PyStateSubscription {
     inner: Mutex<Option<BindingStateSubscription>>,
 }
@@ -2524,7 +2544,7 @@ impl PyStateSubscription {
     }
 }
 
-#[pyclass(name = "Theme", module = "sui", from_py_object)]
+#[pyclass(name = "Theme", module = "sinomo_ui", from_py_object)]
 #[derive(Clone)]
 pub struct PyTheme {
     inner: BindingTheme,
@@ -2624,7 +2644,7 @@ impl PyTheme {
     }
 }
 
-#[pyclass(name = "Window", module = "sui", from_py_object)]
+#[pyclass(name = "Window", module = "sinomo_ui", from_py_object)]
 #[derive(Clone)]
 pub struct PyWindow {
     title: String,
@@ -2635,7 +2655,7 @@ pub struct PyWindow {
     use_default_icon: bool,
 }
 
-#[pyclass(name = "RenderOptions", frozen, module = "sui", from_py_object)]
+#[pyclass(name = "RenderOptions", frozen, module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyRenderOptions {
     inner: BindingRenderOptions,
@@ -2778,7 +2798,7 @@ impl PyWindow {
     }
 }
 
-#[pyclass(name = "App", module = "sui")]
+#[pyclass(name = "App", module = "sinomo_ui")]
 pub struct PyApp {
     inner: BindingApp,
 }
@@ -2980,7 +3000,12 @@ impl Default for PyApp {
     }
 }
 
-#[pyclass(name = "WindowHandle", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(
+    name = "WindowHandle",
+    frozen,
+    module = "sinomo_ui",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyWindowHandle {
     inner: BindingWindowId,
@@ -3011,7 +3036,7 @@ impl From<BindingWindowId> for PyWindowHandle {
     }
 }
 
-#[pyclass(name = "UiHandle", module = "sui", skip_from_py_object)]
+#[pyclass(name = "UiHandle", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyUiHandle {
     inner: BindingUiHandle,
@@ -3042,12 +3067,22 @@ impl From<BindingUiHandle> for PyUiHandle {
     }
 }
 
-#[pyclass(name = "RunningApp", module = "sui", unsendable, skip_from_py_object)]
+#[pyclass(
+    name = "RunningApp",
+    module = "sinomo_ui",
+    unsendable,
+    skip_from_py_object
+)]
 pub struct PyRunningApp {
     inner: RefCell<BindingRuntime>,
 }
 
-#[pyclass(name = "FrameTiming", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(
+    name = "FrameTiming",
+    frozen,
+    module = "sinomo_ui",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyFrameTiming {
     #[pyo3(get)]
@@ -3065,7 +3100,12 @@ impl From<BindingFrameTiming> for PyFrameTiming {
     }
 }
 
-#[pyclass(name = "WidgetTiming", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(
+    name = "WidgetTiming",
+    frozen,
+    module = "sinomo_ui",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyWidgetTiming {
     #[pyo3(get)]
@@ -3092,7 +3132,12 @@ impl From<BindingWidgetTiming> for PyWidgetTiming {
     }
 }
 
-#[pyclass(name = "EventRouteTrace", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(
+    name = "EventRouteTrace",
+    frozen,
+    module = "sinomo_ui",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyEventRouteTrace {
     #[pyo3(get)]
@@ -3122,7 +3167,7 @@ impl From<BindingEventRouteTrace> for PyEventRouteTrace {
 #[pyclass(
     name = "ReactiveInvalidationTrace",
     frozen,
-    module = "sui",
+    module = "sinomo_ui",
     skip_from_py_object
 )]
 #[derive(Debug, Clone)]
@@ -3154,7 +3199,7 @@ impl From<BindingReactiveInvalidationTrace> for PyReactiveInvalidationTrace {
 #[pyclass(
     name = "CommandDispatchTrace",
     frozen,
-    module = "sui",
+    module = "sinomo_ui",
     skip_from_py_object
 )]
 #[derive(Debug, Clone)]
@@ -3195,7 +3240,7 @@ impl From<BindingCommandDispatchTrace> for PyCommandDispatchTrace {
 #[pyclass(
     name = "InvalidationTrace",
     frozen,
-    module = "sui",
+    module = "sinomo_ui",
     skip_from_py_object
 )]
 #[derive(Debug, Clone)]
@@ -3224,7 +3269,7 @@ impl From<BindingInvalidationTrace> for PyInvalidationTrace {
 #[pyclass(
     name = "WidgetRebuildTrace",
     frozen,
-    module = "sui",
+    module = "sinomo_ui",
     skip_from_py_object
 )]
 #[derive(Debug, Clone)]
@@ -3250,7 +3295,7 @@ impl From<BindingWidgetRebuildTrace> for PyWidgetRebuildTrace {
 #[pyclass(
     name = "InspectorSnapshot",
     frozen,
-    module = "sui",
+    module = "sinomo_ui",
     skip_from_py_object
 )]
 #[derive(Debug, Clone)]
@@ -3548,7 +3593,7 @@ impl PyRunningApp {
 #[pyclass(
     name = "RendererInteropCapabilities",
     frozen,
-    module = "sui",
+    module = "sinomo_ui",
     skip_from_py_object
 )]
 #[derive(Debug, Clone, Copy)]
@@ -3611,7 +3656,7 @@ impl PyRendererInteropCapabilities {
 #[pyclass(
     name = "ExternalBackendHandle",
     frozen,
-    module = "sui",
+    module = "sinomo_ui",
     skip_from_py_object
 )]
 #[derive(Debug, Clone, Copy)]
@@ -3639,7 +3684,12 @@ impl PyExternalBackendHandle {
     }
 }
 
-#[pyclass(name = "ExternalSync", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(
+    name = "ExternalSync",
+    frozen,
+    module = "sinomo_ui",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyExternalSync {
     inner: ExternalSync,
@@ -3694,7 +3744,7 @@ impl PyExternalSync {
 #[pyclass(
     name = "ExternalTextureDescriptor",
     frozen,
-    module = "sui",
+    module = "sinomo_ui",
     skip_from_py_object
 )]
 #[derive(Debug, Clone)]
@@ -4011,7 +4061,7 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
     }
 }
 
-#[pyclass(name = "UiTaskQueue", module = "sui", skip_from_py_object)]
+#[pyclass(name = "UiTaskQueue", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyUiTaskQueue {
     inner: UiTaskQueue,
@@ -4049,7 +4099,12 @@ impl Default for PyUiTaskQueue {
     }
 }
 
-#[pyclass(name = "SemanticNode", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(
+    name = "SemanticNode",
+    frozen,
+    module = "sinomo_ui",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PySemanticNode {
     inner: BindingSemanticNode,
@@ -4150,7 +4205,12 @@ impl From<BindingSemanticNode> for PySemanticNode {
     }
 }
 
-#[pyclass(name = "RenderSnapshot", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(
+    name = "RenderSnapshot",
+    frozen,
+    module = "sinomo_ui",
+    skip_from_py_object
+)]
 #[derive(Debug, Clone)]
 pub struct PyRenderSnapshot {
     #[pyo3(get)]
@@ -4374,7 +4434,8 @@ pub fn render_widget(
 }
 
 #[pymodule]
-fn sui(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_class::<PyPoint>()?;
     m.add_class::<PyModifiers>()?;
     m.add_class::<PyEvent>()?;
@@ -5058,7 +5119,7 @@ mod tests {
             let module = PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 class Meter:
     name = 'CPU meter'
@@ -5095,7 +5156,7 @@ class Meter:
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 class Probe:
     def __init__(self):
@@ -5174,7 +5235,7 @@ assert key.state == 'pressed'
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 class Composite:
     name = 'Composite'
@@ -5255,7 +5316,7 @@ def bump():
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 class Meter:
     def measure(self, constraints):
@@ -5303,7 +5364,7 @@ assert True in snapshot.semantics_busy, snapshot.semantics_busy
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 class HueWidget:
     def measure(self, constraints):
@@ -5337,7 +5398,7 @@ except ValueError:
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 class ImageWidget:
     def measure(self, constraints):
@@ -5374,7 +5435,7 @@ assert snapshot.registered_image_count >= 1
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 class TextWidget:
     def measure(self, constraints):
@@ -5409,7 +5470,7 @@ assert snapshot.command_count >= 1
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 class RichPaintWidget:
     def measure(self, constraints):
@@ -5476,7 +5537,7 @@ assert snapshot.registered_image_count >= 1
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 app = sui.App()
 image = app.rgba_image(
@@ -5489,7 +5550,7 @@ image = app.rgba_image(
 )
 
 app.window(sui.Window('Image').root(
-    sui.Image(image, semantic_name='Preview', fit='contain', size=sui.Size(32, 16))
+    sui.image(image, semantic_name='Preview', fit='contain', size=sui.Size(32, 16))
 ))
 
 assert app.image_resource_count() == 1
@@ -5513,11 +5574,11 @@ assert 'Preview' in snapshot.semantics_names, snapshot.semantics_names
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 app = sui.App()
 font = app.font_bytes(bytes([0, 1, 2, 3]))
-app.window(sui.Window('Font').root(sui.Label('Text')))
+app.window(sui.Window('Font').root(sui.label('Text')))
 
 assert font.id > 0
 assert app.font_resource_count() == 1
@@ -5542,7 +5603,7 @@ import os
 import struct
 import tempfile
 import zlib
-import sui
+import sinomo_ui as sui
 
 svg = b'<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"2\" height=\"2\"><rect width=\"2\" height=\"2\" fill=\"red\"/></svg>'
 
@@ -5609,7 +5670,7 @@ with tempfile.TemporaryDirectory() as directory:
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 caps = sui.RendererInteropCapabilities('wgpu', shared_texture=True)
 assert caps.backend == 'wgpu'
@@ -5668,7 +5729,7 @@ except ValueError:
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 texture = sui.ExternalTextureDescriptor.cpu_rgba8(
     sui.Size(2, 1),
@@ -5678,7 +5739,7 @@ texture = sui.ExternalTextureDescriptor.cpu_rgba8(
     ]),
     generation=1,
 )
-surface = sui.ExternalSurface(texture, desired_size=sui.Size(64, 32), name='Preview')
+surface = sui.external_surface(texture, desired_size=sui.Size(64, 32), name='Preview')
 snapshot = sui.render_widget(surface)
 
 assert snapshot.draw_image_count == 1
@@ -5699,13 +5760,13 @@ assert snapshot.semantics_count >= 1
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 state = sui.State('Ready')
 app = sui.App()
-root = sui.Column([
-    sui.Label(state),
-    sui.Button('Apply'),
+root = sui.column([
+    sui.label(state),
+    sui.button('Apply'),
 ], gap=8.0)
 app.window(sui.Window('Bindings').root(root))
 snapshot = app.render()
@@ -5731,7 +5792,7 @@ assert state.get() == 'Updated'
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 opacity = sui.State(0.5)
 count = sui.State(3.0)
@@ -5769,81 +5830,81 @@ pixel_canvas_state = sui.PixelCanvasState()
 pixel_canvas_state.brush_color = sui.Color.rgba(0.2, 0.5, 0.9, 1)
 pixel_canvas_state.brush_size = 2
 app = sui.App()
-root = sui.Column([
-    sui.Label('Ready'),
-    sui.Button('Apply'),
-    sui.Icon('search', semantic_name='Search icon'),
-    sui.IconButton('download', 'Download', selected=True, enabled=True, size=28, icon_size=16, description='Download file'),
-    sui.Surface(
-        sui.Label('Surface content'),
+root = sui.column([
+    sui.label('Ready'),
+    sui.button('Apply'),
+    sui.icon('search', semantic_name='Search icon'),
+    sui.icon_button('download', 'Download', selected=True, enabled=True, size=28, icon_size=16, description='Download file'),
+    sui.surface(
+        sui.label('Surface content'),
         role='panel',
         name='Main surface',
         elevation='small',
         padding=6.0,
     ),
-    sui.Toolbar([
-        sui.Button('Toolbar action'),
-        sui.Icon('search', semantic_name='Toolbar search'),
+    sui.toolbar([
+        sui.button('Toolbar action'),
+        sui.icon('search', semantic_name='Toolbar search'),
     ], name='Main toolbar', extent=32.0, padding=4.0, gap=4.0),
-    sui.Link('Documentation', 'https://example.invalid/docs'),
-    sui.Checkbox('Enabled', True),
-    sui.Switch('Airplane mode', False),
-    sui.RadioButton('Manual', True),
-    sui.RadioGroup('Priority', ['Low', 'Medium', 'High'], selected=1),
-    sui.SegmentedControl('View mode', [
+    sui.link('Documentation', 'https://example.invalid/docs'),
+    sui.checkbox('Enabled', True),
+    sui.switch('Airplane mode', False),
+    sui.radio_button('Manual', True),
+    sui.radio_group('Priority', ['Low', 'Medium', 'High'], selected=1),
+    sui.segmented_control('View mode', [
         sui.SegmentedControlItem('List', semantic_name='Show list view', description='Compact rows'),
         sui.SegmentedControlItem('Gallery'),
         sui.SegmentedControlItem('Map', semantic_name='Show map view', enabled=False),
     ], selected=1),
-    sui.Breadcrumb('Workspace path', ['D:', 'Workspace', 'sui'], current=2),
-    sui.ListView('Assets', ['Brush', 'Canvas', 'Export'], selected=1),
-    sui.Table('Build table', [
+    sui.breadcrumb('Workspace path', ['D:', 'Workspace', 'sui'], current=2),
+    sui.list_view('Assets', ['Brush', 'Canvas', 'Export'], selected=1),
+    sui.table('Build table', [
         sui.TableColumn('Task', width=160.0),
         sui.TableColumn('Owner', width=96.0, alignment='center'),
     ], [
         sui.TableRow(['Bindings', 'IX']),
         sui.TableRow(['Renderer', 'Core']),
     ], selected=0),
-    sui.SignalMeter('Input signal', True, description='Live audio input', bars=8, size=sui.Size(76, 16)),
-    sui.StatusBadge('Online', tone='success', icon='check', min_width=72.0),
-    sui.StatusBar([
+    sui.signal_meter('Input signal', True, description='Live audio input', bars=8, size=sui.Size(76, 16)),
+    sui.status_badge('Online', tone='success', icon='check', min_width=72.0),
+    sui.status_bar([
         sui.StatusBarSegment('Ln 12'),
         sui.StatusBarSegment('Writable', tone='success', min_width=84.0),
         sui.StatusBarSegment('UTF-8', tone='info', expand=True),
     ], name='Editor status', description='All systems nominal', height=24.0),
-    sui.DetailRow('Build', 'Debug profile with local bindings', max_value_lines=2),
-    sui.Slider('Opacity', opacity, min_value=0.0, max_value=1.0, step=0.25),
-    sui.NumberInput('Count', count, min_value=0.0, max_value=10.0, step=1.0, precision=0),
-    sui.Select('Mode', ['Draft', 'Final', 'Review'], selected=1, placeholder='Choose mode'),
-    sui.ProgressBar('Load progress', progress, min_value=0.0, max_value=1.0, show_value=True),
-    sui.BusyIndicator('Background work', label='Loading assets', size=20),
-    sui.ActionCard('Create project', 'Start from a template', icon='plus', tone='accent', enabled=card_enabled),
-    sui.BrushPreview('Current brush', brush, kind='ink', size=sui.Size(72, 36)),
-    sui.CommandGroup('Editing commands', [
-        sui.Button('Cut'),
-        sui.Button('Copy'),
+    sui.detail_row('Build', 'Debug profile with local bindings', max_value_lines=2),
+    sui.slider('Opacity', opacity, min_value=0.0, max_value=1.0, step=0.25),
+    sui.number_input('Count', count, min_value=0.0, max_value=10.0, step=1.0, precision=0),
+    sui.select('Mode', ['Draft', 'Final', 'Review'], selected=1, placeholder='Choose mode'),
+    sui.progress_bar('Load progress', progress, min_value=0.0, max_value=1.0, show_value=True),
+    sui.busy_indicator('Background work', label='Loading assets', size=20),
+    sui.action_card('Create project', 'Start from a template', icon='plus', tone='accent', enabled=card_enabled),
+    sui.brush_preview('Current brush', brush, kind='ink', size=sui.Size(72, 36)),
+    sui.command_group('Editing commands', [
+        sui.button('Cut'),
+        sui.button('Copy'),
     ], axis='horizontal', padding=4, gap=2, corner_radius=5),
-    sui.CoverageDots('Coverage', 3, 4, tone='success', max_dots=4, min_width=72),
-    sui.TextInput('Name', text, placeholder='Type a name'),
-    sui.PasswordInput('Password', password, placeholder='Enter a password'),
-    sui.DateTimeInput('Scheduled for', scheduled_for, placeholder='YYYY-MM-DD HH:MM'),
-    sui.TextArea('Notes', notes, placeholder='Type notes'),
-    sui.Dock(
-        sui.Label('Dock body'),
-        top=sui.Label('Dock top'),
+    sui.coverage_dots('Coverage', 3, 4, tone='success', max_dots=4, min_width=72),
+    sui.text_input('Name', text, placeholder='Type a name'),
+    sui.password_input('Password', password, placeholder='Enter a password'),
+    sui.date_time_input('Scheduled for', scheduled_for, placeholder='YYYY-MM-DD HH:MM'),
+    sui.text_area('Notes', notes, placeholder='Type notes'),
+    sui.dock(
+        sui.label('Dock body'),
+        top=sui.label('Dock top'),
         top_height=20,
-        bottom=sui.Label('Dock bottom'),
+        bottom=sui.label('Dock bottom'),
         bottom_height=20,
     ),
-    sui.FixedPaneSplit(
-        sui.Label('Fixed pane'),
-        sui.Separator('vertical'),
-        sui.Label('Flexible pane'),
+    sui.fixed_pane_split(
+        sui.label('Fixed pane'),
+        sui.separator('vertical'),
+        sui.label('Flexible pane'),
         fixed='first',
         fixed_extent=72,
     ),
-    sui.FramedField(
-        sui.TextInput('Framed editor'),
+    sui.framed_field(
+        sui.text_input('Framed editor'),
         name='Framed field',
         description='Compound editor frame',
         padding=4,
@@ -5852,40 +5913,40 @@ root = sui.Column([
         focused=field_focused,
         invalid=field_invalid,
     ),
-    sui.MeasuredBottomDock(
-        sui.Label('Measured body'),
-        sui.Label('Measured footer'),
+    sui.measured_bottom_dock(
+        sui.label('Measured body'),
+        sui.label('Measured footer'),
         fallback_size=sui.Size(240, 120),
     ),
-    sui.PlacementBadge(placement, icon='brush', tone='info', current=2, target=3, min_width=96),
-    sui.PropertyRow('Property', sui.TextInput('Property value'), stacked=True, gap=3),
-    sui.SectionLabel('Advanced', semantic_name='Advanced section'),
-    sui.SideSheet(
+    sui.placement_badge(placement, icon='brush', tone='info', current=2, target=3, min_width=96),
+    sui.property_row('Property', sui.text_input('Property value'), stacked=True, gap=3),
+    sui.section_label('Advanced', semantic_name='Advanced section'),
+    sui.side_sheet(
         'Inspector',
-        sui.Label('Sheet body'),
+        sui.label('Sheet body'),
         description='Selection details',
         open=sheet_shown,
         placement='right',
-        header_action=sui.Button('Close inspector'),
-        actions=[sui.Button('Save inspector')],
+        header_action=sui.button('Close inspector'),
+        actions=[sui.button('Save inspector')],
     ),
-    sui.BottomSheet(
+    sui.bottom_sheet(
         'Build output',
-        sui.Label('Bottom sheet body'),
+        sui.label('Bottom sheet body'),
         description='Latest build details',
         open=False,
         height=220,
     ),
-    sui.CommandPalette(
+    sui.command_palette(
         'Commands',
-        sui.TextInput('Command search'),
+        sui.text_input('Command search'),
         description='Search application commands',
         open=False,
         max_width=560,
     ),
-    sui.SplitView(
-        sui.Label('Split first'),
-        sui.Label('Split second'),
+    sui.split_view(
+        sui.label('Split first'),
+        sui.label('Split second'),
         axis='horizontal',
         name='Workspace split',
         ratio=split_ratio,
@@ -5893,83 +5954,83 @@ root = sui.Column([
         min_second=40,
         divider_thickness=4,
     ),
-    sui.SwitchView([
-        sui.Label('Inactive view'),
-        sui.Label('Active view'),
+    sui.switch_view([
+        sui.label('Inactive view'),
+        sui.label('Active view'),
     ], selected=selected_view),
-    sui.TrailingSlotRow(
-        sui.Label('Trailing body'),
-        sui.Button('More'),
+    sui.trailing_slot_row(
+        sui.label('Trailing body'),
+        sui.button('More'),
         trailing_width=56,
         trailing_height=24,
         gap=4,
     ),
-    sui.FloatingStack([
+    sui.floating_stack([
         sui.FloatingStackWindow(
             sui.Rect(4, 4, 120, 36),
-            sui.Label('Floating window'),
+            sui.label('Floating window'),
         ),
     ], name='Floating workspace'),
-    sui.VirtualScrollView([
-        sui.Label('Virtual row one'),
-        sui.Label('Virtual row two'),
+    sui.virtual_scroll_view([
+        sui.label('Virtual row one'),
+        sui.label('Virtual row two'),
     ], name='Virtual results', padding=4, gap=2),
-    sui.ReorderableList(
+    sui.reorderable_list(
         'Tasks',
-        [sui.Label('Task one'), sui.Label('Task two')],
+        [sui.label('Task one'), sui.label('Task two')],
         gap=4,
         drag_threshold=4,
         preview_label='Move task',
     ),
-    sui.ScrollView(
-        sui.RichText([
+    sui.scroll_view(
+        sui.rich_text([
             sui.TextSpan('Warm', color=sui.Color.rgba(0.9, 0.35, 0.2, 1.0)),
             sui.TextSpan(' cool', color=sui.Color.rgba(0.25, 0.55, 0.9, 1.0)),
         ], semantic_name='Rich summary'),
         name='Scrollable content',
     ),
-    sui.RichDocumentView(rich_document),
-    sui.ColorSwatch('Accent', sui.Color.rgba(0.25, 0.5, 0.75, 1.0), size=sui.Size(24, 24)),
-    sui.SimpleColorPicker(
+    sui.rich_document_view(rich_document),
+    sui.color_swatch('Accent', sui.Color.rgba(0.25, 0.5, 0.75, 1.0), size=sui.Size(24, 24)),
+    sui.simple_color_picker(
         'Compact accent',
         sui.Color.rgba(0.25, 0.5, 0.75, 1.0),
         mode='hsv',
         compact=True,
     ),
-    sui.DockWorkspace(dock_state, [
-        sui.DockPanelSpec(101, 'Inspector', sui.Label('Docked inspector')),
+    sui.dock_workspace(dock_state, [
+        sui.DockPanelSpec(101, 'Inspector', sui.label('Docked inspector')),
     ]),
-    sui.Grid([
-        sui.Label('Grid one'),
-        sui.Label('Grid two'),
+    sui.grid([
+        sui.label('Grid one'),
+        sui.label('Grid two'),
     ], columns=2, name='Responsive grid', gap=4),
-    sui.AspectRatio(sui.Label('Aspect content'), 16 / 9),
-    sui.SafeArea(sui.Label('Safe content')),
-    sui.LayoutTransition(sui.Label('Animated layout')),
-    sui.Presence(sui.Label('Presence content'), shown=True, collapse=True),
-    sui.AdaptiveView(
-        sui.Label('Compact branch'),
-        sui.Label('Medium branch'),
-        sui.Label('Expanded branch'),
+    sui.aspect_ratio(sui.label('Aspect content'), 16 / 9),
+    sui.safe_area(sui.label('Safe content')),
+    sui.layout_transition(sui.label('Animated layout')),
+    sui.presence(sui.label('Presence content'), shown=True, collapse=True),
+    sui.adaptive_view(
+        sui.label('Compact branch'),
+        sui.label('Medium branch'),
+        sui.label('Expanded branch'),
     ),
-    sui.ConstraintView([
-        sui.ConstraintCase(sui.Label('Wide query'), min_width=800),
-    ], sui.Label('Query fallback')),
-    sui.ResponsiveSidebar(
+    sui.constraint_view([
+        sui.ConstraintCase(sui.label('Wide query'), min_width=800),
+    ], sui.label('Query fallback')),
+    sui.responsive_sidebar(
         sidebar_state,
-        sui.Label('Navigation pane'),
-        sui.Label('Sidebar content'),
+        sui.label('Navigation pane'),
+        sui.label('Sidebar content'),
         name='Navigation',
     ),
-    sui.MasterDetail(
+    sui.master_detail(
         master_detail_state,
-        sui.Label('Master pane'),
-        sui.Label('Detail pane'),
+        sui.label('Master pane'),
+        sui.label('Detail pane'),
     ),
-    sui.OverlayHost(sui.Label('Overlay host content')),
-    sui.NotificationHost(notification_center),
-    sui.VirtualList('Virtual results', virtual_model, estimated_row_height=28),
-    sui.Canvas(
+    sui.overlay_host(sui.label('Overlay host content')),
+    sui.notification_host(notification_center),
+    sui.virtual_list('Virtual results', virtual_model, estimated_row_height=28),
+    sui.canvas(
         'Vector canvas',
         shapes=[
             sui.CanvasShape.rect(
@@ -5979,33 +6040,33 @@ root = sui.Column([
         ],
         desired_size=sui.Size(240, 160),
     ),
-    sui.CanvasRuler(
+    sui.canvas_ruler(
         'horizontal',
         'Canvas ruler',
         sui.Size(1024, 768),
         viewport_size=sui.Size(240, 160),
     ),
-    sui.DragDropHost(drag_scope, sui.Row([
-        sui.Draggable(
+    sui.drag_drop_host(drag_scope, sui.row([
+        sui.draggable(
             drag_scope,
-            sui.Button('Drag source'),
+            sui.button('Drag source'),
             'asset:brush',
             preview_label='Brush asset',
         ),
-        sui.DropTarget(
+        sui.drop_target(
             drag_scope,
-            sui.Button('Drop target'),
+            sui.button('Drop target'),
             effect='copy',
         ),
     ], gap=8)),
-    sui.FloatingWorkspace(floating_workspace_state, [
+    sui.floating_workspace(floating_workspace_state, [
         sui.FloatingView(
             'Inspector view',
             sui.Rect(12, 12, 240, 180),
-            sui.Label('Inspector content'),
+            sui.label('Inspector content'),
         ),
     ], name='Editor floating workspace'),
-    sui.PixelCanvas(
+    sui.pixel_canvas(
         pixel_canvas_state,
         'Pixel editor',
         16,
@@ -6013,14 +6074,14 @@ root = sui.Column([
         desired_size=sui.Size(240, 180),
         fit_on_first_layout=True,
     ),
-    sui.Separator('horizontal', name='Section divider', length=24.0),
-    sui.EmptyState(
+    sui.separator('horizontal', name='Section divider', length=24.0),
+    sui.empty_state(
         'No projects',
         'Create a project to get started.',
         name='Projects empty',
         detail='Templates are available',
         icon='folder',
-        action=sui.Button('New project'),
+        action=sui.button('New project'),
         transparent=True,
     ),
 ], gap=6.0)
@@ -6065,11 +6126,11 @@ assert True in snapshot.semantics_selected, snapshot.semantics_selected
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 app = sui.App()
 app.window(sui.Window('Rich text').root(
-    sui.RichText([
+    sui.rich_text([
         sui.TextSpan('Warm', color=sui.Color.rgba(0.9, 0.35, 0.2, 1.0), weight=700),
         sui.TextSpan(' cool', color=sui.Color.rgba(0.25, 0.55, 0.9, 1.0), style='italic'),
     ], semantic_name='Rich summary', min_width=80)
@@ -6095,11 +6156,11 @@ assert 'Warm cool' in snapshot.semantics_values, snapshot.semantics_values
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 app = sui.App()
 app.window(sui.Window('Scroll').root(
-    sui.ScrollView(sui.Label('Inside'), name='Scrollable content')
+    sui.scroll_view(sui.label('Inside'), name='Scrollable content')
 ))
 snapshot = app.render()
 
@@ -6122,7 +6183,7 @@ assert 'Inside' in snapshot.semantics_names, snapshot.semantics_names
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 class Probe:
     name = 'Probe widget'
@@ -6143,9 +6204,9 @@ class Probe:
 probe = Probe()
 app = sui.App()
 app.window(sui.Window('Custom').root(
-    sui.Column([
+    sui.column([
         sui.Widget(probe),
-        sui.Label('Tail'),
+        sui.label('Tail'),
     ], gap=4)
 ))
 
@@ -6178,7 +6239,7 @@ assert probe.events == ['down']
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 checked = sui.State(False)
 opacity = sui.State(0.25)
@@ -6188,12 +6249,12 @@ changes = []
 
 app = sui.App()
 app.window(sui.Window('Controls').root(
-    sui.Column([
-        sui.Checkbox('Enabled', checked, on_change=changes.append),
-        sui.Switch('Airplane mode', False),
-        sui.Slider('Opacity', opacity, min_value=0.0, max_value=1.0, step=0.05),
-        sui.Icon('search', semantic_name='Search icon'),
-        sui.IconButton('download', 'Download', selected=selected, enabled=enabled, description='Download file'),
+    sui.column([
+        sui.checkbox('Enabled', checked, on_change=changes.append),
+        sui.switch('Airplane mode', False),
+        sui.slider('Opacity', opacity, min_value=0.0, max_value=1.0, step=0.05),
+        sui.icon('search', semantic_name='Search icon'),
+        sui.icon_button('download', 'Download', selected=selected, enabled=enabled, description='Download file'),
     ], gap=8)
 ))
 
@@ -6243,15 +6304,15 @@ assert True in snapshot.semantics_disabled, snapshot.semantics_disabled
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 opened = []
 pressed = []
 app = sui.App()
 app.window(sui.Window('Callbacks').root(
-    sui.Column([
-        sui.Link('Documentation', 'https://example.invalid/docs', on_open=opened.append),
-        sui.ColorSwatch(
+    sui.column([
+        sui.link('Documentation', 'https://example.invalid/docs', on_open=opened.append),
+        sui.color_swatch(
             'Accent',
             sui.Color.rgba(0.25, 0.5, 0.75, 1.0),
             size=sui.Size(24, 24),
@@ -6307,13 +6368,13 @@ assert pressed == [True]
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 selected = sui.State(0)
 changes = []
 app = sui.App()
 app.window(sui.Window('Select').root(
-    sui.Select(
+    sui.select(
         'Mode',
         ['Draft', 'Final', 'Review'],
         selected=selected,
@@ -6361,13 +6422,13 @@ assert 'Final' in snapshot.semantics_values, snapshot.semantics_values
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 selected = sui.State(False)
 calls = []
 app = sui.App()
 app.window(sui.Window('Radio').root(
-    sui.RadioButton('Manual', selected, on_change=calls.append)
+    sui.radio_button('Manual', selected, on_change=calls.append)
 ))
 
 running = app.start()
@@ -6403,9 +6464,9 @@ assert calls == [True]
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
-segments = sui.render_widget(sui.SegmentedControl(
+segments = sui.render_widget(sui.segmented_control(
     'View',
     [
         sui.SegmentedControlItem('List'),
@@ -6418,7 +6479,7 @@ assert disabled['List'] is False, disabled
 assert disabled['Grid'] is True, disabled
 assert disabled['Map'] is True, disabled
 
-tools = sui.render_widget(sui.ToolPalette(
+tools = sui.render_widget(sui.tool_palette(
     'Tools',
     [sui.ToolPaletteItem('brush', 'Brush'), sui.ToolPaletteItem('eraser', 'Eraser', enabled=False)],
 ))
@@ -6440,13 +6501,13 @@ assert disabled['Eraser'] is True, disabled
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 selected = sui.State(0)
 changes = []
 app = sui.App()
 app.window(sui.Window('Radio').root(
-    sui.RadioGroup(
+    sui.radio_group(
         'Priority',
         ['Low', 'Medium', 'High'],
         selected=selected,
@@ -6490,13 +6551,13 @@ assert 'Medium' in snapshot.semantics_values, snapshot.semantics_values
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 selected = sui.State(0)
 changes = []
 app = sui.App()
 app.window(sui.Window('List').root(
-    sui.ListView(
+    sui.list_view(
         'Assets',
         ['Brush', 'Canvas', 'Export'],
         selected=selected,
@@ -6542,12 +6603,12 @@ assert True in snapshot.semantics_selected, snapshot.semantics_selected
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 active = sui.State(True)
 app = sui.App()
 app.window(sui.Window('Signal').root(
-    sui.SignalMeter(
+    sui.signal_meter(
         'Input signal',
         active,
         description='Live audio input',
@@ -6583,13 +6644,13 @@ assert 'idle' in snapshot.semantics_values, snapshot.semantics_values
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 text = sui.State('')
 changes = []
 app = sui.App()
 app.window(sui.Window('Text').root(
-    sui.TextInput('Name', text, placeholder='Type here', on_change=changes.append)
+    sui.text_input('Name', text, placeholder='Type here', on_change=changes.append)
 ))
 
 running = app.start()
@@ -6619,13 +6680,13 @@ assert changes == ['a']
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 password = sui.State('')
 password_changes = []
 password_app = sui.App()
 password_app.window(sui.Window('Password').root(
-    sui.PasswordInput(
+    sui.password_input(
         'Password',
         password,
         placeholder='Enter a password',
@@ -6652,7 +6713,7 @@ scheduled_for = sui.State('')
 datetime_changes = []
 datetime_app = sui.App()
 datetime_app.window(sui.Window('Date/time').root(
-    sui.DateTimeInput(
+    sui.date_time_input(
         'Scheduled for',
         scheduled_for,
         placeholder='YYYY-MM-DD HH:MM',
@@ -6688,17 +6749,17 @@ assert '2' in datetime_snapshot.semantics_values
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 changes = []
 app = sui.App()
 app.window(sui.Window('Reorder').root(
-    sui.ReorderableList(
+    sui.reorderable_list(
         'Tasks',
         [
-            sui.SizedBox(width=120, height=30),
-            sui.SizedBox(width=120, height=30),
-            sui.SizedBox(width=120, height=30),
+            sui.sized_box(width=120, height=30),
+            sui.sized_box(width=120, height=30),
+            sui.sized_box(width=120, height=30),
         ],
         gap=0,
         drag_threshold=4,
@@ -6739,13 +6800,13 @@ assert changes == [(0, 0, 2)], changes
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 text = sui.State('')
 changes = []
 app = sui.App()
 app.window(sui.Window('Text').root(
-    sui.TextArea('Notes', text, placeholder='Type notes', on_change=changes.append)
+    sui.text_area('Notes', text, placeholder='Type notes', on_change=changes.append)
 ))
 
 running = app.start()
@@ -6777,11 +6838,11 @@ assert changes == ['a']
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 state = sui.State('Ready')
 app = sui.App()
-app.window(sui.Window('Runtime').root(sui.Label(state)))
+app.window(sui.Window('Runtime').root(sui.label(state)))
 running = app.start()
 window = running.window_handle(0)
 
@@ -6819,10 +6880,12 @@ assert running.render().command_count > 0
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
-assert sui.button is sui.Button
-assert sui.virtual_scroll_view is sui.VirtualScrollView
+assert sui.button.__name__ == 'button'
+assert not hasattr(sui, 'Button')
+assert not hasattr(sui, 'VirtualScrollView')
+assert isinstance(sui.__version__, str)
 
 source = sui.State(2)
 doubled = source.select(lambda value: value * 2)
@@ -6969,10 +7032,10 @@ running.set_render_options(window, sui.RenderOptions.wide_gamut())
             PyModule::from_code(
                 py,
                 c"
-import sui
+import sinomo_ui as sui
 
 app = sui.App()
-app.window(sui.Window('Headless').root(sui.Label('No desktop')))
+app.window(sui.Window('Headless').root(sui.label('No desktop')))
 
 try:
     app.run()
@@ -6988,13 +7051,13 @@ except RuntimeError as error:
     }
 
     fn install_sui_module(py: Python<'_>) -> PyResult<()> {
-        let module = PyModule::new(py, "sui")?;
-        sui(&module)?;
+        let module = PyModule::new(py, "sinomo_ui")?;
+        _native(&module)?;
         let sys_modules = py
             .import("sys")?
             .getattr("modules")?
             .cast_into::<PyDict>()?;
-        sys_modules.set_item("sui", module)?;
+        sys_modules.set_item("sinomo_ui", module)?;
         Ok(())
     }
 }

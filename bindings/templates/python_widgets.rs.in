@@ -1,4 +1,4 @@
-#[pyclass(name = "RichDocumentUpdate", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(name = "RichDocumentUpdate", frozen, module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRichDocumentUpdate {
     inner: BindingRichDocumentUpdate,
@@ -37,7 +37,7 @@ impl PyRichDocumentUpdate {
     }
 }
 
-#[pyclass(name = "RichDocument", module = "sui", from_py_object)]
+#[pyclass(name = "RichDocument", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRichDocument {
     inner: BindingRichDocument,
@@ -127,7 +127,7 @@ impl PyRichDocument {
     }
 }
 
-#[pyclass(name = "TextSpan", module = "sui", skip_from_py_object)]
+#[pyclass(name = "TextSpan", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTextSpan {
     inner: BindingTextSpan,
@@ -165,7 +165,7 @@ impl PyTextSpan {
     }
 }
 
-#[pyclass(name = "StatusBarSegment", module = "sui", skip_from_py_object)]
+#[pyclass(name = "StatusBarSegment", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyStatusBarSegment {
     inner: BindingStatusBarSegment,
@@ -196,7 +196,7 @@ impl PyStatusBarSegment {
     }
 }
 
-#[pyclass(name = "SegmentedControlItem", module = "sui", skip_from_py_object)]
+#[pyclass(name = "SegmentedControlItem", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PySegmentedControlItem {
     inner: BindingSegmentedControlItem,
@@ -222,7 +222,7 @@ impl PySegmentedControlItem {
     }
 }
 
-#[pyclass(name = "TableColumn", module = "sui", skip_from_py_object)]
+#[pyclass(name = "TableColumn", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTableColumn {
     inner: BindingTableColumn,
@@ -255,7 +255,7 @@ impl PyTableColumn {
     }
 }
 
-#[pyclass(name = "TableRow", module = "sui", skip_from_py_object)]
+#[pyclass(name = "TableRow", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTableRow {
     inner: BindingTableRow,
@@ -275,7 +275,7 @@ impl PyTableRow {
     }
 }
 
-#[pyclass(name = "TreeItem", module = "sui", skip_from_py_object)]
+#[pyclass(name = "TreeItem", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTreeItem {
     inner: BindingTreeItem,
@@ -303,7 +303,7 @@ impl PyTreeItem {
     }
 }
 
-#[pyclass(name = "LayerListItem", module = "sui", skip_from_py_object)]
+#[pyclass(name = "LayerListItem", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyLayerListItem {
     inner: BindingLayerListItem,
@@ -330,7 +330,7 @@ impl PyLayerListItem {
     }
 }
 
-#[pyclass(name = "MenuItem", module = "sui", skip_from_py_object)]
+#[pyclass(name = "MenuItem", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyMenuItem {
     inner: BindingMenuItem,
@@ -369,7 +369,7 @@ impl PyMenuItem {
     }
 }
 
-#[pyclass(name = "ToolPaletteItem", module = "sui", skip_from_py_object)]
+#[pyclass(name = "ToolPaletteItem", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyToolPaletteItem {
     inner: BindingToolPaletteItem,
@@ -390,7 +390,7 @@ impl PyToolPaletteItem {
     }
 }
 
-#[pyclass(name = "ColorPaletteSwatch", module = "sui", skip_from_py_object)]
+#[pyclass(name = "ColorPaletteSwatch", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyColorPaletteSwatch {
     inner: BindingColorPaletteSwatch,
@@ -420,7 +420,7 @@ impl PyColorPaletteSwatch {
     }
 }
 
-#[pyclass(name = "BrushPreviewSpec", module = "sui", skip_from_py_object)]
+#[pyclass(name = "BrushPreviewSpec", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyBrushPreviewSpec {
     inner: BindingBrushPreviewSpec,
@@ -450,7 +450,7 @@ impl PyBrushPreviewSpec {
     }
 }
 
-#[pyclass(name = "FloatingStackWindow", module = "sui", skip_from_py_object)]
+#[pyclass(name = "FloatingStackWindow", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyFloatingStackWindow {
     inner: BindingFloatingStackWindow,
@@ -470,7 +470,7 @@ impl PyFloatingStackWindow {
     }
 }
 
-#[pyclass(name = "FloatingView", module = "sui", skip_from_py_object)]
+#[pyclass(name = "FloatingView", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyFloatingView {
     inner: BindingFloatingView,
@@ -521,7 +521,7 @@ impl PyFloatingView {
     }
 }
 
-#[pyclass(name = "FloatingViewSnapshot", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(name = "FloatingViewSnapshot", frozen, module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyFloatingViewSnapshot {
     inner: BindingFloatingViewSnapshot,
@@ -560,7 +560,7 @@ impl PyFloatingViewSnapshot {
     }
 }
 
-#[pyclass(name = "FloatingWorkspaceState", module = "sui", from_py_object)]
+#[pyclass(name = "FloatingWorkspaceState", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyFloatingWorkspaceState {
     inner: BindingFloatingWorkspaceState,
@@ -608,7 +608,7 @@ fn extract_floating_views(views: &Bound<'_, PyAny>) -> PyResult<Vec<BindingFloat
         .collect())
 }
 
-#[pyclass(name = "DockNode", module = "sui", skip_from_py_object)]
+#[pyclass(name = "DockNode", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyDockNode {
     inner: BindingDockNode,
@@ -649,7 +649,7 @@ impl PyDockNode {
     }
 }
 
-#[pyclass(name = "DockFloatingGroup", module = "sui", skip_from_py_object)]
+#[pyclass(name = "DockFloatingGroup", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyDockFloatingGroup {
     inner: BindingDockFloatingGroup,
@@ -685,7 +685,7 @@ impl PyDockFloatingGroup {
     }
 }
 
-#[pyclass(name = "DockLayout", module = "sui", skip_from_py_object)]
+#[pyclass(name = "DockLayout", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyDockLayout {
     inner: BindingDockLayout,
@@ -735,7 +735,7 @@ impl PyDockLayout {
     }
 }
 
-#[pyclass(name = "DockState", module = "sui", from_py_object)]
+#[pyclass(name = "DockState", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyDockState {
     inner: BindingDockState,
@@ -803,7 +803,7 @@ impl PyDockState {
     }
 }
 
-#[pyclass(name = "DockPanelSpec", module = "sui", skip_from_py_object)]
+#[pyclass(name = "DockPanelSpec", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyDockPanelSpec {
     inner: BindingDockPanel,
@@ -829,7 +829,7 @@ impl PyDockPanelSpec {
     }
 }
 
-#[pyclass(name = "ConstraintCase", module = "sui", skip_from_py_object)]
+#[pyclass(name = "ConstraintCase", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyConstraintCase {
     inner: BindingConstraintCase,
@@ -868,7 +868,7 @@ impl PyConstraintCase {
     }
 }
 
-#[pyclass(name = "ResponsiveSidebarState", module = "sui", from_py_object)]
+#[pyclass(name = "ResponsiveSidebarState", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyResponsiveSidebarState {
     inner: BindingResponsiveSidebarState,
@@ -915,7 +915,7 @@ impl PyResponsiveSidebarState {
     }
 }
 
-#[pyclass(name = "MasterDetailState", module = "sui", from_py_object)]
+#[pyclass(name = "MasterDetailState", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyMasterDetailState {
     inner: BindingMasterDetailState,
@@ -949,7 +949,7 @@ impl PyMasterDetailState {
     }
 }
 
-#[pyclass(name = "NotificationCenter", module = "sui", from_py_object)]
+#[pyclass(name = "NotificationCenter", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyNotificationCenter {
     inner: BindingNotificationCenter,
@@ -991,7 +991,7 @@ impl PyNotificationCenter {
     }
 }
 
-#[pyclass(name = "VirtualListItem", module = "sui", skip_from_py_object)]
+#[pyclass(name = "VirtualListItem", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyVirtualListItem {
     inner: BindingVirtualListItem,
@@ -1017,7 +1017,7 @@ impl PyVirtualListItem {
     }
 }
 
-#[pyclass(name = "VirtualListModel", module = "sui", from_py_object)]
+#[pyclass(name = "VirtualListModel", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyVirtualListModel {
     inner: BindingVirtualListModel,
@@ -1079,7 +1079,7 @@ impl PyVirtualListModel {
     }
 }
 
-#[pyclass(name = "CanvasViewport", module = "sui", from_py_object)]
+#[pyclass(name = "CanvasViewport", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyCanvasViewport {
     inner: BindingCanvasViewport,
@@ -1116,7 +1116,7 @@ impl PyCanvasViewport {
     }
 }
 
-#[pyclass(name = "CanvasStroke", module = "sui", from_py_object)]
+#[pyclass(name = "CanvasStroke", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyCanvasStroke {
     inner: BindingCanvasStroke,
@@ -1143,7 +1143,7 @@ impl PyCanvasStroke {
     }
 }
 
-#[pyclass(name = "CanvasShape", module = "sui", skip_from_py_object)]
+#[pyclass(name = "CanvasShape", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyCanvasShape {
     inner: BindingCanvasShape,
@@ -1212,7 +1212,7 @@ impl PyCanvasShape {
     }
 }
 
-#[pyclass(name = "PixelCanvasExport", frozen, module = "sui", skip_from_py_object)]
+#[pyclass(name = "PixelCanvasExport", frozen, module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyPixelCanvasExport {
     inner: BindingPixelCanvasExport,
@@ -1246,7 +1246,7 @@ impl PyPixelCanvasExport {
     }
 }
 
-#[pyclass(name = "PixelCanvasState", module = "sui", from_py_object)]
+#[pyclass(name = "PixelCanvasState", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyPixelCanvasState {
     inner: BindingPixelCanvasState,
@@ -1389,7 +1389,7 @@ impl PyPixelCanvasState {
     }
 }
 
-#[pyclass(name = "DragScope", module = "sui", from_py_object)]
+#[pyclass(name = "DragScope", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Default)]
 pub struct PyDragScope {
     inner: BindingDragScope,
@@ -1466,14 +1466,14 @@ fn optional_uniform_insets(value: Option<f32>) -> Option<sui_crate::Insets> {
     })
 }
 
-#[pyfunction(name = "Label")]
+#[pyfunction(name = "label")]
 pub fn py_label(value: &Bound<'_, PyAny>) -> PyResult<PyWidget> {
     Ok(PyWidget::from_binding(BindingWidget::label(
         binding_text_from_py(value)?,
     )))
 }
 
-#[pyfunction(name = "Button")]
+#[pyfunction(name = "button")]
 #[pyo3(signature = (label, on_press=None))]
 pub fn py_button(label: &Bound<'_, PyAny>, on_press: Option<Py<PyAny>>) -> PyResult<PyWidget> {
     let action = on_press.map(|callback| {
@@ -1492,7 +1492,7 @@ pub fn py_button(label: &Bound<'_, PyAny>, on_press: Option<Py<PyAny>>) -> PyRes
     )))
 }
 
-#[pyfunction(name = "Icon")]
+#[pyfunction(name = "icon")]
 #[pyo3(signature = (glyph, semantic_name=None, size=None, color=None))]
 pub fn py_icon(
     glyph: &str,
@@ -1508,7 +1508,7 @@ pub fn py_icon(
     )))
 }
 
-#[pyfunction(name = "IconButton")]
+#[pyfunction(name = "icon_button")]
 #[pyo3(signature = (glyph, label, selected=None, enabled=None, size=None, icon_size=None, description=None, on_press=None))]
 pub fn py_icon_button(
     glyph: &str,
@@ -1550,7 +1550,7 @@ pub fn py_icon_button(
     )))
 }
 
-#[pyfunction(name = "Link")]
+#[pyfunction(name = "link")]
 #[pyo3(signature = (label, url, semantic_name=None, enabled=None, on_open=None))]
 pub fn py_link(
     label: &Bound<'_, PyAny>,
@@ -1582,7 +1582,7 @@ pub fn py_link(
     )))
 }
 
-#[pyfunction(name = "Checkbox")]
+#[pyfunction(name = "checkbox")]
 #[pyo3(signature = (label, checked=None, on_change=None))]
 pub fn py_checkbox(
     label: &Bound<'_, PyAny>,
@@ -1610,7 +1610,7 @@ pub fn py_checkbox(
     )))
 }
 
-#[pyfunction(name = "Switch")]
+#[pyfunction(name = "switch")]
 #[pyo3(signature = (label, checked=None, on_change=None))]
 pub fn py_switch(
     label: &Bound<'_, PyAny>,
@@ -1638,7 +1638,7 @@ pub fn py_switch(
     )))
 }
 
-#[pyfunction(name = "RadioButton")]
+#[pyfunction(name = "radio_button")]
 #[pyo3(signature = (label, checked=None, on_change=None))]
 pub fn py_radio_button(
     label: &Bound<'_, PyAny>,
@@ -1667,7 +1667,7 @@ pub fn py_radio_button(
     )))
 }
 
-#[pyfunction(name = "RadioGroup")]
+#[pyfunction(name = "radio_group")]
 #[pyo3(signature = (name, options, selected=None, on_change=None))]
 pub fn py_radio_group(
     name: &Bound<'_, PyAny>,
@@ -1694,7 +1694,7 @@ pub fn py_radio_group(
     )))
 }
 
-#[pyfunction(name = "SegmentedControl")]
+#[pyfunction(name = "segmented_control")]
 #[pyo3(signature = (name, items, selected=None, on_change=None))]
 pub fn py_segmented_control(
     name: &Bound<'_, PyAny>,
@@ -1746,7 +1746,7 @@ fn py_breadcrumb_widget(
     )))
 }
 
-#[pyfunction(name = "Breadcrumb")]
+#[pyfunction(name = "breadcrumb")]
 #[pyo3(signature = (name, items, current=None, on_activate=None))]
 pub fn py_breadcrumb(
     name: &Bound<'_, PyAny>,
@@ -1757,7 +1757,7 @@ pub fn py_breadcrumb(
     py_breadcrumb_widget(name, items, current, on_activate)
 }
 
-#[pyfunction(name = "PathBar")]
+#[pyfunction(name = "path_bar")]
 #[pyo3(signature = (name, items, current=None, on_activate=None))]
 pub fn py_path_bar(
     name: &Bound<'_, PyAny>,
@@ -1768,7 +1768,7 @@ pub fn py_path_bar(
     py_breadcrumb_widget(name, items, current, on_activate)
 }
 
-#[pyfunction(name = "ListView")]
+#[pyfunction(name = "list_view")]
 #[pyo3(signature = (name, items, selected=None, on_change=None))]
 pub fn py_list_view(
     name: &Bound<'_, PyAny>,
@@ -1822,7 +1822,7 @@ fn py_table_widget(
     )))
 }
 
-#[pyfunction(name = "Table")]
+#[pyfunction(name = "table")]
 #[pyo3(signature = (name, columns, rows, selected=None, on_change=None))]
 pub fn py_table(
     name: &Bound<'_, PyAny>,
@@ -1834,7 +1834,7 @@ pub fn py_table(
     py_table_widget(name, columns, rows, selected, on_change)
 }
 
-#[pyfunction(name = "DataGrid")]
+#[pyfunction(name = "data_grid")]
 #[pyo3(signature = (name, columns, rows, selected=None, on_change=None))]
 pub fn py_data_grid(
     name: &Bound<'_, PyAny>,
@@ -1846,7 +1846,7 @@ pub fn py_data_grid(
     py_table_widget(name, columns, rows, selected, on_change)
 }
 
-#[pyfunction(name = "Slider")]
+#[pyfunction(name = "slider")]
 #[pyo3(signature = (name, value=None, min_value=0.0, max_value=1.0, step=0.01, on_change=None))]
 pub fn py_slider(
     name: &Bound<'_, PyAny>,
@@ -1880,7 +1880,7 @@ pub fn py_slider(
     )))
 }
 
-#[pyfunction(name = "NumberInput")]
+#[pyfunction(name = "number_input")]
 #[pyo3(signature = (name, value=None, min_value=None, max_value=None, step=1.0, precision=2, on_change=None))]
 pub fn py_number_input(
     name: &Bound<'_, PyAny>,
@@ -1916,7 +1916,7 @@ pub fn py_number_input(
     )))
 }
 
-#[pyfunction(name = "Select")]
+#[pyfunction(name = "select")]
 #[pyo3(signature = (name, options, selected=None, placeholder=None, on_change=None))]
 pub fn py_select(
     name: &Bound<'_, PyAny>,
@@ -1945,7 +1945,7 @@ pub fn py_select(
     )))
 }
 
-#[pyfunction(name = "ProgressBar")]
+#[pyfunction(name = "progress_bar")]
 #[pyo3(signature = (name, value=None, min_value=0.0, max_value=1.0, show_value=false))]
 pub fn py_progress_bar(
     name: &Bound<'_, PyAny>,
@@ -1967,7 +1967,7 @@ pub fn py_progress_bar(
     )))
 }
 
-#[pyfunction(name = "SignalMeter")]
+#[pyfunction(name = "signal_meter")]
 #[pyo3(signature = (name, active=None, description=None, bars=12, size=None))]
 pub fn py_signal_meter(
     name: &Bound<'_, PyAny>,
@@ -1989,7 +1989,7 @@ pub fn py_signal_meter(
     )))
 }
 
-#[pyfunction(name = "StatusBadge")]
+#[pyfunction(name = "status_badge")]
 #[pyo3(signature = (label, tone="neutral", icon=None, min_width=None))]
 pub fn py_status_badge(
     label: &Bound<'_, PyAny>,
@@ -2005,7 +2005,7 @@ pub fn py_status_badge(
     )))
 }
 
-#[pyfunction(name = "StatusBar")]
+#[pyfunction(name = "status_bar")]
 #[pyo3(signature = (segments, name=None, description=None, height=None))]
 pub fn py_status_bar(
     segments: &Bound<'_, PyAny>,
@@ -2021,7 +2021,7 @@ pub fn py_status_bar(
     )))
 }
 
-#[pyfunction(name = "DetailRow")]
+#[pyfunction(name = "detail_row")]
 #[pyo3(signature = (label, value, max_value_lines=None))]
 pub fn py_detail_row(
     label: &Bound<'_, PyAny>,
@@ -2035,7 +2035,7 @@ pub fn py_detail_row(
     )))
 }
 
-#[pyfunction(name = "BusyIndicator")]
+#[pyfunction(name = "busy_indicator")]
 #[pyo3(signature = (name, label=None, size=20.0))]
 pub fn py_busy_indicator(
     name: &Bound<'_, PyAny>,
@@ -2050,7 +2050,7 @@ pub fn py_busy_indicator(
     )))
 }
 
-#[pyfunction(name = "ActionCard")]
+#[pyfunction(name = "action_card")]
 #[pyo3(signature = (title, description, icon=None, tone="accent", enabled=None, on_press=None))]
 pub fn py_action_card(
     title: String,
@@ -2084,7 +2084,7 @@ pub fn py_action_card(
     )))
 }
 
-#[pyfunction(name = "BrushPreview")]
+#[pyfunction(name = "brush_preview")]
 #[pyo3(signature = (name, spec, kind="brush", size=None))]
 pub fn py_brush_preview(
     name: String,
@@ -2100,7 +2100,7 @@ pub fn py_brush_preview(
     )))
 }
 
-#[pyfunction(name = "CommandGroup")]
+#[pyfunction(name = "command_group")]
 #[pyo3(signature = (name, children, axis="vertical", padding=None, gap=None, corner_radius=None, background=None, border=None))]
 pub fn py_command_group(
     name: String,
@@ -2124,7 +2124,7 @@ pub fn py_command_group(
     )))
 }
 
-#[pyfunction(name = "CoverageDots")]
+#[pyfunction(name = "coverage_dots")]
 #[pyo3(signature = (name, current, target, tone="neutral", max_dots=4, show_label=true, min_width=None))]
 pub fn py_coverage_dots(
     name: String,
@@ -2146,7 +2146,7 @@ pub fn py_coverage_dots(
     )))
 }
 
-#[pyfunction(name = "Dock")]
+#[pyfunction(name = "dock")]
 #[pyo3(signature = (body, top=None, top_height=0.0, bottom=None, bottom_height=0.0, fallback_width=320.0, fallback_body_height=240.0))]
 pub fn py_dock(
     body: PyRef<'_, PyWidget>,
@@ -2176,7 +2176,7 @@ pub fn py_dock(
     )))
 }
 
-#[pyfunction(name = "FixedPaneSplit")]
+#[pyfunction(name = "fixed_pane_split")]
 #[pyo3(signature = (first, divider, second, axis="horizontal", fixed="first", fixed_extent=0.0, divider_extent=1.0, fallback_flexible_extent=320.0))]
 pub fn py_fixed_pane_split(
     first: PyRef<'_, PyWidget>,
@@ -2209,7 +2209,7 @@ pub fn py_fixed_pane_split(
     )))
 }
 
-#[pyfunction(name = "FramedField")]
+#[pyfunction(name = "framed_field")]
 #[pyo3(signature = (child, name=None, description=None, padding=None, min_height=None, fill_width=false, focused=None, invalid=None))]
 pub fn py_framed_field(
     child: PyRef<'_, PyWidget>,
@@ -2241,7 +2241,7 @@ pub fn py_framed_field(
     )))
 }
 
-#[pyfunction(name = "MeasuredBottomDock")]
+#[pyfunction(name = "measured_bottom_dock")]
 #[pyo3(signature = (body, bottom, fallback_size=None))]
 pub fn py_measured_bottom_dock(
     body: PyRef<'_, PyWidget>,
@@ -2257,7 +2257,7 @@ pub fn py_measured_bottom_dock(
     )))
 }
 
-#[pyfunction(name = "PlacementBadge")]
+#[pyfunction(name = "placement_badge")]
 #[pyo3(signature = (label, icon=None, tone="neutral", current=None, target=None, min_width=None))]
 pub fn py_placement_badge(
     label: &Bound<'_, PyAny>,
@@ -2277,7 +2277,7 @@ pub fn py_placement_badge(
     )))
 }
 
-#[pyfunction(name = "PropertyRow")]
+#[pyfunction(name = "property_row")]
 #[pyo3(signature = (label, control, stacked=true, label_width=None, control_width=None, gap=None))]
 pub fn py_property_row(
     label: String,
@@ -2297,7 +2297,7 @@ pub fn py_property_row(
     )))
 }
 
-#[pyfunction(name = "SectionLabel")]
+#[pyfunction(name = "section_label")]
 #[pyo3(signature = (label, semantic_name=None, color=None))]
 pub fn py_section_label(
     label: String,
@@ -2311,7 +2311,7 @@ pub fn py_section_label(
     )))
 }
 
-#[pyfunction(name = "SideSheet")]
+#[pyfunction(name = "side_sheet")]
 #[pyo3(signature = (title, body, description=None, open=None, modal=true, dismiss_on_scrim=true, placement="right", width=None, header_action=None, actions=None, on_dismiss=None))]
 pub fn py_side_sheet(
     title: String,
@@ -2370,7 +2370,7 @@ pub fn py_side_sheet(
     )))
 }
 
-#[pyfunction(name = "BottomSheet")]
+#[pyfunction(name = "bottom_sheet")]
 #[pyo3(signature = (
     title, body, description=None, open=None, modal=true, dismiss_on_scrim=true,
     height=None, header_action=None, actions=None, on_dismiss=None
@@ -2422,7 +2422,7 @@ pub fn py_bottom_sheet(
     )))
 }
 
-#[pyfunction(name = "SplitView")]
+#[pyfunction(name = "split_view")]
 #[pyo3(signature = (first, second, axis="horizontal", name=None, ratio=None, min_first=120.0, min_second=120.0, divider_thickness=None, on_change=None))]
 pub fn py_split_view(
     first: PyRef<'_, PyWidget>,
@@ -2462,7 +2462,7 @@ pub fn py_split_view(
     )))
 }
 
-#[pyfunction(name = "SwitchView")]
+#[pyfunction(name = "switch_view")]
 #[pyo3(signature = (children, selected=None))]
 pub fn py_switch_view(
     children: &Bound<'_, PyAny>,
@@ -2478,7 +2478,7 @@ pub fn py_switch_view(
     )))
 }
 
-#[pyfunction(name = "TrailingSlotRow")]
+#[pyfunction(name = "trailing_slot_row")]
 #[pyo3(signature = (body, trailing, trailing_width=0.0, trailing_height=0.0, gap=0.0))]
 pub fn py_trailing_slot_row(
     body: PyRef<'_, PyWidget>,
@@ -2496,7 +2496,7 @@ pub fn py_trailing_slot_row(
     )))
 }
 
-#[pyfunction(name = "FloatingStack")]
+#[pyfunction(name = "floating_stack")]
 #[pyo3(signature = (windows, name=None))]
 pub fn py_floating_stack(
     windows: &Bound<'_, PyAny>,
@@ -2512,7 +2512,7 @@ pub fn py_floating_stack(
     )))
 }
 
-#[pyfunction(name = "FloatingWorkspace")]
+#[pyfunction(name = "floating_workspace")]
 #[pyo3(signature = (state, views, name=None))]
 pub fn py_floating_workspace(
     state: PyRef<'_, PyFloatingWorkspaceState>,
@@ -2526,7 +2526,7 @@ pub fn py_floating_workspace(
     )))
 }
 
-#[pyfunction(name = "DockWorkspace")]
+#[pyfunction(name = "dock_workspace")]
 #[pyo3(signature = (state, panels, name="Dock workspace"))]
 pub fn py_dock_workspace(
     state: PyRef<'_, PyDockState>,
@@ -2542,7 +2542,7 @@ pub fn py_dock_workspace(
     .map_err(PyValueError::new_err)
 }
 
-#[pyfunction(name = "VirtualScrollView")]
+#[pyfunction(name = "virtual_scroll_view")]
 #[pyo3(signature = (children, name=None, padding=None, gap=0.0))]
 pub fn py_virtual_scroll_view(
     children: &Bound<'_, PyAny>,
@@ -2558,7 +2558,7 @@ pub fn py_virtual_scroll_view(
     )))
 }
 
-#[pyfunction(name = "ReorderableList")]
+#[pyfunction(name = "reorderable_list")]
 #[pyo3(signature = (name, children, gap=8.0, drag_threshold=4.0, preview_label=None, on_reorder=None))]
 pub fn py_reorderable_list(
     name: String,
@@ -2588,7 +2588,7 @@ pub fn py_reorderable_list(
     )))
 }
 
-#[pyfunction(name = "TextInput")]
+#[pyfunction(name = "text_input")]
 #[pyo3(signature = (name, value=None, placeholder=None, on_change=None))]
 pub fn py_text_input(
     name: &Bound<'_, PyAny>,
@@ -2618,7 +2618,7 @@ pub fn py_text_input(
     )))
 }
 
-#[pyfunction(name = "PasswordInput")]
+#[pyfunction(name = "password_input")]
 #[pyo3(signature = (name, value=None, placeholder=None, on_change=None))]
 pub fn py_password_input(
     name: &Bound<'_, PyAny>,
@@ -2648,7 +2648,7 @@ pub fn py_password_input(
     )))
 }
 
-#[pyfunction(name = "DateTimeInput")]
+#[pyfunction(name = "date_time_input")]
 #[pyo3(signature = (name, value=None, placeholder=None, on_change=None))]
 pub fn py_datetime_input(
     name: &Bound<'_, PyAny>,
@@ -2678,7 +2678,7 @@ pub fn py_datetime_input(
     )))
 }
 
-#[pyfunction(name = "TextArea")]
+#[pyfunction(name = "text_area")]
 #[pyo3(signature = (name, value=None, placeholder=None, on_change=None))]
 pub fn py_text_area(
     name: &Bound<'_, PyAny>,
@@ -2708,7 +2708,7 @@ pub fn py_text_area(
     )))
 }
 
-#[pyfunction(name = "RichText")]
+#[pyfunction(name = "rich_text")]
 #[pyo3(signature = (spans, semantic_name=None, min_width=0.0, min_height=0.0))]
 pub fn py_rich_text(
     spans: &Bound<'_, PyAny>,
@@ -2724,7 +2724,7 @@ pub fn py_rich_text(
     )))
 }
 
-#[pyfunction(name = "RichDocumentView")]
+#[pyfunction(name = "rich_document_view")]
 #[pyo3(signature = (document, on_link=None, on_image=None, on_attachment=None))]
 pub fn py_rich_document_view(
     document: PyRef<'_, PyRichDocument>,
@@ -2760,7 +2760,7 @@ pub fn py_rich_document_view(
     )))
 }
 
-#[pyfunction(name = "Image")]
+#[pyfunction(name = "image")]
 #[pyo3(signature = (image, semantic_name=None, fit="contain", size=None))]
 pub fn py_image(
     image: PyRef<'_, PyImageHandle>,
@@ -2776,7 +2776,7 @@ pub fn py_image(
     )))
 }
 
-#[pyfunction(name = "ColorSwatch")]
+#[pyfunction(name = "color_swatch")]
 #[pyo3(signature = (name, color, size=None, read_only=false, on_press=None))]
 pub fn py_color_swatch(
     name: &str,
@@ -2804,7 +2804,7 @@ pub fn py_color_swatch(
     )))
 }
 
-#[pyfunction(name = "Separator")]
+#[pyfunction(name = "separator")]
 #[pyo3(signature = (axis="horizontal", name=None, inset=0.0, thickness=None, length=None))]
 pub fn py_separator(
     axis: &str,
@@ -2822,7 +2822,7 @@ pub fn py_separator(
     )))
 }
 
-#[pyfunction(name = "EmptyState")]
+#[pyfunction(name = "empty_state")]
 #[pyo3(signature = (title, description, name=None, detail=None, icon=None, action=None, background=None, transparent=false))]
 pub fn py_empty_state(
     title: &str,
@@ -2849,7 +2849,7 @@ pub fn py_empty_state(
     )))
 }
 
-#[pyfunction(name = "Surface")]
+#[pyfunction(name = "surface")]
 #[pyo3(signature = (child, role="panel", name=None, border=None, elevation=None, corner_radius=None, padding=None, fill_width=false, fill_height=false))]
 pub fn py_surface(
     child: PyRef<'_, PyWidget>,
@@ -2875,7 +2875,7 @@ pub fn py_surface(
     )))
 }
 
-#[pyfunction(name = "Toolbar")]
+#[pyfunction(name = "toolbar")]
 #[pyo3(signature = (children, axis="horizontal", name=None, extent=None, padding=None, gap=None, background=None, divider=true))]
 pub fn py_toolbar(
     children: &Bound<'_, PyAny>,
@@ -2899,7 +2899,7 @@ pub fn py_toolbar(
     )))
 }
 
-#[pyfunction(name = "Column")]
+#[pyfunction(name = "column")]
 #[pyo3(signature = (children, gap=0.0))]
 pub fn py_column(children: &Bound<'_, PyAny>, gap: f32) -> PyResult<PyWidget> {
     Ok(PyWidget::from_binding(BindingWidget::column(
@@ -2908,7 +2908,7 @@ pub fn py_column(children: &Bound<'_, PyAny>, gap: f32) -> PyResult<PyWidget> {
     )))
 }
 
-#[pyfunction(name = "Row")]
+#[pyfunction(name = "row")]
 #[pyo3(signature = (children, gap=0.0))]
 pub fn py_row(children: &Bound<'_, PyAny>, gap: f32) -> PyResult<PyWidget> {
     Ok(PyWidget::from_binding(BindingWidget::row(
@@ -2917,7 +2917,7 @@ pub fn py_row(children: &Bound<'_, PyAny>, gap: f32) -> PyResult<PyWidget> {
     )))
 }
 
-#[pyfunction(name = "Grid")]
+#[pyfunction(name = "grid")]
 #[pyo3(signature = (children, columns=2, name=None, gap=0.0, column_gap=None, row_gap=None))]
 pub fn py_grid(
     children: &Bound<'_, PyAny>,
@@ -2936,7 +2936,7 @@ pub fn py_grid(
     )))
 }
 
-#[pyfunction(name = "AspectRatio")]
+#[pyfunction(name = "aspect_ratio")]
 #[pyo3(signature = (child, ratio, fit="contain", horizontal="center", vertical="center"))]
 pub fn py_aspect_ratio(
     child: PyRef<'_, PyWidget>,
@@ -2955,7 +2955,7 @@ pub fn py_aspect_ratio(
     )))
 }
 
-#[pyfunction(name = "SafeArea")]
+#[pyfunction(name = "safe_area")]
 #[pyo3(signature = (
     child, edges="all", minimum_left=0.0, minimum_top=0.0,
     minimum_right=0.0, minimum_bottom=0.0
@@ -2982,7 +2982,7 @@ pub fn py_safe_area(
     )))
 }
 
-#[pyfunction(name = "Presence")]
+#[pyfunction(name = "presence")]
 #[pyo3(signature = (child, shown=None, collapse=false, appear=false))]
 pub fn py_presence(
     child: PyRef<'_, PyWidget>,
@@ -3002,7 +3002,7 @@ pub fn py_presence(
     )))
 }
 
-#[pyfunction(name = "LayoutTransition")]
+#[pyfunction(name = "layout_transition")]
 #[pyo3(signature = (child, duration=0.22, easing="ease-in-out"))]
 pub fn py_layout_transition(
     child: PyRef<'_, PyWidget>,
@@ -3018,7 +3018,7 @@ pub fn py_layout_transition(
     )))
 }
 
-#[pyfunction(name = "AdaptiveView")]
+#[pyfunction(name = "adaptive_view")]
 #[pyo3(signature = (
     compact, medium, expanded, medium_breakpoint=640.0,
     expanded_breakpoint=1024.0, on_class_change=None
@@ -3051,7 +3051,7 @@ pub fn py_adaptive_view(
     )))
 }
 
-#[pyfunction(name = "ConstraintView")]
+#[pyfunction(name = "constraint_view")]
 pub fn py_constraint_view(
     cases: &Bound<'_, PyAny>,
     fallback: PyRef<'_, PyWidget>,
@@ -3062,7 +3062,7 @@ pub fn py_constraint_view(
     )))
 }
 
-#[pyfunction(name = "ResponsiveSidebar")]
+#[pyfunction(name = "responsive_sidebar")]
 #[pyo3(signature = (
     state, sidebar, content, name=None, medium_breakpoint=640.0,
     expanded_breakpoint=1024.0, rail_width=56.0, overlay_width=320.0,
@@ -3105,7 +3105,7 @@ pub fn py_responsive_sidebar(
     )))
 }
 
-#[pyfunction(name = "MasterDetail")]
+#[pyfunction(name = "master_detail")]
 #[pyo3(signature = (
     state, master, detail, medium_breakpoint=640.0,
     expanded_breakpoint=1024.0, master_width=320.0
@@ -3128,14 +3128,14 @@ pub fn py_master_detail(
     )))
 }
 
-#[pyfunction(name = "OverlayHost")]
+#[pyfunction(name = "overlay_host")]
 pub fn py_overlay_host(child: PyRef<'_, PyWidget>) -> PyResult<PyWidget> {
     Ok(PyWidget::from_binding(BindingWidget::overlay_host(
         child.binding_widget()?,
     )))
 }
 
-#[pyfunction(name = "NotificationHost")]
+#[pyfunction(name = "notification_host")]
 #[pyo3(signature = (center, width=340.0))]
 pub fn py_notification_host(
     center: PyRef<'_, PyNotificationCenter>,
@@ -3147,7 +3147,7 @@ pub fn py_notification_host(
     )))
 }
 
-#[pyfunction(name = "VirtualList")]
+#[pyfunction(name = "virtual_list")]
 #[pyo3(signature = (
     name, model, estimated_row_height=32.0, gap=0.0, padding=None,
     row_padding=None, overscan_viewports=1.0, cache_capacity=128,
@@ -3211,7 +3211,7 @@ pub fn py_virtual_list(
     )))
 }
 
-#[pyfunction(name = "Canvas")]
+#[pyfunction(name = "canvas")]
 #[pyo3(signature = (name, shapes=None, viewport=None, draw_stroke=None, desired_size=None))]
 pub fn py_canvas(
     name: String,
@@ -3239,7 +3239,7 @@ pub fn py_canvas(
     )))
 }
 
-#[pyfunction(name = "CanvasRuler")]
+#[pyfunction(name = "canvas_ruler")]
 #[pyo3(signature = (
     axis, name, document_size, viewport=None, viewport_size=None, extent=None
 ))]
@@ -3265,7 +3265,7 @@ pub fn py_canvas_ruler(
     )))
 }
 
-#[pyfunction(name = "PixelCanvas")]
+#[pyfunction(name = "pixel_canvas")]
 #[pyo3(signature = (
     state, name, width, height, paper_color=None, desired_size=None,
     viewport=None, fit_on_first_layout=false, pixels=None
@@ -3305,7 +3305,7 @@ pub fn py_pixel_canvas(
     .map_err(PyValueError::new_err)
 }
 
-#[pyfunction(name = "DragDropHost")]
+#[pyfunction(name = "drag_drop_host")]
 #[pyo3(signature = (
     scope, child, on_external_hover=None, on_external_drop=None, on_external_cancel=None
 ))]
@@ -3355,7 +3355,7 @@ pub fn py_drag_drop_host(
     )))
 }
 
-#[pyfunction(name = "Draggable")]
+#[pyfunction(name = "draggable")]
 #[pyo3(signature = (
     scope, child, payload, effect="move", preview_label=None, threshold=4.0,
     on_start=None, on_end=None
@@ -3395,7 +3395,7 @@ pub fn py_draggable(
     .map_err(PyValueError::new_err)
 }
 
-#[pyfunction(name = "DropTarget")]
+#[pyfunction(name = "drop_target")]
 #[pyo3(signature = (scope, child, effect="copy", on_drop=None, on_hover_change=None))]
 pub fn py_drop_target(
     scope: PyRef<'_, PyDragScope>,
@@ -3435,7 +3435,7 @@ pub fn py_drop_target(
     .map_err(PyValueError::new_err)
 }
 
-#[pyfunction(name = "ScrollView")]
+#[pyfunction(name = "scroll_view")]
 #[pyo3(signature = (child, axes="vertical", name=None))]
 pub fn py_scroll_view(
     child: PyRef<'_, PyWidget>,
@@ -3449,7 +3449,7 @@ pub fn py_scroll_view(
     )))
 }
 
-#[pyfunction(name = "ExternalSurface")]
+#[pyfunction(name = "external_surface")]
 #[pyo3(signature = (texture, desired_size=None, name=None))]
 pub fn py_external_surface(
     texture: PyRef<'_, PyExternalTextureDescriptor>,
@@ -3461,7 +3461,7 @@ pub fn py_external_surface(
         .map_err(py_external_texture_error)
 }
 
-#[pyfunction(name = "TreeView")]
+#[pyfunction(name = "tree_view")]
 #[pyo3(signature = (name, items, selected=None, on_change=None))]
 pub fn py_tree_view(
     name: &Bound<'_, PyAny>,
@@ -3488,7 +3488,7 @@ pub fn py_tree_view(
     )))
 }
 
-#[pyfunction(name = "LayerList")]
+#[pyfunction(name = "layer_list")]
 #[pyo3(signature = (name, items, selected=None, on_change=None))]
 pub fn py_layer_list(
     name: &Bound<'_, PyAny>,
@@ -3515,7 +3515,7 @@ pub fn py_layer_list(
     )))
 }
 
-#[pyfunction(name = "Menu")]
+#[pyfunction(name = "menu")]
 #[pyo3(signature = (name, items, highlighted=None, on_activate=None))]
 pub fn py_menu(
     name: &Bound<'_, PyAny>,
@@ -3542,7 +3542,7 @@ pub fn py_menu(
     )))
 }
 
-#[pyfunction(name = "TabBar")]
+#[pyfunction(name = "tab_bar")]
 #[pyo3(signature = (name, tabs, selected=None, on_change=None))]
 pub fn py_tab_bar(
     name: &Bound<'_, PyAny>,
@@ -3569,7 +3569,7 @@ pub fn py_tab_bar(
     )))
 }
 
-#[pyfunction(name = "Tabs")]
+#[pyfunction(name = "tabs")]
 #[pyo3(signature = (name, tabs, selected=None))]
 pub fn py_tabs(
     name: &Bound<'_, PyAny>,
@@ -3583,7 +3583,7 @@ pub fn py_tabs(
     )))
 }
 
-#[pyfunction(name = "Dialog")]
+#[pyfunction(name = "dialog")]
 #[pyo3(signature = (title, content, open=None))]
 pub fn py_dialog(
     title: &Bound<'_, PyAny>,
@@ -3601,7 +3601,7 @@ pub fn py_dialog(
     )))
 }
 
-#[pyfunction(name = "CommandPalette")]
+#[pyfunction(name = "command_palette")]
 #[pyo3(signature = (name, content, description=None, open=None, max_width=None, on_dismiss=None))]
 pub fn py_command_palette(
     name: String,
@@ -3634,7 +3634,7 @@ pub fn py_command_palette(
     )))
 }
 
-#[pyfunction(name = "Padding")]
+#[pyfunction(name = "padding")]
 #[pyo3(signature = (child, padding=0.0, top=None, right=None, bottom=None, fill_child_width=false, fill_child_height=false))]
 pub fn py_padding(
     child: PyRef<'_, PyWidget>,
@@ -3659,7 +3659,7 @@ pub fn py_padding(
     )))
 }
 
-#[pyfunction(name = "Align")]
+#[pyfunction(name = "align")]
 #[pyo3(signature = (child, horizontal="center", vertical="center"))]
 pub fn py_align(
     child: PyRef<'_, PyWidget>,
@@ -3673,7 +3673,7 @@ pub fn py_align(
     )))
 }
 
-#[pyfunction(name = "Background")]
+#[pyfunction(name = "background")]
 pub fn py_background(child: PyRef<'_, PyWidget>, color: PyColor) -> PyResult<PyWidget> {
     Ok(PyWidget::from_binding(BindingWidget::background(
         child.binding_widget()?,
@@ -3681,7 +3681,7 @@ pub fn py_background(child: PyRef<'_, PyWidget>, color: PyColor) -> PyResult<PyW
     )))
 }
 
-#[pyfunction(name = "SizedBox")]
+#[pyfunction(name = "sized_box")]
 #[pyo3(signature = (child=None, width=None, height=None))]
 pub fn py_sized_box(
     child: Option<PyRef<'_, PyWidget>>,
@@ -3698,7 +3698,7 @@ pub fn py_sized_box(
     )))
 }
 
-#[pyfunction(name = "Stack")]
+#[pyfunction(name = "stack")]
 #[pyo3(signature = (children, axis="vertical", gap=0.0, alignment="start"))]
 pub fn py_stack(
     children: &Bound<'_, PyAny>,
@@ -3714,7 +3714,7 @@ pub fn py_stack(
     )))
 }
 
-#[pyfunction(name = "SemanticRegion")]
+#[pyfunction(name = "semantic_region")]
 #[pyo3(signature = (name, child, description=None, role="generic_container"))]
 pub fn py_semantic_region(
     name: &Bound<'_, PyAny>,
@@ -3730,7 +3730,7 @@ pub fn py_semantic_region(
     )))
 }
 
-#[pyfunction(name = "FormRow")]
+#[pyfunction(name = "form_row")]
 #[pyo3(signature = (label, control, stacked=false, label_width=None, control_width=None, gap=None))]
 pub fn py_form_row(
     label: String,
@@ -3750,7 +3750,7 @@ pub fn py_form_row(
     )))
 }
 
-#[pyfunction(name = "FieldGroup")]
+#[pyfunction(name = "field_group")]
 #[pyo3(signature = (children, gap=None, padding=None, max_width=None, fill_width=false))]
 pub fn py_field_group(
     children: &Bound<'_, PyAny>,
@@ -3768,7 +3768,7 @@ pub fn py_field_group(
     )))
 }
 
-#[pyfunction(name = "FormSection")]
+#[pyfunction(name = "form_section")]
 #[pyo3(signature = (title, child, description=None, header_action=None, padding=None, body_gap=None, header_gap=None, max_width=None, fill_width=false, corner_radius=None, elevation=None))]
 pub fn py_form_section(
     title: String,
@@ -3801,7 +3801,7 @@ pub fn py_form_section(
     )))
 }
 
-#[pyfunction(name = "PanelSection")]
+#[pyfunction(name = "panel_section")]
 #[pyo3(signature = (title, child, header_action=None, gap=None, action_gap=None, collapsible=false, expanded=true))]
 pub fn py_panel_section(
     title: String,
@@ -3826,7 +3826,7 @@ pub fn py_panel_section(
     )))
 }
 
-#[pyfunction(name = "DockPanel")]
+#[pyfunction(name = "dock_panel")]
 #[pyo3(signature = (title, child, name=None, header_height=None, padding=None, background=None, header_background=None))]
 pub fn py_dock_panel(
     title: String,
@@ -3848,7 +3848,7 @@ pub fn py_dock_panel(
     )))
 }
 
-#[pyfunction(name = "StatusBarHost")]
+#[pyfunction(name = "status_bar_host")]
 pub fn py_status_bar_host(
     content: PyRef<'_, PyWidget>,
     status_bar: PyRef<'_, PyWidget>,
@@ -3859,7 +3859,7 @@ pub fn py_status_bar_host(
     )))
 }
 
-#[pyfunction(name = "Tooltip")]
+#[pyfunction(name = "tooltip")]
 #[pyo3(signature = (text, child, placement="above"))]
 pub fn py_tooltip(
     text: String,
@@ -3873,7 +3873,7 @@ pub fn py_tooltip(
     )))
 }
 
-#[pyfunction(name = "Popover")]
+#[pyfunction(name = "popover")]
 #[pyo3(signature = (name, trigger, content, open=false))]
 pub fn py_popover(
     name: String,
@@ -3889,7 +3889,7 @@ pub fn py_popover(
     )))
 }
 
-#[pyfunction(name = "ContextMenu")]
+#[pyfunction(name = "context_menu")]
 #[pyo3(signature = (name, trigger, items, on_activate=None))]
 pub fn py_context_menu(
     name: String,
@@ -3915,7 +3915,7 @@ pub fn py_context_menu(
     )))
 }
 
-#[pyfunction(name = "ToolPalette")]
+#[pyfunction(name = "tool_palette")]
 #[pyo3(signature = (name, items, selected=None, axis="vertical", on_change=None, extent=None, padding=None, gap=None, item_size=None, icon_size=None, background=None, divider=true))]
 pub fn py_tool_palette(
     name: String,
@@ -3958,7 +3958,7 @@ pub fn py_tool_palette(
     )))
 }
 
-#[pyfunction(name = "PresetStrip")]
+#[pyfunction(name = "preset_strip")]
 #[pyo3(signature = (name, presets, selected=None, on_change=None, item_width=None, item_height=None, gap=None))]
 pub fn py_preset_strip(
     name: String,
@@ -3991,7 +3991,7 @@ pub fn py_preset_strip(
     )))
 }
 
-#[pyfunction(name = "BrowserTabBar")]
+#[pyfunction(name = "browser_tab_bar")]
 #[pyo3(signature = (name, tabs, selected=None, on_change=None, on_close=None))]
 pub fn py_browser_tab_bar(
     name: String,
@@ -4026,7 +4026,7 @@ pub fn py_browser_tab_bar(
     )))
 }
 
-#[pyfunction(name = "ColorPalette")]
+#[pyfunction(name = "color_palette")]
 #[pyo3(signature = (name, swatches, selected=None, on_change=None, columns=None, swatch_size=None, gap=None))]
 pub fn py_color_palette(
     name: String,
@@ -4061,7 +4061,7 @@ pub fn py_color_palette(
     )))
 }
 
-#[pyfunction(name = "ColorPicker")]
+#[pyfunction(name = "color_picker")]
 #[pyo3(signature = (name, color=None, on_change=None, show_alpha=true, compact=false))]
 pub fn py_color_picker(
     name: String,
@@ -4091,7 +4091,7 @@ pub fn py_color_picker(
     )))
 }
 
-#[pyfunction(name = "SimpleColorPicker")]
+#[pyfunction(name = "simple_color_picker")]
 #[pyo3(signature = (name, color=None, mode="hsv", on_change=None, show_alpha=true, compact=false))]
 pub fn py_simple_color_picker(
     name: String,

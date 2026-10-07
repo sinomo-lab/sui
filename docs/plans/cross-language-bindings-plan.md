@@ -45,7 +45,7 @@ The workspace currently includes:
   descriptors, with a CPU RGBA fallback for `ExternalSurface`;
 - generated widget manifests, a complete Rust-widget classification, and
   cross-language compatibility tests;
-- generated Python registration, `snake_case` factories, `sui.pyi`, and
+- generated Python registration, `snake_case` factories, `_native.pyi`, and
   `py.typed` metadata, plus generated JavaScript options-object factories and
   matching TypeScript interfaces;
 - live shared themes, selector/watch state APIs, named UI-thread messages,

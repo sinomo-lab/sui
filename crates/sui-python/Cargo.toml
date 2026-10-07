@@ -25,7 +25,7 @@ extension-module = ["pyo3/extension-module"]
 auto-initialize = ["pyo3/auto-initialize"]
 
 [dependencies]
-pyo3 = { workspace = true }
+pyo3 = { workspace = true, features = ["abi3-py310"] }
 sui = { workspace = true }
 sui-bindings-core = { workspace = true }
 

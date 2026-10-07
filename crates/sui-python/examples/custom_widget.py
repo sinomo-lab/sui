@@ -1,4 +1,4 @@
-import sui
+import sinomo_ui as sui
 
 
 class Meter:

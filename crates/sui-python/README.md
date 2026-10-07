@@ -1,9 +1,17 @@
 # SUI Python bindings
 
-`sui-ui` is the native Python binding for SUI. The distribution is named
-`sui-ui`, while Python programs import the extension as `sui`.
-The wheel includes generated `sui.pyi` and `py.typed` metadata sourced from the
-same binding specification as the native wrappers.
+`sinomo-ui` is the native Python binding for SUI. Install the `sinomo-ui`
+distribution and import the `sinomo_ui` package; the examples use the short
+alias `sui`:
+
+```python
+import sinomo_ui as sui
+```
+
+The package wraps a native `sinomo_ui._native` extension and ships typed stubs
+(`_native.pyi` and `py.typed`) generated from the same binding specification
+as the native wrappers. Wheels target the stable CPython ABI (`abi3`), so one
+wheel per platform covers Python 3.10 and newer.
 
 The binding supports retained widget trees, desktop event-loop execution,
 host-driven rendering, thread-safe state updates, custom Python widgets,
@@ -36,7 +44,7 @@ From `crates/sui-python`:
 
 ```bash
 maturin develop
-python -c 'import sui; print(sui.App)'
+python -c 'import sinomo_ui as sui; print(sui.__version__)'
 ```
 
 From the workspace root, keep Maturin in the package directory so it reads the
@@ -44,7 +52,7 @@ adjacent `pyproject.toml`:
 
 ```bash
 (cd crates/sui-python && maturin develop)
-python -c 'import sui; print(sui.App)'
+python -c 'import sinomo_ui as sui; print(sui.__version__)'
 ```
 
 `maturin develop --release` produces an optimized development build. To create
@@ -93,7 +101,7 @@ snapshot or event information; they do not open desktop windows.
 Use `App.run()` when Python owns the normal desktop event loop:
 
 ```python
-import sui
+import sinomo_ui as sui
 
 app = sui.App()
 app.window(
@@ -110,9 +118,10 @@ app.window(
 app.run()
 ```
 
-Widget factories use Python `snake_case`; keyword arguments are preferred for
-optional configuration. The original `PascalCase` names remain as compatibility
-aliases while applications migrate.
+Widget factories use Python `snake_case` (`sui.label(...)`, `sui.button(...)`);
+keyword arguments are preferred for optional configuration. `PascalCase` names
+are classes, such as `sui.App`, `sui.State`, and descriptors like
+`sui.TableColumn`.
 
 The portable media surface includes both `color_picker(...)` and the compact,
 mode-selectable `simple_color_picker(...)` (`hsl`, `hsv`, `rgb`, or `oklch`).

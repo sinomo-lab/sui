@@ -4,6 +4,20 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
+## [Unreleased]
+
+### Python
+
+- Renamed the Python distribution to `sinomo-ui` and the import package to
+  `sinomo_ui`; use `import sinomo_ui as sui`. The native extension now lives
+  in `sinomo_ui._native` behind a regular Python package, which also exposes
+  `__version__`.
+- Removed the `PascalCase` widget factory aliases such as `sui.Button`; use
+  the `snake_case` factories such as `sui.button`. `PascalCase` names now
+  always refer to classes.
+- Built wheels against the stable CPython ABI (`abi3`) for Python 3.10 and
+  newer, so one wheel per platform covers every supported interpreter.
+
 ## [0.4.1] - 2026-10-04
 
 This release adds observable background tasks, makes reactive updates and text
