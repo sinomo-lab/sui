@@ -1499,7 +1499,7 @@ class TableColumn:
 class TableRow:
     def __new__(cls, cells: Sequence[str]) -> Self: ...
 
-def label(value: State | BindingValue, semantic_name: str | None = ...) -> Widget: ...
+def label(value: State | BindingValue, semantic_name: str | None = ..., color: Color | None = ..., font_size: float | None = ..., line_height: float | None = ..., weight: int | None = ..., single_line: bool = ..., selectable: bool = ...) -> Widget: ...
 
 def button(label: State | BindingValue, on_press: Callable[[], None] | None = ..., enabled: State | bool | float | None = ..., appearance: Literal["filled", "tonal", "outline", "ghost"] | None = ..., tone: SemanticTone | str | None = ..., icon: IconGlyph | str | None = ..., min_width: float | None = ..., semantic_name: str | None = ..., description: str | None = ...) -> Widget: ...
 
@@ -1523,7 +1523,7 @@ def breadcrumb(name: State | BindingValue, items: Sequence[str], current: State 
 
 def path_bar(name: State | BindingValue, items: Sequence[str], current: State | float | bool | None = ..., on_activate: Callable[[int, str], None] | None = ...) -> Widget: ...
 
-def list_view(name: State | BindingValue, items: Sequence[str], selected: State | float | bool | None = ..., on_change: Callable[[int, str], None] | None = ..., enabled: State | bool | float | None = ...) -> Widget: ...
+def list_view(name: State | BindingValue, items: Sequence[str | ListItem], selected: State | float | bool | None = ..., on_change: Callable[[int, str], None] | None = ..., enabled: State | bool | float | None = ...) -> Widget: ...
 
 def table(name: State | BindingValue, columns: Sequence[TableColumn], rows: Sequence[TableRow], selected: State | float | bool | None = ..., on_change: Callable[[int, str], None] | None = ..., enabled: State | bool | float | None = ...) -> Widget: ...
 
@@ -1575,9 +1575,11 @@ def flex_item(child: Widget, grow: float | None = ..., shrink: float | None = ..
 
 def rebuild_on_change(states: Sequence[State], build: Callable[[], Widget]) -> Widget: ...
 
+def grid_cell(child: Widget, row: int, column: int, row_span: int = ..., column_span: int = ..., horizontal: Literal["start", "center", "end", "stretch"] = ..., vertical: Literal["start", "center", "end", "stretch"] = ...) -> Widget: ...
+
 def spacer() -> Widget: ...
 
-def grid(children: Sequence[Widget], columns: int = ..., name: str | None = ..., gap: float = ..., column_gap: float | None = ..., row_gap: float | None = ...) -> Widget: ...
+def grid(children: Sequence[Widget], columns: int | Sequence[float | str] | None = ..., name: str | None = ..., gap: float = ..., column_gap: float | None = ..., row_gap: float | None = ..., rows: Sequence[float | str] | None = ...) -> Widget: ...
 
 def aspect_ratio(child: Widget, ratio: float, fit: Literal["contain", "cover"] = ..., horizontal: Literal["start", "center", "end", "stretch"] = ..., vertical: Literal["start", "center", "end", "stretch"] = ...) -> Widget: ...
 
@@ -1689,6 +1691,12 @@ def virtual_list(name: str, model: VirtualListModel, estimated_row_height: float
 def scroll_view(child: Widget, axes: ScrollAxes = ..., name: str | None = ..., controller: ScrollController | None = ...) -> Widget: ...
 
 def external_surface(texture: ExternalTextureDescriptor, desired_size: Size | None = ..., name: str | None = ...) -> Widget: ...
+
+@final
+class ListItem:
+    def __new__(cls, label: str, detail: str | None = ..., trailing: str | None = ..., icon: IconGlyph | str | None = ..., semantic_name: str | None = ..., description: str | None = ..., enabled: bool = ...) -> Self: ...
+    @property
+    def label(self) -> str: ...
 
 @final
 class TreeItem:
@@ -1878,6 +1886,7 @@ __all__ = [
     "InvalidationTrace",
     "Keyframe",
     "LayerListItem",
+    "ListItem",
     "MasterDetailState",
     "MenuItem",
     "Modifiers",
@@ -1971,6 +1980,7 @@ __all__ = [
     "form_section",
     "framed_field",
     "grid",
+    "grid_cell",
     "icon",
     "icon_button",
     "image",

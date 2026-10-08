@@ -10,6 +10,7 @@ use std::{
     fs,
     sync::{Arc, Mutex},
 };
+use sui_crate::GridTrack;
 
 use ::sui as sui_crate;
 use callback_errors::{
@@ -35,29 +36,31 @@ use sui_bindings_core::{
     BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFontHandle,
     BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle, BindingImeEvent,
     BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState, BindingKeyboardEvent,
-    BindingLayerListItem, BindingMasterDetailState, BindingMenuItem, BindingMessageAction,
-    BindingModifiers, BindingNotificationCenter, BindingNumber, BindingNumberAction,
-    BindingPixelCanvasExport, BindingPixelCanvasState, BindingPointerButton, BindingPointerEvent,
-    BindingPointerEventKind, BindingPointerKind, BindingRawMouseMotionEvent,
-    BindingReactiveInvalidationTrace, BindingRenderOptions, BindingRenderSnapshot,
-    BindingReorderAction, BindingResponsiveSidebarState, BindingRichDocument,
-    BindingRichDocumentUpdate, BindingRuntime, BindingScrollAxes, BindingScrollController,
-    BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction, BindingSemanticNode,
-    BindingShader, BindingSpring, BindingState, BindingStateSubscription, BindingStatusBarSegment,
-    BindingStringAction, BindingStringsAction, BindingTableColumn, BindingTableRow, BindingText,
-    BindingTextFieldOptions, BindingTextSpan, BindingTheme, BindingToolPaletteItem,
-    BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue, BindingVirtualListItem,
-    BindingVirtualListModel, BindingWidget, BindingWidgetBuilder, BindingWidgetRebuildTrace,
-    BindingWidgetTiming, BindingWindow, BindingWindowEvent, BindingWindowId, ExternalBackendHandle,
-    ExternalSync, ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
-    ForeignArrangeCtx, ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx,
-    ForeignMeasureCtx, ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
+    BindingLabelOptions, BindingLayerListItem, BindingListItem, BindingMasterDetailState,
+    BindingMenuItem, BindingMessageAction, BindingModifiers, BindingNotificationCenter,
+    BindingNumber, BindingNumberAction, BindingPixelCanvasExport, BindingPixelCanvasState,
+    BindingPointerButton, BindingPointerEvent, BindingPointerEventKind, BindingPointerKind,
+    BindingRawMouseMotionEvent, BindingReactiveInvalidationTrace, BindingRenderOptions,
+    BindingRenderSnapshot, BindingReorderAction, BindingResponsiveSidebarState,
+    BindingRichDocument, BindingRichDocumentUpdate, BindingRuntime, BindingScrollAxes,
+    BindingScrollController, BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction,
+    BindingSemanticNode, BindingShader, BindingSpring, BindingState, BindingStateSubscription,
+    BindingStatusBarSegment, BindingStringAction, BindingStringsAction, BindingTableColumn,
+    BindingTableRow, BindingText, BindingTextFieldOptions, BindingTextSpan, BindingTheme,
+    BindingToolPaletteItem, BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue,
+    BindingVirtualListItem, BindingVirtualListModel, BindingWidget, BindingWidgetBuilder,
+    BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow, BindingWindowEvent,
+    BindingWindowId, ExternalBackendHandle, ExternalSync, ExternalTextureDescriptor,
+    ExternalTextureFormat, ExternalTextureValidationError, ForeignArrangeCtx,
+    ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
+    ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
     RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_alignment_from_name,
     binding_aspect_ratio_fit_from_name, binding_button_appearance_from_name,
-    binding_easing_from_name, binding_flex_justify_from_name, binding_icon_glyph_from_name,
-    binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
-    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
+    binding_easing_from_name, binding_flex_justify_from_name, binding_grid_track_from_name,
+    binding_icon_glyph_from_name, binding_safe_area_edges_from_name,
+    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
+    binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
     binding_semantics_nodes, binding_semantics_role_from_name, binding_semantics_roles,
@@ -4777,6 +4780,43 @@ fn extract_table_rows(rows: &Bound<'_, PyAny>) -> PyResult<Vec<BindingTableRow>>
         .iter()
         .map(|row| row.inner.clone())
         .collect())
+}
+
+/// Grid tracks given as numbers (fixed sizes) or strings such as `"auto"`,
+/// `"1fr"`, or `"minmax(120, 1fr)"`.
+fn py_grid_tracks(tracks: &Bound<'_, PyAny>) -> PyResult<Vec<GridTrack>> {
+    tracks
+        .try_iter()?
+        .map(|track| {
+            let track = track?;
+            if let Ok(points) = track.extract::<f32>() {
+                return Ok(GridTrack::fixed(points.max(0.0)));
+            }
+            let name = track.extract::<String>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("grid tracks must be numbers or strings")
+            })?;
+            binding_grid_track_from_name(&name)
+                .ok_or_else(|| PyValueError::new_err(format!("unknown grid track '{name}'")))
+        })
+        .collect()
+}
+
+/// List items given as strings or `ListItem` objects.
+fn extract_list_items(items: &Bound<'_, PyAny>) -> PyResult<Vec<BindingListItem>> {
+    items
+        .try_iter()?
+        .map(|item| {
+            let item = item?;
+            if let Ok(label) = item.extract::<String>() {
+                return Ok(BindingListItem::new(label));
+            }
+            item.extract::<PyRef<'_, PyListItem>>()
+                .map(|item| item.inner.clone())
+                .map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("list items must be str or ListItem")
+                })
+        })
+        .collect()
 }
 
 fn extract_tree_items(items: &Bound<'_, PyAny>) -> PyResult<Vec<BindingTreeItem>> {

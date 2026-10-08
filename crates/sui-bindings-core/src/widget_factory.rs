@@ -23,11 +23,13 @@ use crate::layout::{
 };
 use crate::scrolling::BindingScrollController;
 use crate::state::BindingState;
+use crate::values::BindingListItem;
 use crate::values::{
     BindingBool, BindingColorPaletteSwatch, BindingLayerListItem, BindingMenuItem, BindingNumber,
     BindingSegmentedControlItem, BindingStatusBarSegment, BindingTableColumn, BindingTableRow,
     BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem,
 };
+use crate::widget_descriptor::BindingLabelOptions;
 use crate::widget_descriptor::BindingWidgetBuilder;
 use crate::widget_descriptor::{
     BindingButtonOptions, BindingDialogOptions, BindingFlexOptions, BindingTextFieldOptions,
@@ -43,6 +45,8 @@ use sui::Color;
 use sui::Easing;
 use sui::FlexItem;
 use sui::FloatingViewConfig;
+use sui::GridCell;
+use sui::GridTrack;
 use sui::IconGlyph;
 use sui::Insets;
 use sui::SafeAreaEdges;
@@ -59,7 +63,14 @@ use sui::TooltipPlacement;
 
 impl BindingWidget {
     pub fn label(text: impl Into<BindingText>) -> Self {
-        Self::from_kind(BindingWidgetKind::Label { text: text.into() })
+        Self::label_with_options(text, BindingLabelOptions::default())
+    }
+
+    pub fn label_with_options(text: impl Into<BindingText>, options: BindingLabelOptions) -> Self {
+        Self::from_kind(BindingWidgetKind::Label {
+            text: text.into(),
+            options,
+        })
     }
 
     pub fn label_state(state: BindingState) -> Self {
@@ -214,7 +225,7 @@ impl BindingWidget {
 
     pub fn list_view(
         name: impl Into<BindingText>,
-        items: impl IntoIterator<Item = impl Into<String>>,
+        items: impl IntoIterator<Item = impl Into<BindingListItem>>,
         selected: Option<BindingNumber>,
         action: Option<BindingSelectAction>,
     ) -> Self {
@@ -1195,13 +1206,43 @@ impl BindingWidget {
         column_gap: f32,
         row_gap: f32,
     ) -> Self {
+        Self::grid_with_tracks(
+            std::iter::repeat_n(GridTrack::fraction(1.0), columns.max(1)),
+            std::iter::empty(),
+            children,
+            name,
+            column_gap,
+            row_gap,
+        )
+    }
+
+    /// A grid with explicit column and row tracks. Without row tracks, rows
+    /// size to their content.
+    pub fn grid_with_tracks(
+        columns: impl IntoIterator<Item = GridTrack>,
+        rows: impl IntoIterator<Item = GridTrack>,
+        children: impl IntoIterator<Item = BindingWidget>,
+        name: Option<String>,
+        column_gap: f32,
+        row_gap: f32,
+    ) -> Self {
+        let mut columns = columns.into_iter().collect::<Vec<_>>();
+        if columns.is_empty() {
+            columns.push(GridTrack::fraction(1.0));
+        }
         Self::from_kind(BindingWidgetKind::Grid {
-            columns: columns.max(1),
+            columns,
+            rows: rows.into_iter().collect(),
             children: children.into_iter().collect(),
             name,
             column_gap: column_gap.max(0.0),
             row_gap: row_gap.max(0.0),
         })
+    }
+
+    /// Place `child` explicitly when it is a direct child of a grid.
+    pub fn grid_cell(child: BindingWidget, cell: GridCell) -> Self {
+        Self::from_kind(BindingWidgetKind::GridCell { child, cell })
     }
 
     pub fn aspect_ratio(

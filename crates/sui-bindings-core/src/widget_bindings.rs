@@ -8,7 +8,7 @@ impl BindingWidget {
             enabled.bind_ui_handle(handle);
         }
         match self.inner.as_ref() {
-            BindingWidgetKind::Label { text } => text.bind_ui_handle(handle),
+            BindingWidgetKind::Label { text, .. } => text.bind_ui_handle(handle),
             BindingWidgetKind::Button { label, .. } => label.bind_ui_handle(handle),
             BindingWidgetKind::Icon { .. } => {}
             BindingWidgetKind::IconButton {
@@ -313,6 +313,7 @@ impl BindingWidget {
                     child.bind_ui_handle(handle);
                 }
             }
+            BindingWidgetKind::GridCell { child, .. } => child.bind_ui_handle(handle),
             BindingWidgetKind::Grid { children, .. } => {
                 for child in children {
                     child.bind_ui_handle(handle);

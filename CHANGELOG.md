@@ -45,6 +45,12 @@ Versioning, with the usual expectation that the API may change during the
   `align_self`, plus `spacer`.
 - Gave `button` `appearance`, `tone`, `icon`, `min_width`, `semantic_name`,
   and `description`.
+- Gave `label` `color`, `font_size`, `line_height`, `weight`, `single_line`,
+  and `selectable`.
+- Added `ListItem` with detail, trailing text, an icon, and accessibility text;
+  `list_view` accepts it beside plain strings.
+- Gave `grid` explicit column and row tracks (fixed, `auto`, fractions, and
+  `minmax`) and added `grid_cell` for explicit placement and spans.
 - Added `ScrollController` to scroll a `scroll_view` or `virtual_scroll_view`
   from code and read its offset and extents.
 - Added `rebuild_on_change(states, build)` to rebuild a subtree whenever a

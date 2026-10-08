@@ -171,7 +171,7 @@ widget Label
   core_constructor label
   python function py_label
   js function js_label
-  api function Label(value: State | BindingValue, semanticName?: string): Widget;
+  api function Label(value: State | BindingValue, semanticName?: string, color?: Color, fontSize?: number, lineHeight?: number, weight?: int, singleLine?: boolean, selectable?: boolean): Widget;
   docs Label
   compat
 end
@@ -288,7 +288,7 @@ widget ListView
   core_constructor list_view
   python function py_list_view
   js function js_list_view
-  api function ListView(name: State | BindingValue, items: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
+  api function ListView(name: State | BindingValue, items: (string | ListItem)[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
   docs ListView
   compat
 end
@@ -566,6 +566,14 @@ widget RebuildOnChange
   docs RebuildOnChange
 end
 
+layout GridCell
+  core_constructor grid_cell
+  python function py_grid_cell
+  js function js_grid_cell
+  api function GridCell(child: Widget, row: int, column: int, rowSpan?: int, columnSpan?: int, horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
+  docs GridCell
+end
+
 layout Spacer
   core_constructor spacer
   python function py_spacer
@@ -579,7 +587,7 @@ layout Grid
   core_constructor grid
   python function py_grid
   js function js_grid
-  api function Grid(children: Widget[], columns?: int, name?: string, gap?: number, columnGap?: number, rowGap?: number): Widget;
+  api function Grid(children: Widget[], columns?: int | (number | string)[], name?: string, gap?: number, columnGap?: number, rowGap?: number, rows?: (number | string)[]): Widget;
   docs Grid
   compat
 end
@@ -971,6 +979,17 @@ interop-widget ExternalSurface
   js function js_external_surface
   api function ExternalSurface(texture: ExternalTextureDescriptor, desiredSize?: Size, name?: string): Widget;
   docs ExternalSurface
+end
+
+descriptor ListItem
+  core_descriptor BindingListItem
+  python class
+  js class
+  api class
+    constructor(label: string, detail?: string, trailing?: string, icon?: IconGlyph | string, semanticName?: string, description?: string, enabled?: boolean);
+    readonly label: string;
+  endapi
+  docs ListItem
 end
 
 descriptor TreeItem

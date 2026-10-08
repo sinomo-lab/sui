@@ -6,7 +6,7 @@
 function decorateApi(native) {
   const factories = {
     label(value, options = {}) {
-      return native.Label(value, options.semanticName);
+      return native.Label(value, options.semanticName, options.color, options.fontSize, options.lineHeight, options.weight, options.singleLine, options.selectable);
     },
     button(label, options = {}) {
       return native.Button(label, options.onPress, options.enabled, options.appearance, options.tone, options.icon, options.minWidth, options.semanticName, options.description);
@@ -119,11 +119,14 @@ function decorateApi(native) {
     rebuildOnChange(states, build) {
       return native.RebuildOnChange(states, build);
     },
+    gridCell(child, row, column, options = {}) {
+      return native.GridCell(child, row, column, options.rowSpan, options.columnSpan, options.horizontal, options.vertical);
+    },
     spacer() {
       return native.Spacer();
     },
     grid(children, options = {}) {
-      return native.Grid(children, options.columns, options.name, options.gap, options.columnGap, options.rowGap);
+      return native.Grid(children, options.columns, options.name, options.gap, options.columnGap, options.rowGap, options.rows);
     },
     aspectRatio(child, ratio, options = {}) {
       return native.AspectRatio(child, ratio, options.fit, options.horizontal, options.vertical);

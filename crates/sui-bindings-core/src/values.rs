@@ -11,8 +11,11 @@ use sui::Color;
 use sui::ColorPaletteSwatch;
 use sui::Easing;
 use sui::FlexJustify;
+use sui::GridTrack;
+use sui::GridTrackMax;
 use sui::IconGlyph;
 use sui::LayerListItem;
+use sui::ListItem;
 use sui::MenuItem;
 use sui::SafeAreaEdges;
 use sui::SegmentedControlItem;
@@ -321,6 +324,99 @@ impl BindingTableRow {
 
     pub(crate) fn into_sui(&self) -> TableRow {
         TableRow::new(self.cells.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingListItem {
+    pub(crate) label: String,
+    pub(crate) detail: Option<String>,
+    pub(crate) trailing: Option<String>,
+    pub(crate) icon: Option<IconGlyph>,
+    pub(crate) semantic_name: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) enabled: bool,
+}
+
+impl BindingListItem {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            detail: None,
+            trailing: None,
+            icon: None,
+            semantic_name: None,
+            description: None,
+            enabled: true,
+        }
+    }
+
+    /// Secondary text below the label.
+    pub fn with_detail(mut self, detail: Option<String>) -> Self {
+        self.detail = detail;
+        self
+    }
+
+    /// Short text at the end of the row, such as a count or shortcut.
+    pub fn with_trailing(mut self, trailing: Option<String>) -> Self {
+        self.trailing = trailing;
+        self
+    }
+
+    pub fn with_icon(mut self, icon: Option<IconGlyph>) -> Self {
+        self.icon = icon;
+        self
+    }
+
+    pub fn with_semantic_name(mut self, name: Option<String>) -> Self {
+        self.semantic_name = name;
+        self
+    }
+
+    pub fn with_description(mut self, description: Option<String>) -> Self {
+        self.description = description;
+        self
+    }
+
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub(crate) fn into_sui(&self) -> ListItem {
+        let mut item = ListItem::new(self.label.clone()).enabled(self.enabled);
+        if let Some(detail) = &self.detail {
+            item = item.detail(detail.clone());
+        }
+        if let Some(trailing) = &self.trailing {
+            item = item.trailing(trailing.clone());
+        }
+        if let Some(icon) = self.icon {
+            item = item.leading_icon(icon);
+        }
+        if let Some(name) = &self.semantic_name {
+            item = item.semantic_name(name.clone());
+        }
+        if let Some(description) = &self.description {
+            item = item.description(description.clone());
+        }
+        item
+    }
+}
+
+impl From<String> for BindingListItem {
+    fn from(label: String) -> Self {
+        Self::new(label)
+    }
+}
+
+impl From<&str> for BindingListItem {
+    fn from(label: &str) -> Self {
+        Self::new(label)
     }
 }
 
@@ -708,6 +804,40 @@ pub fn binding_button_appearance_from_name(value: &str) -> Option<ButtonAppearan
         "ghost" => Some(ButtonAppearance::Ghost),
         _ => None,
     }
+}
+
+/// Parse a grid track: `"auto"`, a fixed size such as `"120"` or `"120px"`,
+/// a fraction such as `"1fr"`, or `"minmax(min, max)"` with a fixed minimum
+/// and an `auto`, fixed, or fraction maximum.
+pub fn binding_grid_track_from_name(value: &str) -> Option<GridTrack> {
+    let value = value.trim().to_ascii_lowercase();
+    if let Some(inner) = value
+        .strip_prefix("minmax(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        let (min, max) = inner.split_once(',')?;
+        let min = parse_grid_points(min.trim())?;
+        let max = match max.trim() {
+            "auto" => GridTrackMax::Auto,
+            max => match max.strip_suffix("fr") {
+                Some(fraction) => GridTrackMax::Fraction(fraction.trim().parse().ok()?),
+                None => GridTrackMax::Points(parse_grid_points(max)?),
+            },
+        };
+        return Some(GridTrack::minmax(min, max));
+    }
+    if value == "auto" {
+        return Some(GridTrack::auto());
+    }
+    if let Some(fraction) = value.strip_suffix("fr") {
+        return Some(GridTrack::fraction(fraction.trim().parse().ok()?));
+    }
+    parse_grid_points(&value).map(GridTrack::fixed)
+}
+
+fn parse_grid_points(value: &str) -> Option<f32> {
+    let value = value.strip_suffix("px").unwrap_or(value).trim();
+    value.parse::<f32>().ok().filter(|points| *points >= 0.0)
 }
 
 pub fn binding_flex_justify_from_name(value: &str) -> Option<FlexJustify> {

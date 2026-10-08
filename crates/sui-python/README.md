@@ -127,6 +127,10 @@ toolbar = sui.row(
 )
 ```
 
+Labels take `color`, `font_size`, `line_height`, `weight` (100 to 900),
+`single_line`, and `selectable`. `list_view` items may be strings or
+`ListItem(label, detail=..., trailing=..., icon=..., enabled=...)` objects.
+
 Buttons take `appearance` (`"filled"`, `"tonal"`, `"outline"`, `"ghost"`),
 `tone` (`"accent"`, `"danger"`, ...), `icon`, and `min_width`; a primary action
 is `appearance="filled", tone="accent"`. Text fields take `read_only`,
@@ -139,7 +143,11 @@ stable `DockPanelSpec` descriptors, and `dock_workspace(...)` without exposing
 Rust-local widget ownership.
 Responsive composition includes idiomatic `grid(...)`, `aspect_ratio(...)`,
 `safe_area(...)`, and `layout_transition(...)` factories without exposing Rust
-track or animation implementation types.
+track or animation implementation types. `grid(columns=3)` makes three equal
+columns; a list gives each track as a fixed size (a number), `"auto"`, a
+fraction such as `"2fr"`, or `"minmax(120, 1fr)"`, and `rows=` takes the same
+forms. Wrap a direct child in `grid_cell(child, row=..., column=...,
+row_span=..., column_span=...)` to place it explicitly.
 `adaptive_view(...)`, `constraint_view(...)`, `responsive_sidebar(...)`, and
 `master_detail(...)` retain each branch or pane while exposing ordinary Python
 state objects and callbacks.

@@ -25,6 +25,7 @@ use crate::scrolling::BindingScrollController;
 use crate::state::BindingState;
 use crate::tasks::BindingUiHandle;
 use crate::theme::BindingTheme;
+use crate::values::BindingListItem;
 use crate::values::{
     BindingBool, BindingColorPaletteSwatch, BindingLayerListItem, BindingMenuItem, BindingNumber,
     BindingSegmentedControlItem, BindingStatusBarSegment, BindingTableColumn, BindingTableRow,
@@ -43,6 +44,9 @@ use sui::DropEffect;
 use sui::Easing;
 use sui::FlexItem;
 use sui::FlexJustify;
+use sui::FontWeight;
+use sui::GridCell;
+use sui::GridTrack;
 use sui::IconGlyph;
 use sui::Insets;
 use sui::SafeAreaEdges;
@@ -82,6 +86,20 @@ impl fmt::Debug for BindingWidgetBuilder {
         f.debug_struct("BindingWidgetBuilder")
             .finish_non_exhaustive()
     }
+}
+
+/// Optional label typography and behavior. `None` keeps the theme's body
+/// text style.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BindingLabelOptions {
+    pub color: Option<Color>,
+    pub font_size: Option<f32>,
+    pub line_height: Option<f32>,
+    pub weight: Option<FontWeight>,
+    /// Keep the text on one line instead of wrapping it.
+    pub single_line: bool,
+    /// Let the user select and copy the text.
+    pub selectable: bool,
 }
 
 /// Optional button presentation and semantics. `None` keeps
@@ -480,6 +498,11 @@ impl fmt::Debug for BindingWidget {
                 .field("columns", columns)
                 .field("children", children)
                 .finish(),
+            BindingWidgetKind::GridCell { child, cell } => f
+                .debug_struct("BindingWidget::GridCell")
+                .field("cell", cell)
+                .field("child", child)
+                .finish(),
             BindingWidgetKind::AspectRatio { child, ratio, .. } => f
                 .debug_struct("BindingWidget::AspectRatio")
                 .field("ratio", ratio)
@@ -730,6 +753,7 @@ impl fmt::Debug for BindingWidget {
 pub(crate) enum BindingWidgetKind {
     Label {
         text: BindingText,
+        options: BindingLabelOptions,
     },
     Button {
         label: BindingText,
@@ -794,7 +818,7 @@ pub(crate) enum BindingWidgetKind {
     },
     ListView {
         name: BindingText,
-        items: Vec<String>,
+        items: Vec<BindingListItem>,
         selected: Option<BindingNumber>,
         action: Option<BindingSelectAction>,
     },
@@ -1170,11 +1194,19 @@ pub(crate) enum BindingWidgetKind {
         divider: bool,
     },
     Grid {
-        columns: usize,
+        columns: Vec<GridTrack>,
+        /// Explicit row tracks; empty sizes rows to their content.
+        rows: Vec<GridTrack>,
         children: Vec<BindingWidget>,
         name: Option<String>,
         column_gap: f32,
         row_gap: f32,
+    },
+    /// A child's explicit grid placement, applied when it is a direct child
+    /// of a grid. Elsewhere only the child is built.
+    GridCell {
+        child: BindingWidget,
+        cell: GridCell,
     },
     AspectRatio {
         child: BindingWidget,

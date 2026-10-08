@@ -73,7 +73,7 @@ below. The current high-level manifest contains these public names, grouped
 here so documentation coverage remains auditable:
 
 - Descriptors: `TextSpan`, `StatusBarSegment`, `SegmentedControlItem`,
-  `TableColumn`, `TableRow`, `TreeItem`, `LayerListItem`, `MenuItem`,
+  `TableColumn`, `TableRow`, `ListItem`, `TreeItem`, `LayerListItem`, `MenuItem`,
   `ToolPaletteItem`, `ColorPaletteSwatch`, `BrushPreviewSpec`, and
   `FloatingStackWindow`, `RichDocument`, `RichDocumentUpdate`, `ConstraintCase`,
   `ResponsiveSidebarState`, `MasterDetailState`, `ScrollController`, `NotificationCenter`,
@@ -99,7 +99,7 @@ here so documentation coverage remains auditable:
   `DragDropHost`, `Draggable`, `DropTarget`,
   `DockWorkspace`, `FloatingWorkspace`, `FloatingStack`, and
   `ReorderableList`.
-- Layout and forms: `Column`, `Row`, `FlexItem`, `Spacer`, `Padding`, `Align`, `Background`,
+- Layout and forms: `Column`, `Row`, `FlexItem`, `Spacer`, `GridCell`, `Padding`, `Align`, `Background`,
   `Grid`, `AspectRatio`, `SafeArea`, `LayoutTransition`, `Presence`, `AdaptiveView`,
   `ConstraintView`, `ResponsiveSidebar`, `MasterDetail`, `SizedBox`, `Stack`,
   `SemanticRegion`, `FormRow`, `FieldGroup`,

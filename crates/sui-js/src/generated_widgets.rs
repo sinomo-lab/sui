@@ -306,6 +306,41 @@ impl JsTableRow {
     }
 }
 
+#[napi(js_name = "ListItem")]
+#[derive(Debug, Clone)]
+pub struct JsListItem {
+    inner: BindingListItem,
+}
+
+#[napi]
+impl JsListItem {
+    #[napi(constructor)]
+    pub fn new(
+        label: String,
+        detail: Option<String>,
+        trailing: Option<String>,
+        icon: Option<String>,
+        semantic_name: Option<String>,
+        description: Option<String>,
+        enabled: Option<bool>,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: BindingListItem::new(label)
+                .with_detail(detail)
+                .with_trailing(trailing)
+                .with_icon(icon.as_deref().map(icon_glyph_from_js).transpose()?)
+                .with_semantic_name(semantic_name)
+                .with_description(description)
+                .with_enabled(enabled.unwrap_or(true)),
+        })
+    }
+
+    #[napi(getter)]
+    pub fn label(&self) -> String {
+        self.inner.label().to_string()
+    }
+}
+
 #[napi(js_name = "TreeItem")]
 #[derive(Debug, Clone)]
 pub struct JsTreeItem {
@@ -1743,9 +1778,24 @@ fn optional_uniform_insets(value: Option<f64>) -> Option<sui_crate::Insets> {
 pub fn js_label(
     value: JsBindingTextArg,
     semantic_name: Option<String>,
+    color: Option<&JsColor>,
+    font_size: Option<f64>,
+    line_height: Option<f64>,
+    weight: Option<u32>,
+    single_line: Option<bool>,
+    selectable: Option<bool>,
 ) -> Result<JsWidget> {
-    JsWidget::from_binding(BindingWidget::label(
+    let options = BindingLabelOptions {
+        color: color.map(|value| (*value).into()),
+        font_size: font_size.map(|value| value as f32),
+        line_height: line_height.map(|value| value as f32),
+        weight: weight.map(|value| FontWeight::new(value.min(u32::from(u16::MAX)) as u16)),
+        single_line: single_line.unwrap_or(false),
+        selectable: selectable.unwrap_or(false),
+    };
+    JsWidget::from_binding(BindingWidget::label_with_options(
         binding_text_from_js(value),
+        options,
     ))
     .with_semantic_name(semantic_name)
 }
@@ -2120,7 +2170,7 @@ pub fn js_path_bar(
 pub fn js_list_view(
     env: Env,
     name: JsBindingTextArg,
-    items: Vec<String>,
+    items: Array<'_>,
     selected: Option<JsBindingNumberArg>,
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
     enabled: Option<JsBindingBoolArg>,
@@ -2142,7 +2192,7 @@ pub fn js_list_view(
         .transpose()?;
     JsWidget::from_binding(BindingWidget::list_view(
         binding_text_from_js(name),
-        items,
+        extract_list_items(&items)?,
         selected.map(binding_number_from_js),
         action,
     ))
@@ -2793,19 +2843,57 @@ pub fn js_spacer() -> JsWidget {
 #[napi(js_name = "Grid")]
 pub fn js_grid(
     children: Array<'_>,
-    columns: Option<u32>,
+    columns: Option<Either<u32, Array<'_>>>,
     name: Option<String>,
     gap: Option<f64>,
     column_gap: Option<f64>,
     row_gap: Option<f64>,
+    rows: Option<Array<'_>>,
 ) -> Result<JsWidget> {
     let gap = gap.unwrap_or(0.0) as f32;
-    Ok(JsWidget::from_binding(BindingWidget::grid(
-        columns.unwrap_or(2) as usize,
+    // A count means that many equal columns; an array gives each track.
+    let columns = match columns {
+        None => vec![GridTrack::fraction(1.0); 2],
+        Some(Either::A(count)) => vec![GridTrack::fraction(1.0); (count as usize).max(1)],
+        Some(Either::B(tracks)) => js_grid_tracks(&tracks)?,
+    };
+    let rows = rows
+        .as_ref()
+        .map(js_grid_tracks)
+        .transpose()?
+        .unwrap_or_default();
+    Ok(JsWidget::from_binding(BindingWidget::grid_with_tracks(
+        columns,
+        rows,
         extract_binding_widgets(&children)?,
         name,
         column_gap.map(|value| value as f32).unwrap_or(gap),
         row_gap.map(|value| value as f32).unwrap_or(gap),
+    )))
+}
+
+#[napi(js_name = "GridCell")]
+pub fn js_grid_cell(
+    child: &JsWidget,
+    row: u32,
+    column: u32,
+    row_span: Option<u32>,
+    column_span: Option<u32>,
+    horizontal: Option<String>,
+    vertical: Option<String>,
+) -> Result<JsWidget> {
+    let cell = sui_crate::GridCell::new(row as usize, column as usize)
+        .span(
+            row_span.unwrap_or(1).max(1) as usize,
+            column_span.unwrap_or(1).max(1) as usize,
+        )
+        .align(
+            alignment_from_js(horizontal.as_deref().unwrap_or("stretch"))?,
+            alignment_from_js(vertical.as_deref().unwrap_or("stretch"))?,
+        );
+    Ok(JsWidget::from_binding(BindingWidget::grid_cell(
+        child.binding_widget()?,
+        cell,
     )))
 }
 

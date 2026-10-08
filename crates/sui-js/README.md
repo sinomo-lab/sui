@@ -108,7 +108,9 @@ and `row(...)` take `justify`, `alignItems`, and `wrap`; wrap a direct child in
 `spacer()` to fill the remaining space. `rebuildOnChange(states, build)`
 rebuilds a subtree on the UI thread whenever one of `states` changes. Pass a
 `ScrollController` as `controller` to `scrollView` or `virtualScrollView` to
-scroll from code with `scrollTo` and `scrollToItem`.
+scroll from code with `scrollTo` and `scrollToItem`. Labels take typography
+options, `listView` accepts `ListItem` objects beside strings, and `grid`
+accepts explicit column and row tracks with `gridCell` placement.
 
 The portable media surface includes both `colorPicker(...)` and the compact,
 mode-selectable `simpleColorPicker(...)` (`hsl`, `hsv`, `rgb`, or `oklch`).

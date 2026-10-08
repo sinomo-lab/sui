@@ -545,6 +545,17 @@ ts_kind = "function"
 docs = ["RebuildOnChange"]
 
 [[item]]
+name = "GridCell"
+kind = "layout"
+core_constructor = "grid_cell"
+python_kind = "function"
+python_rust = "py_grid_cell"
+js_kind = "function"
+js_rust = "js_grid_cell"
+ts_kind = "function"
+docs = ["GridCell"]
+
+[[item]]
 name = "Spacer"
 kind = "layout"
 core_constructor = "spacer"
@@ -930,6 +941,15 @@ js_kind = "function"
 js_rust = "js_external_surface"
 ts_kind = "function"
 docs = ["ExternalSurface"]
+
+[[item]]
+name = "ListItem"
+kind = "descriptor"
+core_descriptor = "BindingListItem"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["ListItem"]
 
 [[item]]
 name = "TreeItem"

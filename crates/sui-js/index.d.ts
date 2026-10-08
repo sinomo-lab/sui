@@ -998,10 +998,16 @@ export class TableRow {
   constructor(cells: string[]);
 }
 
-export function Label(value: State | BindingValue, semanticName?: string): Widget;
+export function Label(value: State | BindingValue, semanticName?: string, color?: Color, fontSize?: number, lineHeight?: number, weight?: number, singleLine?: boolean, selectable?: boolean): Widget;
 
 export interface LabelOptions {
   semanticName?: string;
+  color?: Color;
+  fontSize?: number;
+  lineHeight?: number;
+  weight?: number;
+  singleLine?: boolean;
+  selectable?: boolean;
 }
 
 export function label(value: State | BindingValue, options?: LabelOptions): Widget;
@@ -1125,7 +1131,7 @@ export interface PathBarOptions {
 
 export function pathBar(name: State | BindingValue, items: string[], options?: PathBarOptions): Widget;
 
-export function ListView(name: State | BindingValue, items: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
+export function ListView(name: State | BindingValue, items: (string | ListItem)[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface ListViewOptions {
   selected?: State | number | boolean;
@@ -1133,7 +1139,7 @@ export interface ListViewOptions {
   enabled?: State | boolean | number;
 }
 
-export function listView(name: State | BindingValue, items: string[], options?: ListViewOptions): Widget;
+export function listView(name: State | BindingValue, items: (string | ListItem)[], options?: ListViewOptions): Widget;
 
 export function Table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
@@ -1435,18 +1441,30 @@ export function RebuildOnChange(states: State[], build: () => Widget): Widget;
 
 export function rebuildOnChange(states: State[], build: () => Widget): Widget;
 
+export function GridCell(child: Widget, row: number, column: number, rowSpan?: number, columnSpan?: number, horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
+
+export interface GridCellOptions {
+  rowSpan?: number;
+  columnSpan?: number;
+  horizontal?: "start" | "center" | "end" | "stretch";
+  vertical?: "start" | "center" | "end" | "stretch";
+}
+
+export function gridCell(child: Widget, row: number, column: number, options?: GridCellOptions): Widget;
+
 export function Spacer(): Widget;
 
 export function spacer(): Widget;
 
-export function Grid(children: Widget[], columns?: number, name?: string, gap?: number, columnGap?: number, rowGap?: number): Widget;
+export function Grid(children: Widget[], columns?: number | (number | string)[], name?: string, gap?: number, columnGap?: number, rowGap?: number, rows?: (number | string)[]): Widget;
 
 export interface GridOptions {
-  columns?: number;
+  columns?: number | (number | string)[];
   name?: string;
   gap?: number;
   columnGap?: number;
   rowGap?: number;
+  rows?: (number | string)[];
 }
 
 export function grid(children: Widget[], options?: GridOptions): Widget;
@@ -1760,6 +1778,11 @@ export interface ExternalSurfaceOptions {
 }
 
 export function externalSurface(texture: ExternalTextureDescriptor, options?: ExternalSurfaceOptions): Widget;
+
+export class ListItem {
+  constructor(label: string, detail?: string, trailing?: string, icon?: IconGlyph | string, semanticName?: string, description?: string, enabled?: boolean);
+  readonly label: string;
+}
 
 export class TreeItem {
   constructor(label: string, detail?: string, expanded?: boolean, enabled?: boolean, children?: TreeItem[]);

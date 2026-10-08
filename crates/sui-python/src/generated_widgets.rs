@@ -280,6 +280,46 @@ impl PyTableRow {
     }
 }
 
+#[pyclass(name = "ListItem", module = "sinomo_ui", frozen, skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyListItem {
+    inner: BindingListItem,
+}
+
+#[pymethods]
+impl PyListItem {
+    #[new]
+    #[pyo3(signature = (label, detail=None, trailing=None, icon=None, semantic_name=None, description=None, enabled=true))]
+    pub fn new(
+        label: String,
+        detail: Option<String>,
+        trailing: Option<String>,
+        icon: Option<&str>,
+        semantic_name: Option<String>,
+        description: Option<String>,
+        enabled: bool,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: BindingListItem::new(label)
+                .with_detail(detail)
+                .with_trailing(trailing)
+                .with_icon(icon.map(py_icon_glyph).transpose()?)
+                .with_semantic_name(semantic_name)
+                .with_description(description)
+                .with_enabled(enabled),
+        })
+    }
+
+    #[getter]
+    pub fn label(&self) -> &str {
+        self.inner.label()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.inner)
+    }
+}
+
 #[pyclass(name = "TreeItem", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyTreeItem {
@@ -1550,13 +1590,30 @@ fn optional_uniform_insets(value: Option<f32>) -> Option<sui_crate::Insets> {
 }
 
 #[pyfunction(name = "label")]
-#[pyo3(signature = (value, semantic_name=None))]
+#[pyo3(signature = (value, semantic_name=None, color=None, font_size=None, line_height=None, weight=None, single_line=false, selectable=false))]
 pub fn py_label(
     value: &Bound<'_, PyAny>,
     semantic_name: Option<String>,
+    color: Option<PyColor>,
+    font_size: Option<f32>,
+    line_height: Option<f32>,
+    weight: Option<u16>,
+    single_line: bool,
+    selectable: bool,
 ) -> PyResult<PyWidget> {
-    PyWidget::from_binding(BindingWidget::label(binding_text_from_py(value)?))
-        .with_semantic_name(semantic_name)
+    let options = BindingLabelOptions {
+        color: color.map(Into::into),
+        font_size,
+        line_height,
+        weight: weight.map(FontWeight::new),
+        single_line,
+        selectable,
+    };
+    PyWidget::from_binding(BindingWidget::label_with_options(
+        binding_text_from_py(value)?,
+        options,
+    ))
+    .with_semantic_name(semantic_name)
 }
 
 #[pyfunction(name = "button")]
@@ -1901,7 +1958,7 @@ pub fn py_path_bar(
 #[pyo3(signature = (name, items, selected=None, on_change=None, enabled=None))]
 pub fn py_list_view(
     name: &Bound<'_, PyAny>,
-    items: Vec<String>,
+    items: &Bound<'_, PyAny>,
     selected: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
     enabled: Option<&Bound<'_, PyAny>>,
@@ -1919,7 +1976,7 @@ pub fn py_list_view(
     });
     PyWidget::from_binding(BindingWidget::list_view(
         binding_text_from_py(name)?,
-        items,
+        extract_list_items(items)?,
         selected,
         action,
     ))
@@ -3166,21 +3223,52 @@ pub fn py_spacer() -> PyWidget {
 }
 
 #[pyfunction(name = "grid")]
-#[pyo3(signature = (children, columns=2, name=None, gap=0.0, column_gap=None, row_gap=None))]
+#[pyo3(signature = (children, columns=None, name=None, gap=0.0, column_gap=None, row_gap=None, rows=None))]
 pub fn py_grid(
     children: &Bound<'_, PyAny>,
-    columns: usize,
+    columns: Option<&Bound<'_, PyAny>>,
     name: Option<String>,
     gap: f32,
     column_gap: Option<f32>,
     row_gap: Option<f32>,
+    rows: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
-    Ok(PyWidget::from_binding(BindingWidget::grid(
+    // A count means that many equal columns; a list gives each track.
+    let columns = match columns {
+        None => vec![GridTrack::fraction(1.0); 2],
+        Some(columns) => match columns.extract::<usize>() {
+            Ok(count) => vec![GridTrack::fraction(1.0); count.max(1)],
+            Err(_) => py_grid_tracks(columns)?,
+        },
+    };
+    let rows = rows.map(py_grid_tracks).transpose()?.unwrap_or_default();
+    Ok(PyWidget::from_binding(BindingWidget::grid_with_tracks(
         columns,
+        rows,
         extract_binding_widgets(children)?,
         name,
         column_gap.unwrap_or(gap),
         row_gap.unwrap_or(gap),
+    )))
+}
+
+#[pyfunction(name = "grid_cell")]
+#[pyo3(signature = (child, row, column, row_span=1, column_span=1, horizontal="stretch", vertical="stretch"))]
+pub fn py_grid_cell(
+    child: PyRef<'_, PyWidget>,
+    row: usize,
+    column: usize,
+    row_span: usize,
+    column_span: usize,
+    horizontal: &str,
+    vertical: &str,
+) -> PyResult<PyWidget> {
+    let cell = sui_crate::GridCell::new(row, column)
+        .span(row_span.max(1), column_span.max(1))
+        .align(py_alignment(horizontal)?, py_alignment(vertical)?);
+    Ok(PyWidget::from_binding(BindingWidget::grid_cell(
+        child.binding_widget()?,
+        cell,
     )))
 }
 
@@ -4502,6 +4590,7 @@ pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_row, m)?)?;
     m.add_function(wrap_pyfunction!(py_flex_item, m)?)?;
     m.add_function(wrap_pyfunction!(py_rebuild_on_change, m)?)?;
+    m.add_function(wrap_pyfunction!(py_grid_cell, m)?)?;
     m.add_function(wrap_pyfunction!(py_spacer, m)?)?;
     m.add_function(wrap_pyfunction!(py_grid, m)?)?;
     m.add_function(wrap_pyfunction!(py_aspect_ratio, m)?)?;
@@ -4536,6 +4625,7 @@ pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_virtual_list, m)?)?;
     m.add_function(wrap_pyfunction!(py_scroll_view, m)?)?;
     m.add_function(wrap_pyfunction!(py_external_surface, m)?)?;
+    m.add_class::<PyListItem>()?;
     m.add_class::<PyTreeItem>()?;
     m.add_function(wrap_pyfunction!(py_tree_view, m)?)?;
     m.add_class::<PyLayerListItem>()?;

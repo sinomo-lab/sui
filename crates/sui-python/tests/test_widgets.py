@@ -341,3 +341,84 @@ def test_scroll_controller_scrolls_a_virtual_list_to_an_item():
     controller.scroll_to_item(150)
     running.drain()
     assert running.render().find(text="Item 150")
+
+
+def test_label_typography_options():
+    text = "A long sentence that would normally wrap inside a narrow column of text."
+    running = start(
+        sui.sized_box(
+            sui.column(
+                [
+                    sui.label("Body", semantic_name="body"),
+                    sui.label("Title", semantic_name="title", font_size=32, weight=700),
+                    sui.label(text, semantic_name="wrapped"),
+                    sui.label(text, semantic_name="single", single_line=True),
+                    sui.label("Copy me", semantic_name="copy", selectable=True,
+                              color=sui.Color.rgba(1, 0, 0, 1)),
+                ],
+                align_items="stretch",
+            ),
+            width=160,
+        )
+    )
+    snapshot = running.render()
+    height = lambda name: snapshot.get_one(name=name).bounds.height
+    assert height("title") > 1.5 * height("body")
+    assert height("wrapped") > 2 * height("body")
+    assert height("single") == pytest.approx(height("body"))
+    assert snapshot.get_one(name="copy")
+
+
+def test_list_view_accepts_rich_list_items():
+    changes = []
+    running = start(
+        sui.list_view(
+            "Files",
+            [
+                "plain.txt",
+                sui.ListItem("report.pdf", detail="2 MB", trailing="Today", icon="file"),
+                sui.ListItem("locked.db", semantic_name="Locked database", enabled=False),
+            ],
+            on_change=lambda index, label: changes.append((index, label)),
+        )
+    )
+    snapshot = running.render()
+    names = [node.name for node in snapshot.find()]
+    assert "plain.txt" in names
+    assert any(name and "report.pdf" in name for name in names)
+    assert "Locked database" in names
+
+    with pytest.raises(TypeError, match="str or ListItem"):
+        sui.list_view("Bad", [42])
+    assert sui.ListItem("x").label == "x"
+
+
+def test_grid_tracks_and_cells():
+    running = start(
+        sui.sized_box(
+            sui.grid(
+                [
+                    sui.grid_cell(sui.button("Header"), row=0, column=0, column_span=3),
+                    sui.grid_cell(sui.button("Side"), row=1, column=0),
+                    sui.grid_cell(sui.button("Main"), row=1, column=1, column_span=2),
+                ],
+                columns=[100, "1fr", "minmax(50, 1fr)"],
+                rows=["auto", 200],
+            ),
+            width=500,
+            height=400,
+        )
+    )
+    snapshot = running.render()
+    header = bounds(snapshot, "button", "Header")
+    side = bounds(snapshot, "button", "Side")
+    main = bounds(snapshot, "button", "Main")
+    assert header.width == pytest.approx(500)
+    assert side.width == pytest.approx(100)
+    assert main.x == pytest.approx(100) and main.width == pytest.approx(400)
+    assert side.height == pytest.approx(200)
+
+    with pytest.raises(ValueError, match="unknown grid track"):
+        sui.grid([], columns=["wide"])
+    # A count still means that many equal columns.
+    assert sui.grid([sui.label("a")], columns=3)

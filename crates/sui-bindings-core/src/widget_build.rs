@@ -7,6 +7,7 @@ use crate::foreign_widget::ForeignWidget;
 use crate::graphics::BindingScrollAxes;
 use crate::scrolling::BindingScrollController;
 use crate::support::recover_lock;
+use crate::values::BindingListItem;
 use crate::values::{
     BindingBool, BindingColorPaletteSwatch, BindingLayerListItem, BindingMenuItem, BindingNumber,
     BindingTableColumn, BindingTableRow, BindingText, BindingTextSpan, BindingToolPaletteItem,
@@ -47,6 +48,7 @@ use sui::ConstraintView;
 use sui::ContextMenu;
 use sui::CoverageDots;
 use sui::DateTimeInput;
+use sui::DefaultTheme;
 use sui::DetailRow;
 use sui::Dialog;
 use sui::Dock;
@@ -68,7 +70,6 @@ use sui::FormRow;
 use sui::FormSection;
 use sui::FramedField;
 use sui::Grid;
-use sui::GridTrack;
 use sui::Icon;
 use sui::IconButton;
 use sui::Image;
@@ -77,7 +78,6 @@ use sui::Label;
 use sui::LayerList;
 use sui::LayoutTransition;
 use sui::Link;
-use sui::ListItem;
 use sui::ListView;
 use sui::MasterDetail;
 use sui::MeasuredBottomDock;
@@ -107,6 +107,7 @@ use sui::ScrollView;
 use sui::SectionLabel;
 use sui::SegmentedControl;
 use sui::Select;
+use sui::SelectionScope;
 use sui::SemanticRegion;
 use sui::Separator;
 use sui::SideSheet;
@@ -170,13 +171,41 @@ impl BindingWidget {
     pub(crate) fn into_runtime_widget(&self, context: BindingBuildContext) -> BindingRuntimeWidget {
         let errors = context;
         match self.inner.as_ref() {
-            BindingWidgetKind::Label { text } => {
+            BindingWidgetKind::Label { text, options } => {
                 let mut label = Label::new(text.resolve()).text_when({
                     let text = text.clone();
                     move || text.resolve()
                 });
+                // Weight belongs to the style itself; color and sizes layer
+                // over whichever style the label uses.
+                let weight = options.weight;
                 if let Some(theme) = errors.theme.clone() {
-                    label = label.text_style_when(move || theme.snapshot().body_text_style());
+                    label = label.text_style_when(move || {
+                        let mut style = theme.snapshot().body_text_style();
+                        if let Some(weight) = weight {
+                            style.weight = weight;
+                        }
+                        style
+                    });
+                } else if let Some(weight) = weight {
+                    let mut style = DefaultTheme::default().body_text_style();
+                    style.weight = weight;
+                    label = label.text_style(style);
+                }
+                if let Some(color) = options.color {
+                    label = label.color(color);
+                }
+                if let Some(font_size) = options.font_size {
+                    label = label.font_size(font_size);
+                }
+                if let Some(line_height) = options.line_height {
+                    label = label.line_height(line_height);
+                }
+                if options.single_line {
+                    label = label.single_line(true);
+                }
+                if options.selectable {
+                    label = label.selectable(SelectionScope::new());
                 }
                 let label = named_widget!(label, self.semantic_name.as_ref());
                 BindingRuntimeWidget::new(label)
@@ -553,8 +582,8 @@ impl BindingWidget {
                 selected,
                 action,
             } => {
-                let mut list_view =
-                    ListView::new(name.resolve()).items(items.iter().cloned().map(ListItem::new));
+                let mut list_view = ListView::new(name.resolve())
+                    .items(items.iter().map(BindingListItem::into_sui));
                 if let Some(selected) = selected {
                     if let Some(index) = binding_number_to_index(selected.resolve()) {
                         list_view = list_view.selected(index);
@@ -2117,22 +2146,32 @@ impl BindingWidget {
             }
             BindingWidgetKind::Grid {
                 columns,
+                rows,
                 children,
                 name,
                 column_gap,
                 row_gap,
             } => {
-                let mut grid = Grid::new(std::iter::repeat_n(GridTrack::fraction(1.0), *columns))
+                let mut grid = Grid::new(columns.iter().copied())
                     .column_gap(*column_gap)
                     .row_gap(*row_gap);
+                if !rows.is_empty() {
+                    grid = grid.rows(rows.iter().copied());
+                }
                 if let Some(name) = name {
                     grid = grid.name(name.clone());
                 }
                 for child in children {
-                    grid = grid.with_child(child.into_runtime_widget(errors.clone()));
+                    match child.inner.as_ref() {
+                        BindingWidgetKind::GridCell { child, cell } => {
+                            grid = grid.with_cell(*cell, child.into_runtime_widget(errors.clone()));
+                        }
+                        _ => grid = grid.with_child(child.into_runtime_widget(errors.clone())),
+                    }
                 }
                 BindingRuntimeWidget::new(grid)
             }
+            BindingWidgetKind::GridCell { child, .. } => child.into_runtime_widget(errors),
             BindingWidgetKind::AspectRatio {
                 child,
                 ratio,

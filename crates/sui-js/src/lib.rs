@@ -12,6 +12,7 @@ use std::{
     fs,
     sync::{Arc, Mutex},
 };
+use sui_crate::GridTrack;
 
 use ::sui as sui_crate;
 use napi::bindgen_prelude::*;
@@ -30,29 +31,31 @@ use sui_bindings_core::{
     BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFontHandle,
     BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle, BindingImeEvent,
     BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState, BindingKeyboardEvent,
-    BindingLayerListItem, BindingMasterDetailState, BindingMenuItem, BindingMessageAction,
-    BindingModifiers, BindingNotificationCenter, BindingNumber, BindingNumberAction,
-    BindingPixelCanvasExport, BindingPixelCanvasState, BindingPointerButton, BindingPointerEvent,
-    BindingPointerEventKind, BindingPointerKind, BindingRawMouseMotionEvent,
-    BindingReactiveInvalidationTrace, BindingRenderOptions, BindingRenderSnapshot,
-    BindingReorderAction, BindingResponsiveSidebarState, BindingRichDocument,
-    BindingRichDocumentUpdate, BindingRuntime, BindingScrollAxes, BindingScrollController,
-    BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction, BindingSemanticNode,
-    BindingShader, BindingSpring, BindingState, BindingStateSubscription, BindingStatusBarSegment,
-    BindingStringAction, BindingStringsAction, BindingTableColumn, BindingTableRow, BindingText,
-    BindingTextFieldOptions, BindingTextSpan, BindingTheme, BindingToolPaletteItem,
-    BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue, BindingVirtualListItem,
-    BindingVirtualListModel, BindingWidget, BindingWidgetBuilder, BindingWidgetRebuildTrace,
-    BindingWidgetTiming, BindingWindow, BindingWindowEvent, BindingWindowId, ExternalBackendHandle,
-    ExternalSync, ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
-    ForeignArrangeCtx, ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx,
-    ForeignMeasureCtx, ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
+    BindingLabelOptions, BindingLayerListItem, BindingListItem, BindingMasterDetailState,
+    BindingMenuItem, BindingMessageAction, BindingModifiers, BindingNotificationCenter,
+    BindingNumber, BindingNumberAction, BindingPixelCanvasExport, BindingPixelCanvasState,
+    BindingPointerButton, BindingPointerEvent, BindingPointerEventKind, BindingPointerKind,
+    BindingRawMouseMotionEvent, BindingReactiveInvalidationTrace, BindingRenderOptions,
+    BindingRenderSnapshot, BindingReorderAction, BindingResponsiveSidebarState,
+    BindingRichDocument, BindingRichDocumentUpdate, BindingRuntime, BindingScrollAxes,
+    BindingScrollController, BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction,
+    BindingSemanticNode, BindingShader, BindingSpring, BindingState, BindingStateSubscription,
+    BindingStatusBarSegment, BindingStringAction, BindingStringsAction, BindingTableColumn,
+    BindingTableRow, BindingText, BindingTextFieldOptions, BindingTextSpan, BindingTheme,
+    BindingToolPaletteItem, BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue,
+    BindingVirtualListItem, BindingVirtualListModel, BindingWidget, BindingWidgetBuilder,
+    BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow, BindingWindowEvent,
+    BindingWindowId, ExternalBackendHandle, ExternalSync, ExternalTextureDescriptor,
+    ExternalTextureFormat, ExternalTextureValidationError, ForeignArrangeCtx,
+    ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
+    ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
     RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_alignment_from_name,
     binding_aspect_ratio_fit_from_name, binding_button_appearance_from_name,
-    binding_easing_from_name, binding_flex_justify_from_name, binding_icon_glyph_from_name,
-    binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
-    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
+    binding_easing_from_name, binding_flex_justify_from_name, binding_grid_track_from_name,
+    binding_icon_glyph_from_name, binding_safe_area_edges_from_name,
+    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
+    binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
     binding_semantics_nodes, binding_semantics_role_from_name, binding_semantics_roles,
@@ -5302,6 +5305,38 @@ fn extract_table_rows(rows: &Array<'_>) -> Result<Vec<BindingTableRow>> {
             .get::<ClassInstance<'_, JsTableRow>>(index)?
             .ok_or_else(|| napi_invalid_arg(format!("table row {index} is out of range")))?;
         out.push(row.inner.clone());
+    }
+    Ok(out)
+}
+
+/// Grid tracks given as numbers (fixed sizes) or strings such as `"auto"`,
+/// `"1fr"`, or `"minmax(120, 1fr)"`.
+fn js_grid_tracks(tracks: &Array<'_>) -> Result<Vec<GridTrack>> {
+    let mut out = Vec::with_capacity(tracks.len() as usize);
+    for index in 0..tracks.len() {
+        let track = tracks
+            .get::<Either<f64, String>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("grid track {index} is out of range")))?;
+        out.push(match track {
+            Either::A(points) => GridTrack::fixed(points.max(0.0) as f32),
+            Either::B(name) => binding_grid_track_from_name(&name)
+                .ok_or_else(|| napi_invalid_arg(format!("unknown grid track '{name}'")))?,
+        });
+    }
+    Ok(out)
+}
+
+/// List items given as strings or `ListItem` objects.
+fn extract_list_items(items: &Array<'_>) -> Result<Vec<BindingListItem>> {
+    let mut out = Vec::with_capacity(items.len() as usize);
+    for index in 0..items.len() {
+        let item = items
+            .get::<Either<String, ClassInstance<'_, JsListItem>>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("list item {index} is out of range")))?;
+        out.push(match item {
+            Either::A(label) => BindingListItem::new(label),
+            Either::B(item) => item.inner.clone(),
+        });
     }
     Ok(out)
 }
