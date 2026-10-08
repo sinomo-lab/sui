@@ -107,6 +107,9 @@ and `row(...)` take `justify`, `alignItems`, and `wrap`; wrap a direct child in
 `flexItem(child, { grow: 1 })` to size it along the main axis, and use
 `spacer()` to fill the remaining space. `rebuildOnChange(states, build)`
 rebuilds a subtree on the UI thread whenever one of `states` changes. Pass a
+Host-driven tests can call `runningApp.advanceTime(seconds)`,
+`settleAnimations()`, and `screenshotPng()`, set `setMotionPreference(...)`,
+and scope `find`/`getOne` queries with `within: node.id`.
 `FocusController` and `focusScope(child, { controller })` move keyboard focus
 from code. `UiHandle` schedules UI-thread work with `callLater` and
 `callEvery`, and shows native file dialogs with `showFileDialog`;

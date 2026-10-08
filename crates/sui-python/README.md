@@ -262,6 +262,23 @@ timeline.add_clip(clip)
 role, name, text, description, focus, and visibility. Nodes retain hierarchy,
 bounds, actions, values, and interaction state; pass one to `running.hover`,
 `click`, `press`, or `fill` for locator-style deterministic tests.
+`find` and `get_one` accept `within=node` to search one subtree, and role
+names in any spelling (`"text_input"` or `"text-input"`).
+
+Host-driven tests control time and capture pixels:
+
+- `running.advance_time(seconds)` moves the frame clock and runs the timers
+  and animation frames that became due; `running.settle_animations()` advances
+  until every animation has finished and returns how long that took.
+- `sui.set_motion_preference("reduced" | "off" | "full" | None)` overrides the
+  motion preference, for example to make transitions finish immediately.
+- `running.screenshot_png()` renders a window offscreen and returns PNG data,
+  and `running.save_screenshot(path)` writes it to a file. Screenshots use the
+  window's `size`, or its content's size without one, and need a GPU adapter.
+
+Value types (`Point`, `Size`, `Rect`, `Color`, `Constraints`, and handles)
+compare and hash by value, and a `StateSubscription` works as a context
+manager that unsubscribes on exit.
 
 ## State and threading
 

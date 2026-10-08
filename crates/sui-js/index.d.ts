@@ -752,6 +752,7 @@ export interface FileDialogOptions {
   name?: string;
 }
 
+export function setMotionPreference(preference: "full" | "reduced" | "off" | null): void;
 export function clipboardText(): string | null;
 export function setClipboardText(text: string): void;
 
@@ -858,6 +859,10 @@ export class RunningApp {
   drain(): number;
   tick(frameTime: number): void;
   drainReadyEvents(): number;
+  readonly frameTime: number;
+  advanceTime(seconds: number): void;
+  settleAnimations(limit?: number): number;
+  screenshotPng(index?: number): Buffer;
   requestRedrawAll(): void;
   wakeWindow(window: WindowHandle): void;
   handleEventFor(window: WindowHandle, event: Event): void;
@@ -946,6 +951,7 @@ export interface SemanticsQuery {
   description?: string;
   focused?: boolean;
   visible?: boolean;
+  within?: string;
 }
 
 export class SemanticNode {

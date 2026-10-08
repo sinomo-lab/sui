@@ -39,21 +39,56 @@ impl BindingRenderSnapshot {
         focused: Option<bool>,
         visible: Option<bool>,
     ) -> Vec<BindingSemanticNode> {
+        self.query(&BindingSemanticQuery {
+            role: role.map(str::to_owned),
+            name: name.map(str::to_owned),
+            text: text.map(str::to_owned),
+            description: description.map(str::to_owned),
+            focused,
+            visible,
+            within: None,
+        })
+    }
+
+    /// Nodes matching every filter in `query`, in tree order.
+    pub fn query(&self, query: &BindingSemanticQuery) -> Vec<BindingSemanticNode> {
+        // Accept any spelling of a role name, such as `text-input`.
+        let role = query.role.as_deref().map(|role| {
+            binding_semantics_role_from_name(role)
+                .map(|role| binding_semantics_role_name(&role).to_owned())
+                .unwrap_or_else(|| role.to_owned())
+        });
         self.semantics_nodes
             .iter()
-            .filter(|node| role.is_none_or(|role| node.role == role))
-            .filter(|node| name.is_none_or(|name| node.name.as_deref() == Some(name)))
+            .filter(|node| role.as_deref().is_none_or(|role| node.role == role))
             .filter(|node| {
-                text.is_none_or(|text| {
+                query
+                    .name
+                    .as_deref()
+                    .is_none_or(|name| node.name.as_deref() == Some(name))
+            })
+            .filter(|node| {
+                query.text.as_deref().is_none_or(|text| {
                     node.name.as_deref() == Some(text) || node.value.as_deref() == Some(text)
                 })
             })
             .filter(|node| {
-                description
+                query
+                    .description
+                    .as_deref()
                     .is_none_or(|description| node.description.as_deref() == Some(description))
             })
-            .filter(|node| focused.is_none_or(|focused| node.focused == focused))
-            .filter(|node| visible.is_none_or(|visible| node.visible() == visible))
+            .filter(|node| query.focused.is_none_or(|focused| node.focused == focused))
+            .filter(|node| {
+                query
+                    .visible
+                    .is_none_or(|visible| node.visible() == visible)
+            })
+            .filter(|node| {
+                query
+                    .within
+                    .is_none_or(|ancestor| self.is_descendant(node, ancestor))
+            })
             .cloned()
             .collect()
     }
@@ -64,7 +99,20 @@ impl BindingRenderSnapshot {
         name: Option<&str>,
         text: Option<&str>,
     ) -> Result<BindingSemanticNode, String> {
-        let nodes = self.find_nodes(role, name, text, None, None, Some(true));
+        self.query_one(&BindingSemanticQuery {
+            role: role.map(str::to_owned),
+            name: name.map(str::to_owned),
+            text: text.map(str::to_owned),
+            ..BindingSemanticQuery::default()
+        })
+    }
+
+    /// The one visible node matching `query`. Unless `query.visible` says
+    /// otherwise, only visible nodes are considered.
+    pub fn query_one(&self, query: &BindingSemanticQuery) -> Result<BindingSemanticNode, String> {
+        let mut query = query.clone();
+        query.visible = query.visible.or(Some(true));
+        let nodes = self.query(&query);
         match nodes.as_slice() {
             [node] => Ok(node.clone()),
             [] => Err("semantic query did not match any visible nodes".to_owned()),
@@ -74,6 +122,39 @@ impl BindingRenderSnapshot {
             )),
         }
     }
+
+    fn is_descendant(&self, node: &BindingSemanticNode, ancestor: u64) -> bool {
+        let mut parent = node.parent_id;
+        // Bound the walk by the node count so a malformed tree cannot loop.
+        for _ in 0..self.semantics_nodes.len() {
+            match parent {
+                Some(id) if id == ancestor => return true,
+                Some(id) => {
+                    parent = self
+                        .semantics_nodes
+                        .iter()
+                        .find(|candidate| candidate.id == id)
+                        .and_then(|candidate| candidate.parent_id);
+                }
+                None => return false,
+            }
+        }
+        false
+    }
+}
+
+/// Filters for semantic node queries; `None` matches anything.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BindingSemanticQuery {
+    pub role: Option<String>,
+    pub name: Option<String>,
+    /// Matches a node's name or value.
+    pub text: Option<String>,
+    pub description: Option<String>,
+    pub focused: Option<bool>,
+    pub visible: Option<bool>,
+    /// Only descendants of the node with this id.
+    pub within: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

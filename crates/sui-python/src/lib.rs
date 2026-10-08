@@ -44,14 +44,14 @@ use sui_bindings_core::{
     BindingRenderOptions, BindingRenderSnapshot, BindingReorderAction,
     BindingResponsiveSidebarState, BindingRichDocument, BindingRichDocumentUpdate, BindingRuntime,
     BindingScrollAxes, BindingScrollController, BindingScrollDelta, BindingSegmentedControlItem,
-    BindingSelectAction, BindingSemanticNode, BindingShader, BindingSpring, BindingState,
-    BindingStateSubscription, BindingStatusBarSegment, BindingStringAction, BindingStringsAction,
-    BindingTableColumn, BindingTableRow, BindingText, BindingTextFieldOptions, BindingTextSpan,
-    BindingTheme, BindingTimer, BindingToolPaletteItem, BindingTransition, BindingTreeItem,
-    BindingUiHandle, BindingValue, BindingVirtualListItem, BindingVirtualListModel, BindingWidget,
-    BindingWidgetBuilder, BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow,
-    BindingWindowEvent, BindingWindowId, ExternalBackendHandle, ExternalSync,
-    ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
+    BindingSelectAction, BindingSemanticNode, BindingSemanticQuery, BindingShader, BindingSpring,
+    BindingState, BindingStateSubscription, BindingStatusBarSegment, BindingStringAction,
+    BindingStringsAction, BindingTableColumn, BindingTableRow, BindingText,
+    BindingTextFieldOptions, BindingTextSpan, BindingTheme, BindingTimer, BindingToolPaletteItem,
+    BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue, BindingVirtualListItem,
+    BindingVirtualListModel, BindingWidget, BindingWidgetBuilder, BindingWidgetRebuildTrace,
+    BindingWidgetTiming, BindingWindow, BindingWindowEvent, BindingWindowId, ExternalBackendHandle,
+    ExternalSync, ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
     ForeignArrangeCtx, ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx,
     ForeignMeasureCtx, ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
@@ -59,8 +59,9 @@ use sui_bindings_core::{
     binding_aspect_ratio_fit_from_name, binding_button_appearance_from_name,
     binding_clipboard_text, binding_easing_from_name, binding_file_dialog_mode_from_name,
     binding_flex_justify_from_name, binding_grid_track_from_name, binding_icon_glyph_from_name,
-    binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
-    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
+    binding_motion_preference_from_name, binding_safe_area_edges_from_name,
+    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
+    binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
     binding_semantics_nodes, binding_semantics_role_from_name, binding_semantics_roles,
@@ -93,6 +94,14 @@ pub struct PyPoint {
 
 #[pymethods]
 impl PyPoint {
+    fn __eq__(&self, other: PyRef<'_, Self>) -> bool {
+        self.x == other.x && self.y == other.y
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_floats(&[self.x, self.y])
+    }
+
     #[new]
     pub const fn new(x: f32, y: f32) -> Self {
         Self { x, y }
@@ -681,6 +690,14 @@ pub struct PySize {
 
 #[pymethods]
 impl PySize {
+    fn __eq__(&self, other: PyRef<'_, Self>) -> bool {
+        self.width == other.width && self.height == other.height
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_floats(&[self.width, self.height])
+    }
+
     #[new]
     pub const fn new(width: f32, height: f32) -> Self {
         Self { width, height }
@@ -718,6 +735,17 @@ pub struct PyRect {
 
 #[pymethods]
 impl PyRect {
+    fn __eq__(&self, other: PyRef<'_, Self>) -> bool {
+        self.x == other.x
+            && self.y == other.y
+            && self.width == other.width
+            && self.height == other.height
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_floats(&[self.x, self.y, self.width, self.height])
+    }
+
     #[new]
     pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
         Self {
@@ -973,6 +1001,17 @@ pub struct PyColor {
 
 #[pymethods]
 impl PyColor {
+    fn __eq__(&self, other: PyRef<'_, Self>) -> bool {
+        self.red == other.red
+            && self.green == other.green
+            && self.blue == other.blue
+            && self.alpha == other.alpha
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_floats(&[self.red, self.green, self.blue, self.alpha])
+    }
+
     #[new]
     #[pyo3(signature = (red, green, blue, alpha=1.0))]
     pub const fn new(red: f32, green: f32, blue: f32, alpha: f32) -> Self {
@@ -1163,6 +1202,10 @@ pub struct PyTransition {
 
 #[pymethods]
 impl PyTransition {
+    fn __repr__(&self) -> String {
+        format!("Transition({:?})", self.inner)
+    }
+
     #[new]
     #[pyo3(signature = (start, end, duration, *, start_time=0.0, easing="ease-in-out"))]
     pub fn new(
@@ -1204,6 +1247,10 @@ pub struct PySpring {
 
 #[pymethods]
 impl PySpring {
+    fn __repr__(&self) -> String {
+        format!("Spring({:?})", self.inner)
+    }
+
     #[new]
     #[pyo3(signature = (value, *, stiffness=180.0, damping=24.0))]
     pub fn new(value: f32, stiffness: f32, damping: f32) -> Self {
@@ -1889,6 +1936,29 @@ pub struct PyConstraints {
 
 #[pymethods]
 impl PyConstraints {
+    fn __repr__(&self) -> String {
+        format!(
+            "Constraints(min=Size({}, {}), max=Size({}, {}))",
+            self.min.width, self.min.height, self.max.width, self.max.height
+        )
+    }
+
+    fn __eq__(&self, other: PyRef<'_, Self>) -> bool {
+        self.min.width == other.min.width
+            && self.min.height == other.min.height
+            && self.max.width == other.max.width
+            && self.max.height == other.max.height
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_floats(&[
+            self.min.width,
+            self.min.height,
+            self.max.width,
+            self.max.height,
+        ])
+    }
+
     #[new]
     pub const fn new(min: PySize, max: PySize) -> Self {
         Self { min, max }
@@ -1926,6 +1996,14 @@ pub struct PyFontHandle {
 
 #[pymethods]
 impl PyFontHandle {
+    fn __eq__(&self, other: PyRef<'_, Self>) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_value(&self.inner)
+    }
+
     #[new]
     pub const fn new(raw: u64) -> Self {
         Self {
@@ -1960,6 +2038,14 @@ pub struct PyImageHandle {
 
 #[pymethods]
 impl PyImageHandle {
+    fn __eq__(&self, other: PyRef<'_, Self>) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_value(&self.inner)
+    }
+
     #[new]
     pub const fn new(raw: u64) -> Self {
         Self {
@@ -2423,6 +2509,23 @@ enum PyWidgetKind {
 
 #[pymethods]
 impl PyWidget {
+    fn __repr__(&self) -> String {
+        match &self.kind {
+            PyWidgetKind::Binding(widget) => {
+                // `BindingWidget::Label` or `BindingWidget::Flex { .. }` -> `Label`.
+                let debug = format!("{widget:?}");
+                let kind = debug
+                    .strip_prefix("BindingWidget::")
+                    .unwrap_or(&debug)
+                    .split(|c: char| !c.is_alphanumeric())
+                    .next()
+                    .unwrap_or("widget");
+                format!("Widget({kind})")
+            }
+            _ => "Widget(custom)".to_owned(),
+        }
+    }
+
     #[new]
     #[pyo3(signature = (callbacks, children=None))]
     pub fn new(callbacks: Py<PyAny>, children: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
@@ -2509,6 +2612,11 @@ pub struct PyState {
 
 #[pymethods]
 impl PyState {
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let value = binding_value_to_py(py, self.inner.get())?;
+        Ok(format!("State({})", value.bind(py).repr()?))
+    }
+
     #[new]
     pub fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
@@ -2569,6 +2677,32 @@ pub struct PyStateSubscription {
 
 #[pymethods]
 impl PyStateSubscription {
+    fn __repr__(&self) -> String {
+        format!(
+            "StateSubscription(active={})",
+            if recover_lock(&self.inner).is_some() {
+                "True"
+            } else {
+                "False"
+            }
+        )
+    }
+
+    /// Use the subscription as a context manager; it unsubscribes on exit.
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __exit__(
+        &self,
+        _exc_type: Option<&Bound<'_, PyAny>>,
+        _exc_value: Option<&Bound<'_, PyAny>>,
+        _traceback: Option<&Bound<'_, PyAny>>,
+    ) -> bool {
+        self.unsubscribe();
+        false
+    }
+
     pub fn unsubscribe(&self) -> bool {
         recover_lock(&self.inner)
             .take()
@@ -2695,6 +2829,10 @@ pub struct PyRenderOptions {
 
 #[pymethods]
 impl PyRenderOptions {
+    fn __repr__(&self) -> String {
+        format!("RenderOptions({:?})", self.inner)
+    }
+
     #[new]
     #[pyo3(signature = (
         *, feathering=true, feather_width=1.0, optical_text_alignment=true,
@@ -2772,6 +2910,10 @@ impl PyRenderOptions {
 
 #[pymethods]
 impl PyWindow {
+    fn __repr__(&self) -> String {
+        format!("Window({:?})", self.title)
+    }
+
     #[new]
     #[pyo3(signature = (title, *, size=None, position=None, icon_svg=None, use_default_icon=true))]
     pub fn new(
@@ -2884,6 +3026,10 @@ impl PyApp {
 
 #[pymethods]
 impl PyApp {
+    fn __repr__(&self) -> String {
+        format!("App(windows={})", self.inner.window_count())
+    }
+
     #[new]
     #[pyo3(signature = (*, theme=None, render_options=None))]
     pub fn new(theme: Option<PyTheme>, render_options: Option<PyRenderOptions>) -> Self {
@@ -3071,6 +3217,14 @@ pub struct PyWindowHandle {
 
 #[pymethods]
 impl PyWindowHandle {
+    fn __eq__(&self, other: PyRef<'_, Self>) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        hash_value(&self.inner)
+    }
+
     #[new]
     pub fn new(raw: u64) -> Self {
         Self {
@@ -3135,6 +3289,10 @@ pub struct PyUiHandle {
 
 #[pymethods]
 impl PyUiHandle {
+    fn __repr__(&self) -> String {
+        format!("UiHandle(pending={})", self.inner.pending_count())
+    }
+
     /// Run `callback` on the UI thread after `delay` seconds.
     pub fn call_later(&self, delay: f64, callback: Py<PyAny>) -> PyResult<PyTimer> {
         let delay = timer_duration(delay, "delay")?;
@@ -3747,6 +3905,60 @@ impl PyRunningApp {
 
     pub fn pending_count(&self) -> usize {
         self.inner.borrow().pending_ui_task_count()
+    }
+
+    /// The host-driven frame time in seconds.
+    #[getter]
+    pub fn frame_time(&self) -> f64 {
+        self.inner.borrow().frame_time()
+    }
+
+    /// Move the frame clock forward by `seconds` and run the timers and
+    /// animation frames that became due.
+    pub fn advance_time(&self, seconds: f64) -> PyResult<()> {
+        drive(self.inner.borrow_mut().advance_time(seconds))
+    }
+
+    /// Advance time frame by frame until every animation has finished, and
+    /// return how many seconds that took. Fails after `limit` seconds.
+    #[pyo3(signature = (limit=10.0))]
+    pub fn settle_animations(&self, limit: f64) -> PyResult<f64> {
+        drive(self.inner.borrow_mut().settle_animations(limit))
+    }
+
+    /// Render a window offscreen and return it as PNG data, at the window's
+    /// `size` or, without one, its content's size.
+    #[pyo3(signature = (index=0))]
+    pub fn screenshot_png<'py>(
+        &self,
+        py: Python<'py>,
+        index: usize,
+    ) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
+        let mut runtime = self.inner.borrow_mut();
+        let window_id = runtime.window_id_at(index).map_err(py_runtime_error)?;
+        let png = drive(runtime.capture_png(window_id))?;
+        Ok(pyo3::types::PyBytes::new(py, &png))
+    }
+
+    /// Render a window offscreen and write it to `path` as a PNG file.
+    #[pyo3(signature = (path, index=0))]
+    pub fn save_screenshot(
+        &self,
+        py: Python<'_>,
+        path: std::path::PathBuf,
+        index: usize,
+    ) -> PyResult<()> {
+        let png = self.screenshot_png(py, index)?;
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|error| {
+                PyOSError::new_err(format!("failed to create '{}': {error}", parent.display()))
+            })?;
+        }
+        fs::write(&path, png.as_bytes()).map_err(|error| {
+            PyOSError::new_err(format!("failed to write '{}': {error}", path.display()))
+        })
     }
 }
 
@@ -4449,32 +4661,56 @@ pub struct PyRenderSnapshot {
 
 #[pymethods]
 impl PyRenderSnapshot {
-    #[pyo3(signature = (*, role=None, name=None, text=None, description=None, focused=None, visible=true))]
+    /// Nodes matching every given filter. `within` limits the search to a
+    /// node's descendants.
+    #[pyo3(signature = (*, role=None, name=None, text=None, description=None, focused=None, visible=true, within=None))]
     pub fn find(
         &self,
-        role: Option<&str>,
-        name: Option<&str>,
-        text: Option<&str>,
-        description: Option<&str>,
+        role: Option<String>,
+        name: Option<String>,
+        text: Option<String>,
+        description: Option<String>,
         focused: Option<bool>,
         visible: Option<bool>,
+        within: Option<PyRef<'_, PySemanticNode>>,
     ) -> Vec<PySemanticNode> {
         self.inner_snapshot()
-            .find_nodes(role, name, text, description, focused, visible)
+            .query(&BindingSemanticQuery {
+                role,
+                name,
+                text,
+                description,
+                focused,
+                visible,
+                within: within.map(|node| node.inner.id),
+            })
             .into_iter()
             .map(Into::into)
             .collect()
     }
 
-    #[pyo3(signature = (*, role=None, name=None, text=None))]
+    /// The one visible node matching every given filter. Raises
+    /// `ValueError` when none or several match.
+    #[pyo3(signature = (*, role=None, name=None, text=None, description=None, focused=None, within=None))]
     pub fn get_one(
         &self,
-        role: Option<&str>,
-        name: Option<&str>,
-        text: Option<&str>,
+        role: Option<String>,
+        name: Option<String>,
+        text: Option<String>,
+        description: Option<String>,
+        focused: Option<bool>,
+        within: Option<PyRef<'_, PySemanticNode>>,
     ) -> PyResult<PySemanticNode> {
         self.inner_snapshot()
-            .get_one(role, name, text)
+            .query_one(&BindingSemanticQuery {
+                role,
+                name,
+                text,
+                description,
+                focused,
+                visible: Some(true),
+                within: within.map(|node| node.inner.id),
+            })
             .map(Into::into)
             .map_err(PyValueError::new_err)
     }
@@ -4698,7 +4934,26 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_widget, m)?)?;
     m.add_function(wrap_pyfunction!(callback_errors::set_exception_handler, m)?)?;
     m.add_function(wrap_pyfunction!(clipboard_text, m)?)?;
+    m.add_function(wrap_pyfunction!(set_motion_preference, m)?)?;
     m.add_function(wrap_pyfunction!(set_clipboard_text, m)?)?;
+    Ok(())
+}
+
+/// Override how much motion the app's animations use: `"full"`, `"reduced"`
+/// (fades but no movement), or `"off"`. `None` follows the system setting.
+#[pyfunction]
+#[pyo3(signature = (preference))]
+fn set_motion_preference(preference: Option<&str>) -> PyResult<()> {
+    let preference = preference
+        .map(|value| {
+            binding_motion_preference_from_name(value).ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "unknown motion preference '{value}'; use 'full', 'reduced', or 'off'"
+                ))
+            })
+        })
+        .transpose()?;
+    sui_crate::set_app_motion_preference(preference);
     Ok(())
 }
 
@@ -4712,6 +4967,25 @@ fn clipboard_text() -> Option<String> {
 #[pyfunction]
 fn set_clipboard_text(text: &str) {
     binding_set_clipboard_text(text);
+}
+
+/// A hash of float fields that agrees with `==`, so `0.0` and `-0.0` hash
+/// alike.
+fn hash_floats(values: &[f32]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for value in values {
+        let value = if *value == 0.0 { 0.0f32 } else { *value };
+        value.to_bits().hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn hash_value(value: &impl std::hash::Hash) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn binding_value_from_py(value: &Bound<'_, PyAny>) -> PyResult<BindingValue> {

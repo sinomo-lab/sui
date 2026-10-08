@@ -840,6 +840,15 @@ fn parse_grid_points(value: &str) -> Option<f32> {
     value.parse::<f32>().ok().filter(|points| *points >= 0.0)
 }
 
+pub fn binding_motion_preference_from_name(value: &str) -> Option<sui::MotionPreference> {
+    match normalize_binding_name(value).as_str() {
+        "full" => Some(sui::MotionPreference::Full),
+        "reduced" | "reduce" => Some(sui::MotionPreference::Reduced),
+        "off" | "none" => Some(sui::MotionPreference::Off),
+        _ => None,
+    }
+}
+
 pub fn binding_flex_justify_from_name(value: &str) -> Option<FlexJustify> {
     match normalize_binding_name(value).as_str() {
         "start" => Some(FlexJustify::Start),

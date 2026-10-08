@@ -39,14 +39,14 @@ use sui_bindings_core::{
     BindingRenderOptions, BindingRenderSnapshot, BindingReorderAction,
     BindingResponsiveSidebarState, BindingRichDocument, BindingRichDocumentUpdate, BindingRuntime,
     BindingScrollAxes, BindingScrollController, BindingScrollDelta, BindingSegmentedControlItem,
-    BindingSelectAction, BindingSemanticNode, BindingShader, BindingSpring, BindingState,
-    BindingStateSubscription, BindingStatusBarSegment, BindingStringAction, BindingStringsAction,
-    BindingTableColumn, BindingTableRow, BindingText, BindingTextFieldOptions, BindingTextSpan,
-    BindingTheme, BindingTimer, BindingToolPaletteItem, BindingTransition, BindingTreeItem,
-    BindingUiHandle, BindingValue, BindingVirtualListItem, BindingVirtualListModel, BindingWidget,
-    BindingWidgetBuilder, BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow,
-    BindingWindowEvent, BindingWindowId, ExternalBackendHandle, ExternalSync,
-    ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
+    BindingSelectAction, BindingSemanticNode, BindingSemanticQuery, BindingShader, BindingSpring,
+    BindingState, BindingStateSubscription, BindingStatusBarSegment, BindingStringAction,
+    BindingStringsAction, BindingTableColumn, BindingTableRow, BindingText,
+    BindingTextFieldOptions, BindingTextSpan, BindingTheme, BindingTimer, BindingToolPaletteItem,
+    BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue, BindingVirtualListItem,
+    BindingVirtualListModel, BindingWidget, BindingWidgetBuilder, BindingWidgetRebuildTrace,
+    BindingWidgetTiming, BindingWindow, BindingWindowEvent, BindingWindowId, ExternalBackendHandle,
+    ExternalSync, ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
     ForeignArrangeCtx, ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx,
     ForeignMeasureCtx, ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
@@ -54,8 +54,9 @@ use sui_bindings_core::{
     binding_aspect_ratio_fit_from_name, binding_button_appearance_from_name,
     binding_clipboard_text, binding_easing_from_name, binding_file_dialog_mode_from_name,
     binding_flex_justify_from_name, binding_grid_track_from_name, binding_icon_glyph_from_name,
-    binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
-    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
+    binding_motion_preference_from_name, binding_safe_area_edges_from_name,
+    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
+    binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
     binding_semantics_nodes, binding_semantics_role_from_name, binding_semantics_roles,
@@ -3376,6 +3377,23 @@ pub fn js_clipboard_text() -> Option<String> {
     binding_clipboard_text()
 }
 
+/// Override how much motion the app's animations use: `"full"`,
+/// `"reduced"`, or `"off"`. `null` follows the system setting.
+#[napi(js_name = "setMotionPreference")]
+pub fn js_set_motion_preference(preference: Option<String>) -> Result<()> {
+    let preference = preference
+        .map(|value| {
+            binding_motion_preference_from_name(&value).ok_or_else(|| {
+                napi_invalid_arg(format!(
+                    "unknown motion preference '{value}'; use 'full', 'reduced', or 'off'"
+                ))
+            })
+        })
+        .transpose()?;
+    sui_crate::set_app_motion_preference(preference);
+    Ok(())
+}
+
 #[napi(js_name = "setClipboardText")]
 pub fn js_set_clipboard_text(text: String) {
     binding_set_clipboard_text(&text);
@@ -3699,6 +3717,43 @@ impl JsRunningApp {
     #[napi]
     pub fn tick(&self, frame_time: f64) {
         recover_lock(&self.inner).tick(frame_time);
+    }
+
+    /// The host-driven frame time in seconds.
+    #[napi(getter, js_name = "frameTime")]
+    pub fn frame_time(&self) -> f64 {
+        recover_lock(&self.inner).frame_time()
+    }
+
+    /// Move the frame clock forward by `seconds` and run the timers and
+    /// animation frames that became due.
+    #[napi(js_name = "advanceTime")]
+    pub fn advance_time(&self, seconds: f64) -> Result<()> {
+        recover_lock(&self.inner)
+            .advance_time(seconds)
+            .map_err(napi_runtime_error)
+    }
+
+    /// Advance time until every animation has finished and return how many
+    /// seconds that took. Fails after `limit` seconds (default 10).
+    #[napi(js_name = "settleAnimations")]
+    pub fn settle_animations(&self, limit: Option<f64>) -> Result<f64> {
+        recover_lock(&self.inner)
+            .settle_animations(limit.unwrap_or(10.0))
+            .map_err(napi_runtime_error)
+    }
+
+    /// Render a window offscreen and return it as PNG data.
+    #[napi(js_name = "screenshotPng")]
+    pub fn screenshot_png(&self, index: Option<u32>) -> Result<Buffer> {
+        let mut runtime = recover_lock(&self.inner);
+        let window_id = runtime
+            .window_id_at(index.unwrap_or(0) as usize)
+            .map_err(napi_runtime_error)?;
+        runtime
+            .capture_png(window_id)
+            .map(Buffer::from)
+            .map_err(napi_runtime_error)
     }
 
     /// Dispatch due timer, animation-frame, and wake events and return how
@@ -4492,6 +4547,29 @@ pub struct JsSemanticsQuery {
     pub description: Option<String>,
     pub focused: Option<bool>,
     pub visible: Option<bool>,
+    /// Only descendants of the node with this id.
+    pub within: Option<String>,
+}
+
+impl JsSemanticsQuery {
+    fn into_binding(self, default_visible: Option<bool>) -> Result<BindingSemanticQuery> {
+        let within = self
+            .within
+            .map(|id| {
+                id.parse::<u64>()
+                    .map_err(|_| napi_invalid_arg(format!("invalid semantic node id '{id}'")))
+            })
+            .transpose()?;
+        Ok(BindingSemanticQuery {
+            role: self.role,
+            name: self.name,
+            text: self.text,
+            description: self.description,
+            focused: self.focused,
+            visible: self.visible.or(default_visible),
+            within,
+        })
+    }
 }
 
 #[napi(js_name = "SemanticNode")]
@@ -4628,45 +4706,30 @@ impl JsRenderSnapshot {
     }
 
     #[napi]
-    pub fn find(&self, query: Option<JsSemanticsQuery>) -> Vec<JsSemanticNode> {
-        let query = query.unwrap_or(JsSemanticsQuery {
-            role: None,
-            name: None,
-            text: None,
-            description: None,
-            focused: None,
-            visible: Some(true),
-        });
-        self.inner_snapshot()
-            .find_nodes(
-                query.role.as_deref(),
-                query.name.as_deref(),
-                query.text.as_deref(),
-                query.description.as_deref(),
-                query.focused,
-                query.visible.or(Some(true)),
-            )
+    pub fn find(&self, query: Option<JsSemanticsQuery>) -> Result<Vec<JsSemanticNode>> {
+        let query = match query {
+            Some(query) => query.into_binding(Some(true))?,
+            None => BindingSemanticQuery {
+                visible: Some(true),
+                ..BindingSemanticQuery::default()
+            },
+        };
+        Ok(self
+            .inner_snapshot()
+            .query(&query)
             .into_iter()
             .map(Into::into)
-            .collect()
+            .collect())
     }
 
     #[napi(js_name = "getOne")]
     pub fn get_one(&self, query: Option<JsSemanticsQuery>) -> Result<JsSemanticNode> {
-        let query = query.unwrap_or(JsSemanticsQuery {
-            role: None,
-            name: None,
-            text: None,
-            description: None,
-            focused: None,
-            visible: None,
-        });
+        let query = match query {
+            Some(query) => query.into_binding(None)?,
+            None => BindingSemanticQuery::default(),
+        };
         self.inner_snapshot()
-            .get_one(
-                query.role.as_deref(),
-                query.name.as_deref(),
-                query.text.as_deref(),
-            )
+            .query_one(&query)
             .map(Into::into)
             .map_err(napi_runtime_error)
     }

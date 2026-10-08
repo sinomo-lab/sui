@@ -25,7 +25,16 @@ pub struct BindingRuntime {
     pub(crate) window_ids: Vec<BindingWindowId>,
     pub(crate) ui_tasks: UiTaskQueue,
     pub(crate) messages: BindingMessageBus,
+    /// Frame time in seconds, advanced by [`Self::tick`] and
+    /// [`Self::advance_time`].
+    pub(crate) frame_time: f64,
+    /// Offscreen renderer for screenshots, created on first use.
+    #[cfg(feature = "desktop")]
+    pub(crate) screenshot_renderer: Option<sui::WgpuRenderer>,
 }
+
+/// Simulated frame length for [`BindingRuntime::settle_animations`].
+const SETTLE_STEP: f64 = 1.0 / 60.0;
 
 impl BindingRuntime {
     pub fn ui_handle(&self) -> BindingUiHandle {
@@ -74,7 +83,95 @@ impl BindingRuntime {
     }
 
     pub fn tick(&mut self, frame_time: f64) {
+        self.frame_time = frame_time;
         self.runtime.tick(frame_time);
+    }
+
+    /// The frame time in seconds.
+    pub fn frame_time(&self) -> f64 {
+        self.frame_time
+    }
+
+    /// Move the frame clock forward by `delta` seconds and dispatch the timer
+    /// and animation events that became due, as a platform host would.
+    pub fn advance_time(&mut self, delta: f64) -> Result<(), String> {
+        if !(delta.is_finite() && delta >= 0.0) {
+            return Err(format!(
+                "time delta must be a finite number of seconds >= 0, not {delta}"
+            ));
+        }
+        self.tick(self.frame_time + delta);
+        self.drain_ui_tasks()?;
+        for window_id in self.window_ids.clone() {
+            self.runtime
+                .render(window_id.into_sui())
+                .map_err(|error| error.to_string())?;
+        }
+        self.drain_ready_event_count()?;
+        Ok(())
+    }
+
+    /// Whether any window still has an animation in progress.
+    pub fn has_running_animations(&self) -> Result<bool, String> {
+        for window_id in &self.window_ids {
+            if self
+                .runtime
+                .has_pending_animation_frames(window_id.into_sui())
+                .map_err(|error| error.to_string())?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Advance time frame by frame until every animation has finished, and
+    /// return how many seconds that took. Fails after `limit` seconds, which
+    /// usually means an animation repeats forever.
+    pub fn settle_animations(&mut self, limit: f64) -> Result<f64, String> {
+        let mut elapsed = 0.0;
+        // Lay out first so animations started by recent changes are seen.
+        self.advance_time(0.0)?;
+        while self.has_running_animations()? {
+            if elapsed >= limit {
+                return Err(format!("animations were still running after {limit} s"));
+            }
+            self.advance_time(SETTLE_STEP)?;
+            elapsed += SETTLE_STEP;
+        }
+        Ok(elapsed)
+    }
+
+    /// Render a window offscreen and return its pixels as PNG data, at the
+    /// window's initial size or, without one, its content's size.
+    #[cfg(feature = "desktop")]
+    pub fn capture_png(&mut self, window_id: BindingWindowId) -> Result<Vec<u8>, String> {
+        self.drain_ui_tasks()?;
+        let output = self
+            .runtime
+            .render(window_id.into_sui())
+            .map_err(|error| error.to_string())?;
+        if output.frame.surface_size.width < 1.0 || output.frame.surface_size.height < 1.0 {
+            return Err(
+                "the window has no size to capture; give it one, such as with an initial size"
+                    .to_owned(),
+            );
+        }
+        let renderer = self
+            .screenshot_renderer
+            .get_or_insert_with(sui::WgpuRenderer::new);
+        renderer
+            .render(&output.frame)
+            .map_err(|error| error.to_string())?;
+        let image = renderer
+            .capture_rgba(window_id.into_sui())
+            .map_err(|error| error.to_string())?;
+        encode_png(image.width(), image.height(), image.pixels())
+    }
+
+    #[cfg(not(feature = "desktop"))]
+    pub fn capture_png(&mut self, _window_id: BindingWindowId) -> Result<Vec<u8>, String> {
+        Err("screenshots require the `desktop` feature".to_owned())
     }
 
     /// Dispatch due timer, animation-frame, and wake events, as a platform
@@ -307,4 +404,18 @@ impl fmt::Debug for BindingRuntime {
             .field("pending_ui_task_count", &self.pending_ui_task_count())
             .finish()
     }
+}
+
+#[cfg(feature = "desktop")]
+fn encode_png(width: u32, height: u32, pixels: &[u8]) -> Result<Vec<u8>, String> {
+    let mut data = Vec::new();
+    let mut encoder = png::Encoder::new(&mut data, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
+    writer
+        .write_image_data(pixels)
+        .map_err(|error| error.to_string())?;
+    writer.finish().map_err(|error| error.to_string())?;
+    Ok(data)
 }

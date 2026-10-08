@@ -429,6 +429,9 @@ impl BindingApp {
             window_ids,
             ui_tasks,
             messages: self.messages.clone(),
+            frame_time: 0.0,
+            #[cfg(feature = "desktop")]
+            screenshot_renderer: None,
         })
     }
 

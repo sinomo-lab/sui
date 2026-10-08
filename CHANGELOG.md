@@ -10,6 +10,9 @@ Versioning, with the usual expectation that the API may change during the
 
 - Added `sinomo_ui.aio` with `AsyncRunner`, `run_on_ui`, and `file_dialog` to
   run asyncio coroutines beside the UI loop.
+- Made `Point`, `Size`, `Rect`, `Color`, `Constraints`, and resource and
+  window handles compare and hash by value, gave common objects readable
+  reprs, and made `StateSubscription` a context manager.
 
 - Renamed the Python distribution to `sinomo-ui` and the import package to
   `sinomo_ui`; use `import sinomo_ui as sui`. The native extension now lives
@@ -37,6 +40,11 @@ Versioning, with the usual expectation that the API may change during the
   through `UiHandle.show_file_dialog`, app-level `clipboard_text` and
   `set_clipboard_text`, and `FocusController` with `focus_scope` to move
   keyboard focus from code. JavaScript gains `UiHandle.requestExit`.
+- Added host-driven test helpers: `RunningApp.advance_time`,
+  `settle_animations`, `frame_time`, offscreen `screenshot_png` and
+  `save_screenshot`, a module-level `set_motion_preference`, and `within=`
+  on semantic queries. Role queries accept any spelling of a role name, and
+  `get_one` takes the same filters as `find`.
 - Made `RunningApp.drain_ready_events()` dispatch due timer and animation
   events; it previously discarded them, so custom-widget timers and
   animation frames never ran in host-driven tests.

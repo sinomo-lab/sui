@@ -945,6 +945,10 @@ pub struct PyFocusController {
 
 #[pymethods]
 impl PyFocusController {
+    fn __repr__(&self) -> String {
+        "FocusController()".to_owned()
+    }
+
     #[new]
     pub fn new() -> Self {
         Self::default()
@@ -968,6 +972,11 @@ pub struct PyScrollController {
 
 #[pymethods]
 impl PyScrollController {
+    fn __repr__(&self) -> String {
+        let offset = self.inner.offset();
+        format!("ScrollController(offset=Point({}, {}))", offset.x, offset.y)
+    }
+
     #[new]
     pub fn new() -> Self {
         Self {
@@ -1164,6 +1173,10 @@ pub struct PyVirtualListModel {
 
 #[pymethods]
 impl PyVirtualListModel {
+    fn __repr__(&self) -> String {
+        format!("VirtualListModel(size={})", self.inner.len())
+    }
+
     #[new]
     #[pyo3(signature = (name, items=None))]
     pub fn new(name: String, items: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
@@ -1329,6 +1342,10 @@ pub struct PyTableModel {
 
 #[pymethods]
 impl PyTableModel {
+    fn __repr__(&self) -> String {
+        format!("TableModel(size={})", self.inner.len())
+    }
+
     #[new]
     #[pyo3(signature = (rows=None))]
     pub fn new(rows: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
