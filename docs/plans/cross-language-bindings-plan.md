@@ -99,7 +99,7 @@ here so documentation coverage remains auditable:
   `DragDropHost`, `Draggable`, `DropTarget`,
   `DockWorkspace`, `FloatingWorkspace`, `FloatingStack`, and
   `ReorderableList`.
-- Layout and forms: `Column`, `Row`, `Padding`, `Align`, `Background`,
+- Layout and forms: `Column`, `Row`, `FlexItem`, `Spacer`, `Padding`, `Align`, `Background`,
   `Grid`, `AspectRatio`, `SafeArea`, `LayoutTransition`, `Presence`, `AdaptiveView`,
   `ConstraintView`, `ResponsiveSidebar`, `MasterDetail`, `SizedBox`, `Stack`,
   `SemanticRegion`, `FormRow`, `FieldGroup`,

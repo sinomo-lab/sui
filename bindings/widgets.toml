@@ -522,6 +522,28 @@ ts_kind = "function"
 docs = ["Row"]
 
 [[item]]
+name = "FlexItem"
+kind = "layout"
+core_constructor = "flex_item"
+python_kind = "function"
+python_rust = "py_flex_item"
+js_kind = "function"
+js_rust = "js_flex_item"
+ts_kind = "function"
+docs = ["FlexItem"]
+
+[[item]]
+name = "Spacer"
+kind = "layout"
+core_constructor = "spacer"
+python_kind = "function"
+python_rust = "py_spacer"
+js_kind = "function"
+js_rust = "js_spacer"
+ts_kind = "function"
+docs = ["Spacer"]
+
+[[item]]
 name = "Grid"
 kind = "layout"
 core_kind = "Grid"

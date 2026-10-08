@@ -110,6 +110,28 @@ keyword arguments are preferred for optional configuration. `PascalCase` names
 are classes, such as `sui.App`, `sui.State`, and descriptors like
 `sui.TableColumn`.
 
+Interactive controls accept `enabled=`, a `bool` or a `State`; a disabled
+control ignores input and reports itself as disabled to assistive technology.
+`column(...)` and `row(...)` take `justify` (`"start"`, `"center"`, `"end"`,
+`"space-between"`, `"space-around"`, `"space-evenly"`), `align_items`
+(`"start"`, `"center"`, `"end"`, `"stretch"`), and `wrap`. Wrap a direct child
+in `flex_item(child, grow=1)` to size it along the main axis with `grow`,
+`shrink`, `basis`, minimum and maximum sizes, and `align_self`; `spacer()`
+fills the remaining space:
+
+```python
+toolbar = sui.row(
+    [sui.label("Untitled"), sui.spacer(), sui.button("Save", enabled=dirty)],
+    gap=8,
+    align_items="center",
+)
+```
+
+Buttons take `appearance` (`"filled"`, `"tonal"`, `"outline"`, `"ghost"`),
+`tone` (`"accent"`, `"danger"`, ...), `icon`, and `min_width`; a primary action
+is `appearance="filled", tone="accent"`. Text fields take `read_only`,
+`on_submit(text)`, and `on_focus_change(focused)`.
+
 The portable media surface includes both `color_picker(...)` and the compact,
 mode-selectable `simple_color_picker(...)` (`hsl`, `hsv`, `rgb`, or `oklch`).
 Editor shells can use `DockState`, serializable `DockLayout`/`DockNode` values,

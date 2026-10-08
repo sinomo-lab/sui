@@ -191,7 +191,9 @@ pub use values::BindingTreeItem;
 pub use values::binding_alignment_from_name;
 pub use values::binding_animation_property_from_path;
 pub use values::binding_aspect_ratio_fit_from_name;
+pub use values::binding_button_appearance_from_name;
 pub use values::binding_easing_from_name;
+pub use values::binding_flex_justify_from_name;
 pub use values::binding_icon_glyph_from_name;
 pub use values::binding_icon_glyph_name;
 pub use values::binding_safe_area_edges_from_name;
@@ -202,7 +204,11 @@ pub use values::binding_surface_elevation_from_name;
 pub use values::binding_surface_role_from_name;
 pub use values::binding_tooltip_placement_from_name;
 pub use values::{binding_shadow_placement_from_name, binding_shadow_placement_name};
+pub use widget_descriptor::BindingButtonOptions;
 pub use widget_descriptor::BindingDialogOptions;
+pub use widget_descriptor::BindingFlexItemOptions;
+pub use widget_descriptor::BindingFlexOptions;
+pub use widget_descriptor::BindingTextFieldOptions;
 pub use widget_descriptor::BindingWidget;
 
 #[cfg(test)]

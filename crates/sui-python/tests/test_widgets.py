@@ -103,3 +103,140 @@ def test_popover_follows_state():
     shown.set(True)
     running.drain()
     assert running.render().find(text="Popover body")
+
+
+def test_enabled_disables_controls_and_follows_state():
+    enabled = sui.State(False)
+    pressed = []
+    running = start(
+        sui.column(
+            [
+                sui.button("Save", on_press=lambda: pressed.append(True), enabled=enabled),
+                sui.checkbox("Agree", enabled=False),
+                sui.slider("Volume", enabled=False),
+                sui.text_input("Name", enabled=False),
+            ]
+        )
+    )
+    snapshot = running.render()
+    assert snapshot.get_one(role="button", name="Save").disabled
+    assert snapshot.get_one(role="checkbox").disabled
+    assert snapshot.get_one(role="slider").disabled
+    # Like a test locator, clicking refuses a control that cannot act.
+    with pytest.raises(RuntimeError, match="not actionable"):
+        running.click(snapshot.get_one(role="button", name="Save"))
+    assert pressed == []
+
+    enabled.set(True)
+    running.drain()
+    snapshot = running.render()
+    save = snapshot.get_one(role="button", name="Save")
+    assert not save.disabled
+    running.click(save)
+    assert pressed == [True]
+
+
+def bounds(snapshot, role, name):
+    return snapshot.get_one(role=role, name=name).bounds
+
+
+def test_spacer_and_flex_items_share_the_main_axis():
+    running = start(
+        sui.column(
+            [
+                sui.row([sui.label("Title"), sui.spacer(), sui.button("Save")]),
+                sui.row([sui.flex_item(sui.button("Grow"), grow=1), sui.button("Fixed")]),
+            ],
+            # A column sizes its cross axis to its content unless it stretches.
+            align_items="stretch",
+        )
+    )
+    snapshot = running.render()
+
+    assert bounds(snapshot, "button", "Save").x + bounds(snapshot, "button", "Save").width > 600
+    grow = bounds(snapshot, "button", "Grow")
+    fixed = bounds(snapshot, "button", "Fixed")
+    assert grow.width > 3 * fixed.width
+    assert fixed.x + fixed.width > 600
+
+
+def test_column_justify_and_alignment():
+    running = start(
+        sui.sized_box(
+            sui.column(
+                [sui.button("A"), sui.button("Longer button")],
+                justify="end",
+                align_items="center",
+            ),
+            width=640,
+            height=480,
+        )
+    )
+    snapshot = running.render()
+    short = bounds(snapshot, "button", "A")
+    long = bounds(snapshot, "button", "Longer button")
+
+    assert long.y + long.height > 440
+    assert abs((short.x + short.width / 2) - (long.x + long.width / 2)) < 1
+
+
+def test_flex_item_outside_a_flex_container_shows_its_child():
+    running = start(sui.flex_item(sui.button("Alone"), grow=1))
+    assert running.render().get_one(role="button", name="Alone")
+
+
+def test_unknown_justify_is_rejected():
+    with pytest.raises(ValueError, match="unknown justify"):
+        sui.row([], justify="sideways")
+
+
+def test_button_presentation_and_semantics_options():
+    running = start(
+        sui.row(
+            [
+                sui.button(
+                    "Delete",
+                    appearance="filled",
+                    tone="danger",
+                    icon="close",
+                    min_width=160,
+                    semantic_name="Delete project",
+                    description="Removes the project permanently",
+                ),
+                sui.button("Cancel", appearance="ghost"),
+            ]
+        )
+    )
+    snapshot = running.render()
+    delete = snapshot.get_one(role="button", name="Delete project")
+    assert delete.description == "Removes the project permanently"
+    assert delete.bounds.width >= 160
+
+    with pytest.raises(ValueError, match="unknown button appearance"):
+        sui.button("Bad", appearance="glossy")
+
+
+def test_text_field_submit_focus_and_read_only():
+    submitted = []
+    focus = []
+    running = start(
+        sui.column(
+            [
+                sui.text_input(
+                    "Search",
+                    on_submit=submitted.append,
+                    on_focus_change=focus.append,
+                ),
+                sui.text_area("Notes", value="Fixed", read_only=True),
+            ]
+        )
+    )
+    snapshot = running.render()
+    search = snapshot.get_one(role="text_input", name="Search")
+    running.fill(search, "sui")
+    running.press(running.render().get_one(role="text_input", name="Search"), "Enter")
+
+    assert submitted == ["sui"]
+    assert focus and focus[0] is True
+    notes = running.render().get_one(name="Notes")
+    assert not notes.editable

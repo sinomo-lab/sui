@@ -1699,7 +1699,28 @@ pub fn js_button(
     env: Env,
     label: JsBindingTextArg,
     on_press: Option<Function<'_, (), ()>>,
+    enabled: Option<JsBindingBoolArg>,
+    appearance: Option<String>,
+    tone: Option<String>,
+    icon: Option<String>,
+    min_width: Option<f64>,
+    semantic_name: Option<String>,
+    description: Option<String>,
 ) -> Result<JsWidget> {
+    let appearance = appearance
+        .map(|value| {
+            binding_button_appearance_from_name(&value)
+                .ok_or_else(|| napi_invalid_arg(format!("unknown button appearance '{value}'")))
+        })
+        .transpose()?;
+    let options = BindingButtonOptions {
+        appearance,
+        tone: tone.as_deref().map(semantic_tone_from_js).transpose()?,
+        icon: icon.as_deref().map(icon_glyph_from_js).transpose()?,
+        min_width: min_width.map(|value| value as f32),
+        semantic_name,
+        description,
+    };
     let action = on_press
         .map(|callback| {
             let env = JsEnvHandle::from_env(env);
@@ -1715,10 +1736,12 @@ pub fn js_button(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::button(
+    JsWidget::from_binding(BindingWidget::button_with_options(
         binding_text_from_js(label),
         action,
-    )))
+        options,
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "Icon")]
@@ -1820,6 +1843,7 @@ pub fn js_checkbox(
     label: JsBindingTextArg,
     checked: Option<JsBindingBoolArg>,
     on_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -1836,13 +1860,14 @@ pub fn js_checkbox(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::checkbox(
+    JsWidget::from_binding(BindingWidget::checkbox(
         binding_text_from_js(label),
         checked
             .map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(false)),
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "Switch")]
@@ -1851,6 +1876,7 @@ pub fn js_switch(
     label: JsBindingTextArg,
     checked: Option<JsBindingBoolArg>,
     on_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -1867,12 +1893,13 @@ pub fn js_switch(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::switch(
+    JsWidget::from_binding(BindingWidget::switch(
         binding_text_from_js(label),
         checked.map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(false)),
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "RadioButton")]
@@ -1881,6 +1908,7 @@ pub fn js_radio_button(
     label: JsBindingTextArg,
     checked: Option<JsBindingBoolArg>,
     on_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -1898,13 +1926,14 @@ pub fn js_radio_button(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::radio_button(
+    JsWidget::from_binding(BindingWidget::radio_button(
         binding_text_from_js(label),
         checked
             .map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(false)),
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "RadioGroup")]
@@ -1914,6 +1943,7 @@ pub fn js_radio_group(
     options: Vec<String>,
     selected: Option<JsBindingNumberArg>,
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -1930,12 +1960,13 @@ pub fn js_radio_group(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::radio_group(
+    JsWidget::from_binding(BindingWidget::radio_group(
         binding_text_from_js(name),
         options,
         selected.map(binding_number_from_js),
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "SegmentedControl")]
@@ -1945,6 +1976,7 @@ pub fn js_segmented_control(
     items: Array<'_>,
     selected: Option<JsBindingNumberArg>,
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -1961,12 +1993,13 @@ pub fn js_segmented_control(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::segmented_control(
+    JsWidget::from_binding(BindingWidget::segmented_control(
         binding_text_from_js(name),
         extract_segmented_control_items(&items)?,
         selected.map(binding_number_from_js),
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 fn js_breadcrumb_widget(
@@ -2028,6 +2061,7 @@ pub fn js_list_view(
     items: Vec<String>,
     selected: Option<JsBindingNumberArg>,
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -2044,12 +2078,13 @@ pub fn js_list_view(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::list_view(
+    JsWidget::from_binding(BindingWidget::list_view(
         binding_text_from_js(name),
         items,
         selected.map(binding_number_from_js),
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 fn js_table_widget(
@@ -2092,8 +2127,9 @@ pub fn js_table(
     rows: Array<'_>,
     selected: Option<JsBindingNumberArg>,
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
-    js_table_widget(env, name, columns, rows, selected, on_change)
+    js_table_widget(env, name, columns, rows, selected, on_change)?.with_enabled(enabled)
 }
 
 #[napi(js_name = "DataGrid")]
@@ -2104,8 +2140,9 @@ pub fn js_data_grid(
     rows: Array<'_>,
     selected: Option<JsBindingNumberArg>,
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
-    js_table_widget(env, name, columns, rows, selected, on_change)
+    js_table_widget(env, name, columns, rows, selected, on_change)?.with_enabled(enabled)
 }
 
 #[napi(js_name = "Slider")]
@@ -2117,6 +2154,7 @@ pub fn js_slider(
     max: Option<f64>,
     step: Option<f64>,
     on_change: Option<Function<'_, FnArgs<(f64,)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -2133,7 +2171,7 @@ pub fn js_slider(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::slider(
+    JsWidget::from_binding(BindingWidget::slider(
         binding_text_from_js(name),
         value
             .map(binding_number_from_js)
@@ -2142,7 +2180,8 @@ pub fn js_slider(
         max.unwrap_or(1.0),
         step.unwrap_or(0.01),
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "NumberInput")]
@@ -2155,6 +2194,7 @@ pub fn js_number_input(
     step: Option<f64>,
     precision: Option<u32>,
     on_change: Option<Function<'_, FnArgs<(f64,)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -2171,7 +2211,7 @@ pub fn js_number_input(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::number_input(
+    JsWidget::from_binding(BindingWidget::number_input(
         binding_text_from_js(name),
         value
             .map(binding_number_from_js)
@@ -2181,7 +2221,8 @@ pub fn js_number_input(
         step.unwrap_or(1.0),
         precision.unwrap_or(2) as usize,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "Select")]
@@ -2192,6 +2233,7 @@ pub fn js_select(
     selected: Option<JsBindingNumberArg>,
     placeholder: Option<String>,
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -2208,13 +2250,14 @@ pub fn js_select(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::select(
+    JsWidget::from_binding(BindingWidget::select(
         binding_text_from_js(name),
         options,
         selected.map(binding_number_from_js),
         placeholder,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "ProgressBar")]
@@ -2318,6 +2361,10 @@ pub fn js_text_input(
     value: Option<JsBindingTextArg>,
     placeholder: Option<String>,
     on_change: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
+    read_only: Option<bool>,
+    on_submit: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_focus_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -2334,14 +2381,16 @@ pub fn js_text_input(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::text_input(
+    JsWidget::from_binding(BindingWidget::text_input_with_options(
         binding_text_from_js(name),
         value
             .map(binding_text_from_js)
             .unwrap_or_else(|| BindingText::Static(String::new())),
         placeholder,
         action,
-    )))
+        js_text_field_options(env, read_only, on_submit, on_focus_change)?,
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "TextArea")]
@@ -2351,6 +2400,10 @@ pub fn js_text_area(
     value: Option<JsBindingTextArg>,
     placeholder: Option<String>,
     on_change: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
+    read_only: Option<bool>,
+    on_submit: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_focus_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -2367,14 +2420,16 @@ pub fn js_text_area(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::text_area(
+    JsWidget::from_binding(BindingWidget::text_area_with_options(
         binding_text_from_js(name),
         value
             .map(binding_text_from_js)
             .unwrap_or_else(|| BindingText::Static(String::new())),
         placeholder,
         action,
-    )))
+        js_text_field_options(env, read_only, on_submit, on_focus_change)?,
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "RichText")]
@@ -2563,19 +2618,87 @@ pub fn js_toolbar(
 }
 
 #[napi(js_name = "Column")]
-pub fn js_column(children: Array<'_>, gap: Option<f64>) -> Result<JsWidget> {
-    Ok(JsWidget::from_binding(BindingWidget::column(
-        extract_binding_widgets(&children)?,
-        gap.unwrap_or(0.0) as f32,
-    )))
+pub fn js_column(
+    children: Array<'_>,
+    gap: Option<f64>,
+    justify: Option<String>,
+    align_items: Option<String>,
+    wrap: Option<bool>,
+) -> Result<JsWidget> {
+    js_flex(Axis::Vertical, children, gap, justify, align_items, wrap)
 }
 
 #[napi(js_name = "Row")]
-pub fn js_row(children: Array<'_>, gap: Option<f64>) -> Result<JsWidget> {
-    Ok(JsWidget::from_binding(BindingWidget::row(
+pub fn js_row(
+    children: Array<'_>,
+    gap: Option<f64>,
+    justify: Option<String>,
+    align_items: Option<String>,
+    wrap: Option<bool>,
+) -> Result<JsWidget> {
+    js_flex(Axis::Horizontal, children, gap, justify, align_items, wrap)
+}
+
+fn js_flex(
+    axis: Axis,
+    children: Array<'_>,
+    gap: Option<f64>,
+    justify: Option<String>,
+    align_items: Option<String>,
+    wrap: Option<bool>,
+) -> Result<JsWidget> {
+    let justify = justify
+        .map(|value| {
+            binding_flex_justify_from_name(&value)
+                .ok_or_else(|| napi_invalid_arg(format!("unknown justify '{value}'")))
+        })
+        .transpose()?;
+    Ok(JsWidget::from_binding(BindingWidget::flex_with_options(
+        axis,
         extract_binding_widgets(&children)?,
         gap.unwrap_or(0.0) as f32,
+        BindingFlexOptions {
+            justify,
+            align_items: align_items
+                .as_deref()
+                .map(alignment_from_js)
+                .transpose()?,
+            wrap: wrap.unwrap_or(false),
+        },
     )))
+}
+
+#[napi(js_name = "FlexItem")]
+pub fn js_flex_item(
+    child: ClassInstance<'_, JsWidget>,
+    grow: Option<f64>,
+    shrink: Option<f64>,
+    basis: Option<f64>,
+    min_width: Option<f64>,
+    min_height: Option<f64>,
+    max_width: Option<f64>,
+    max_height: Option<f64>,
+    align_self: Option<String>,
+) -> Result<JsWidget> {
+    let item = BindingFlexItemOptions {
+        grow: grow.map(|value| value as f32),
+        shrink: shrink.map(|value| value as f32),
+        basis: basis.map(|value| value as f32),
+        min_width: min_width.map(|value| value as f32),
+        min_height: min_height.map(|value| value as f32),
+        max_width: max_width.map(|value| value as f32),
+        max_height: max_height.map(|value| value as f32),
+        align_self: align_self.as_deref().map(alignment_from_js).transpose()?,
+    };
+    Ok(JsWidget::from_binding(BindingWidget::flex_item(
+        child.binding_widget()?,
+        item.to_flex_item(),
+    )))
+}
+
+#[napi(js_name = "Spacer")]
+pub fn js_spacer() -> JsWidget {
+    JsWidget::from_binding(BindingWidget::spacer())
 }
 
 #[napi(js_name = "Grid")]
@@ -3035,6 +3158,7 @@ pub fn js_tree_view(
     items: Array<'_>,
     selected: Option<JsBindingNumberArg>,
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -3051,12 +3175,13 @@ pub fn js_tree_view(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::tree_view(
+    JsWidget::from_binding(BindingWidget::tree_view(
         binding_text_from_js(name),
         extract_tree_items(&items)?,
         selected.map(binding_number_from_js),
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "LayerList")]
@@ -3066,6 +3191,7 @@ pub fn js_layer_list(
     items: Array<'_>,
     selected: Option<JsBindingNumberArg>,
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -3082,12 +3208,13 @@ pub fn js_layer_list(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::layer_list(
+    JsWidget::from_binding(BindingWidget::layer_list(
         binding_text_from_js(name),
         extract_layer_list_items(&items)?,
         selected.map(binding_number_from_js),
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "Menu")]
@@ -3097,6 +3224,7 @@ pub fn js_menu(
     items: Array<'_>,
     highlighted: Option<JsBindingNumberArg>,
     on_activate: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_activate
         .map(|callback| {
@@ -3113,12 +3241,13 @@ pub fn js_menu(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::menu(
+    JsWidget::from_binding(BindingWidget::menu(
         binding_text_from_js(name),
         extract_menu_items(&items)?,
         highlighted.map(binding_number_from_js),
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "TabBar")]
@@ -3128,6 +3257,7 @@ pub fn js_tab_bar(
     tabs: Vec<String>,
     selected: Option<JsBindingNumberArg>,
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -3144,12 +3274,13 @@ pub fn js_tab_bar(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::tab_bar(
+    JsWidget::from_binding(BindingWidget::tab_bar(
         binding_text_from_js(name),
         tabs,
         selected.map(binding_number_from_js),
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "Tabs")]
@@ -3160,6 +3291,7 @@ pub fn js_tabs(
     selected: Option<JsBindingNumberArg>,
     panels: Option<Array<'_>>,
     on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -3188,7 +3320,8 @@ pub fn js_tabs(
         action,
     )
     .map(JsWidget::from_binding)
-    .map_err(|error| napi_invalid_arg(&error))
+    .map_err(|error| napi_invalid_arg(&error))?
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "Dialog")]
@@ -3542,6 +3675,7 @@ pub fn js_tool_palette(
     icon_size: Option<f64>,
     background: Option<&JsColor>,
     divider: Option<bool>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -3558,7 +3692,7 @@ pub fn js_tool_palette(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::tool_palette(
+    JsWidget::from_binding(BindingWidget::tool_palette(
         name,
         extract_tool_palette_items(&items)?,
         selected.map(binding_number_from_js),
@@ -3571,7 +3705,8 @@ pub fn js_tool_palette(
         icon_size.map(|value| value as f32),
         background.map(|value| (*value).into()),
         divider.unwrap_or(true),
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "PresetStrip")]
@@ -3584,6 +3719,7 @@ pub fn js_preset_strip(
     item_width: Option<f64>,
     item_height: Option<f64>,
     gap: Option<f64>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -3600,7 +3736,7 @@ pub fn js_preset_strip(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::preset_strip(
+    JsWidget::from_binding(BindingWidget::preset_strip(
         name,
         presets,
         selected.map(binding_number_from_js),
@@ -3608,7 +3744,8 @@ pub fn js_preset_strip(
         item_width.map(|value| value as f32),
         item_height.map(|value| value as f32),
         gap.map(|value| value as f32),
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "BrowserTabBar")]
@@ -3669,6 +3806,7 @@ pub fn js_color_palette(
     columns: Option<u32>,
     swatch_size: Option<f64>,
     gap: Option<f64>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -3685,7 +3823,7 @@ pub fn js_color_palette(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::color_palette(
+    JsWidget::from_binding(BindingWidget::color_palette(
         name,
         extract_color_palette_swatches(&swatches)?,
         selected.map(binding_number_from_js),
@@ -3693,7 +3831,8 @@ pub fn js_color_palette(
         columns.map(|value| value as usize),
         swatch_size.map(|value| value as f32),
         gap.map(|value| value as f32),
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "ColorPicker")]
@@ -3704,6 +3843,7 @@ pub fn js_color_picker(
     on_change: Option<Function<'_, FnArgs<(JsColor,)>, ()>>,
     show_alpha: Option<bool>,
     compact: Option<bool>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -3720,13 +3860,14 @@ pub fn js_color_picker(
             }))
         })
         .transpose()?;
-    Ok(JsWidget::from_binding(BindingWidget::color_picker(
+    JsWidget::from_binding(BindingWidget::color_picker(
         name,
         color.map(|value| (*value).into()),
         action,
         show_alpha.unwrap_or(true),
         compact.unwrap_or(false),
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "SimpleColorPicker")]
@@ -3788,6 +3929,19 @@ fn binding_action_from_js_callback(
         .transpose()
 }
 
+fn js_text_field_options(
+    env: Env,
+    read_only: Option<bool>,
+    on_submit: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_focus_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
+) -> Result<BindingTextFieldOptions> {
+    Ok(BindingTextFieldOptions {
+        read_only: read_only.unwrap_or(false),
+        on_submit: binding_string_action_from_js_callback(env, on_submit)?,
+        on_focus_change: binding_bool_action_from_js_callback(env, on_focus_change)?,
+    })
+}
+
 fn binding_bool_action_from_js_callback(
     env: Env,
     callback: Option<Function<'_, FnArgs<(bool,)>, ()>>,
@@ -3837,15 +3991,21 @@ pub fn js_password_input(
     value: Option<JsBindingTextArg>,
     placeholder: Option<String>,
     on_change: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
+    read_only: Option<bool>,
+    on_submit: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_focus_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
 ) -> Result<JsWidget> {
-    Ok(JsWidget::from_binding(BindingWidget::password_input(
+    JsWidget::from_binding(BindingWidget::password_input_with_options(
         binding_text_from_js(name),
         value
             .map(binding_text_from_js)
             .unwrap_or_else(|| BindingText::Static(String::new())),
         placeholder,
         binding_string_action_from_js_callback(env, on_change)?,
-    )))
+        js_text_field_options(env, read_only, on_submit, on_focus_change)?,
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "DateTimeInput")]
@@ -3855,15 +4015,17 @@ pub fn js_datetime_input(
     value: Option<JsBindingTextArg>,
     placeholder: Option<String>,
     on_change: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    enabled: Option<JsBindingBoolArg>,
 ) -> Result<JsWidget> {
-    Ok(JsWidget::from_binding(BindingWidget::datetime_input(
+    JsWidget::from_binding(BindingWidget::datetime_input(
         binding_text_from_js(name),
         value
             .map(binding_text_from_js)
             .unwrap_or_else(|| BindingText::Static(String::new())),
         placeholder,
         binding_string_action_from_js_callback(env, on_change)?,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "ActionCard")]

@@ -169,4 +169,56 @@ impl fmt::Debug for ForeignErrorSink {
     }
 }
 
+/// Apply a binding's `enabled` option to a control with `enabled` and
+/// `enabled_when` builders.
+macro_rules! enabled_widget {
+    ($widget:expr, $enabled:expr) => {{
+        let widget = $widget;
+        match $enabled {
+            None => widget,
+            Some(BindingBool::Static(enabled)) => widget.enabled(*enabled),
+            Some(enabled) => {
+                let enabled = enabled.clone();
+                widget.enabled_when(move || enabled.resolve())
+            }
+        }
+    }};
+}
+
+/// Apply [`BindingTextFieldOptions`](crate::BindingTextFieldOptions) to a
+/// text field with `read_only`, `on_submit`, and `on_focus_change` builders.
+macro_rules! text_field_options {
+    ($widget:expr, $field:expr, $errors:expr) => {{
+        let field = $field;
+        let mut widget = $widget.read_only(field.read_only);
+        if let Some(action) = field.on_submit.clone() {
+            let errors = $errors.clone();
+            widget = widget.on_submit(move |text: &str| {
+                if let Err(error) = action.run(text.to_string()) {
+                    errors.push(ForeignCallbackError::new(
+                        ForeignWidgetId::new(0),
+                        ForeignCallbackPhase::Event,
+                        error.message,
+                    ));
+                }
+            });
+        }
+        if let Some(action) = field.on_focus_change.clone() {
+            let errors = $errors.clone();
+            widget = widget.on_focus_change(move |focused| {
+                if let Err(error) = action.run(focused) {
+                    errors.push(ForeignCallbackError::new(
+                        ForeignWidgetId::new(0),
+                        ForeignCallbackPhase::Event,
+                        error.message,
+                    ));
+                }
+            });
+        }
+        widget
+    }};
+}
+
+pub(crate) use enabled_widget;
+pub(crate) use text_field_options;
 pub(crate) use themed_widget;

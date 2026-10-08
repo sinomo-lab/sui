@@ -3,6 +3,9 @@ use crate::widget_descriptor::{BindingWidget, BindingWidgetKind};
 
 impl BindingWidget {
     pub(crate) fn bind_ui_handle(&self, handle: &BindingUiHandle) {
+        if let Some(enabled) = &self.enabled {
+            enabled.bind_ui_handle(handle);
+        }
         match self.inner.as_ref() {
             BindingWidgetKind::Label { text } => text.bind_ui_handle(handle),
             BindingWidgetKind::Button { label, .. } => label.bind_ui_handle(handle),
@@ -429,6 +432,8 @@ impl BindingWidget {
                 }
             }
             BindingWidgetKind::ScrollView { child, .. } => child.bind_ui_handle(handle),
+            BindingWidgetKind::FlexItem { child, .. } => child.bind_ui_handle(handle),
+            BindingWidgetKind::Spacer => {}
             BindingWidgetKind::Flex { children, .. } => {
                 for child in children {
                     child.bind_ui_handle(handle);

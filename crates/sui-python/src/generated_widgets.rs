@@ -1507,8 +1507,33 @@ pub fn py_label(value: &Bound<'_, PyAny>) -> PyResult<PyWidget> {
 }
 
 #[pyfunction(name = "button")]
-#[pyo3(signature = (label, on_press=None))]
-pub fn py_button(label: &Bound<'_, PyAny>, on_press: Option<Py<PyAny>>) -> PyResult<PyWidget> {
+#[pyo3(signature = (label, on_press=None, enabled=None, appearance=None, tone=None, icon=None, min_width=None, semantic_name=None, description=None))]
+pub fn py_button(
+    label: &Bound<'_, PyAny>,
+    on_press: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
+    appearance: Option<&str>,
+    tone: Option<&str>,
+    icon: Option<&str>,
+    min_width: Option<f32>,
+    semantic_name: Option<String>,
+    description: Option<String>,
+) -> PyResult<PyWidget> {
+    let appearance = appearance
+        .map(|value| {
+            binding_button_appearance_from_name(value).ok_or_else(|| {
+                PyValueError::new_err(format!("unknown button appearance '{value}'"))
+            })
+        })
+        .transpose()?;
+    let options = BindingButtonOptions {
+        appearance,
+        tone: tone.map(py_semantic_tone).transpose()?,
+        icon: icon.map(py_icon_glyph).transpose()?,
+        min_width,
+        semantic_name,
+        description,
+    };
     let action = on_press.map(|callback| {
         BindingAction::new(move || {
             Python::attach(|py| {
@@ -1519,10 +1544,12 @@ pub fn py_button(label: &Bound<'_, PyAny>, on_press: Option<Py<PyAny>>) -> PyRes
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::button(
+    PyWidget::from_binding(BindingWidget::button_with_options(
         binding_text_from_py(label)?,
         action,
-    )))
+        options,
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "icon")]
@@ -1616,11 +1643,12 @@ pub fn py_link(
 }
 
 #[pyfunction(name = "checkbox")]
-#[pyo3(signature = (label, checked=None, on_change=None))]
+#[pyo3(signature = (label, checked=None, on_change=None, enabled=None))]
 pub fn py_checkbox(
     label: &Bound<'_, PyAny>,
     checked: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let checked = checked
         .map(binding_bool_from_py)
@@ -1636,19 +1664,21 @@ pub fn py_checkbox(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::checkbox(
+    PyWidget::from_binding(BindingWidget::checkbox(
         binding_text_from_py(label)?,
         checked,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "switch")]
-#[pyo3(signature = (label, checked=None, on_change=None))]
+#[pyo3(signature = (label, checked=None, on_change=None, enabled=None))]
 pub fn py_switch(
     label: &Bound<'_, PyAny>,
     checked: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let checked = checked
         .map(binding_bool_from_py)
@@ -1664,19 +1694,21 @@ pub fn py_switch(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::switch(
+    PyWidget::from_binding(BindingWidget::switch(
         binding_text_from_py(label)?,
         checked,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "radio_button")]
-#[pyo3(signature = (label, checked=None, on_change=None))]
+#[pyo3(signature = (label, checked=None, on_change=None, enabled=None))]
 pub fn py_radio_button(
     label: &Bound<'_, PyAny>,
     checked: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let checked = checked
         .map(binding_bool_from_py)
@@ -1693,20 +1725,22 @@ pub fn py_radio_button(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::radio_button(
+    PyWidget::from_binding(BindingWidget::radio_button(
         binding_text_from_py(label)?,
         checked,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "radio_group")]
-#[pyo3(signature = (name, options, selected=None, on_change=None))]
+#[pyo3(signature = (name, options, selected=None, on_change=None, enabled=None))]
 pub fn py_radio_group(
     name: &Bound<'_, PyAny>,
     options: Vec<String>,
     selected: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let selected = selected.map(binding_number_from_py).transpose()?;
     let action = on_change.map(|callback| {
@@ -1719,21 +1753,23 @@ pub fn py_radio_group(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::radio_group(
+    PyWidget::from_binding(BindingWidget::radio_group(
         binding_text_from_py(name)?,
         options,
         selected,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "segmented_control")]
-#[pyo3(signature = (name, items, selected=None, on_change=None))]
+#[pyo3(signature = (name, items, selected=None, on_change=None, enabled=None))]
 pub fn py_segmented_control(
     name: &Bound<'_, PyAny>,
     items: &Bound<'_, PyAny>,
     selected: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let selected = selected.map(binding_number_from_py).transpose()?;
     let action = on_change.map(|callback| {
@@ -1746,12 +1782,13 @@ pub fn py_segmented_control(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::segmented_control(
+    PyWidget::from_binding(BindingWidget::segmented_control(
         binding_text_from_py(name)?,
         extract_segmented_control_items(items)?,
         selected,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 fn py_breadcrumb_widget(
@@ -1802,12 +1839,13 @@ pub fn py_path_bar(
 }
 
 #[pyfunction(name = "list_view")]
-#[pyo3(signature = (name, items, selected=None, on_change=None))]
+#[pyo3(signature = (name, items, selected=None, on_change=None, enabled=None))]
 pub fn py_list_view(
     name: &Bound<'_, PyAny>,
     items: Vec<String>,
     selected: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let selected = selected.map(binding_number_from_py).transpose()?;
     let action = on_change.map(|callback| {
@@ -1820,12 +1858,13 @@ pub fn py_list_view(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::list_view(
+    PyWidget::from_binding(BindingWidget::list_view(
         binding_text_from_py(name)?,
         items,
         selected,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 fn py_table_widget(
@@ -1856,31 +1895,33 @@ fn py_table_widget(
 }
 
 #[pyfunction(name = "table")]
-#[pyo3(signature = (name, columns, rows, selected=None, on_change=None))]
+#[pyo3(signature = (name, columns, rows, selected=None, on_change=None, enabled=None))]
 pub fn py_table(
     name: &Bound<'_, PyAny>,
     columns: &Bound<'_, PyAny>,
     rows: &Bound<'_, PyAny>,
     selected: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
-    py_table_widget(name, columns, rows, selected, on_change)
+    py_table_widget(name, columns, rows, selected, on_change)?.with_enabled(enabled)
 }
 
 #[pyfunction(name = "data_grid")]
-#[pyo3(signature = (name, columns, rows, selected=None, on_change=None))]
+#[pyo3(signature = (name, columns, rows, selected=None, on_change=None, enabled=None))]
 pub fn py_data_grid(
     name: &Bound<'_, PyAny>,
     columns: &Bound<'_, PyAny>,
     rows: &Bound<'_, PyAny>,
     selected: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
-    py_table_widget(name, columns, rows, selected, on_change)
+    py_table_widget(name, columns, rows, selected, on_change)?.with_enabled(enabled)
 }
 
 #[pyfunction(name = "slider")]
-#[pyo3(signature = (name, value=None, min_value=0.0, max_value=1.0, step=0.01, on_change=None))]
+#[pyo3(signature = (name, value=None, min_value=0.0, max_value=1.0, step=0.01, on_change=None, enabled=None))]
 pub fn py_slider(
     name: &Bound<'_, PyAny>,
     value: Option<&Bound<'_, PyAny>>,
@@ -1888,6 +1929,7 @@ pub fn py_slider(
     max_value: f64,
     step: f64,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let value = value
         .map(binding_number_from_py)
@@ -1903,18 +1945,19 @@ pub fn py_slider(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::slider(
+    PyWidget::from_binding(BindingWidget::slider(
         binding_text_from_py(name)?,
         value,
         min_value,
         max_value,
         step,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "number_input")]
-#[pyo3(signature = (name, value=None, min_value=None, max_value=None, step=1.0, precision=2, on_change=None))]
+#[pyo3(signature = (name, value=None, min_value=None, max_value=None, step=1.0, precision=2, on_change=None, enabled=None))]
 pub fn py_number_input(
     name: &Bound<'_, PyAny>,
     value: Option<&Bound<'_, PyAny>>,
@@ -1923,6 +1966,7 @@ pub fn py_number_input(
     step: f64,
     precision: usize,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let value = value
         .map(binding_number_from_py)
@@ -1938,7 +1982,7 @@ pub fn py_number_input(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::number_input(
+    PyWidget::from_binding(BindingWidget::number_input(
         binding_text_from_py(name)?,
         value,
         min_value.unwrap_or(f64::NEG_INFINITY),
@@ -1946,17 +1990,19 @@ pub fn py_number_input(
         step,
         precision,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "select")]
-#[pyo3(signature = (name, options, selected=None, placeholder=None, on_change=None))]
+#[pyo3(signature = (name, options, selected=None, placeholder=None, on_change=None, enabled=None))]
 pub fn py_select(
     name: &Bound<'_, PyAny>,
     options: Vec<String>,
     selected: Option<&Bound<'_, PyAny>>,
     placeholder: Option<String>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let selected = selected.map(binding_number_from_py).transpose()?;
     let action = on_change.map(|callback| {
@@ -1969,13 +2015,14 @@ pub fn py_select(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::select(
+    PyWidget::from_binding(BindingWidget::select(
         binding_text_from_py(name)?,
         options,
         selected,
         placeholder,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "progress_bar")]
@@ -2622,12 +2669,16 @@ pub fn py_reorderable_list(
 }
 
 #[pyfunction(name = "text_input")]
-#[pyo3(signature = (name, value=None, placeholder=None, on_change=None))]
+#[pyo3(signature = (name, value=None, placeholder=None, on_change=None, enabled=None, read_only=false, on_submit=None, on_focus_change=None))]
 pub fn py_text_input(
     name: &Bound<'_, PyAny>,
     value: Option<&Bound<'_, PyAny>>,
     placeholder: Option<String>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
+    read_only: bool,
+    on_submit: Option<Py<PyAny>>,
+    on_focus_change: Option<Py<PyAny>>,
 ) -> PyResult<PyWidget> {
     let value = value
         .map(binding_text_from_py)
@@ -2643,21 +2694,27 @@ pub fn py_text_input(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::text_input(
+    PyWidget::from_binding(BindingWidget::text_input_with_options(
         binding_text_from_py(name)?,
         value,
         placeholder,
         action,
-    )))
+        py_text_field_options(read_only, on_submit, on_focus_change),
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "password_input")]
-#[pyo3(signature = (name, value=None, placeholder=None, on_change=None))]
+#[pyo3(signature = (name, value=None, placeholder=None, on_change=None, enabled=None, read_only=false, on_submit=None, on_focus_change=None))]
 pub fn py_password_input(
     name: &Bound<'_, PyAny>,
     value: Option<&Bound<'_, PyAny>>,
     placeholder: Option<String>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
+    read_only: bool,
+    on_submit: Option<Py<PyAny>>,
+    on_focus_change: Option<Py<PyAny>>,
 ) -> PyResult<PyWidget> {
     let value = value
         .map(binding_text_from_py)
@@ -2673,21 +2730,24 @@ pub fn py_password_input(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::password_input(
+    PyWidget::from_binding(BindingWidget::password_input_with_options(
         binding_text_from_py(name)?,
         value,
         placeholder,
         action,
-    )))
+        py_text_field_options(read_only, on_submit, on_focus_change),
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "date_time_input")]
-#[pyo3(signature = (name, value=None, placeholder=None, on_change=None))]
+#[pyo3(signature = (name, value=None, placeholder=None, on_change=None, enabled=None))]
 pub fn py_datetime_input(
     name: &Bound<'_, PyAny>,
     value: Option<&Bound<'_, PyAny>>,
     placeholder: Option<String>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let value = value
         .map(binding_text_from_py)
@@ -2703,21 +2763,26 @@ pub fn py_datetime_input(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::datetime_input(
+    PyWidget::from_binding(BindingWidget::datetime_input(
         binding_text_from_py(name)?,
         value,
         placeholder,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "text_area")]
-#[pyo3(signature = (name, value=None, placeholder=None, on_change=None))]
+#[pyo3(signature = (name, value=None, placeholder=None, on_change=None, enabled=None, read_only=false, on_submit=None, on_focus_change=None))]
 pub fn py_text_area(
     name: &Bound<'_, PyAny>,
     value: Option<&Bound<'_, PyAny>>,
     placeholder: Option<String>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
+    read_only: bool,
+    on_submit: Option<Py<PyAny>>,
+    on_focus_change: Option<Py<PyAny>>,
 ) -> PyResult<PyWidget> {
     let value = value
         .map(binding_text_from_py)
@@ -2733,12 +2798,14 @@ pub fn py_text_area(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::text_area(
+    PyWidget::from_binding(BindingWidget::text_area_with_options(
         binding_text_from_py(name)?,
         value,
         placeholder,
         action,
-    )))
+        py_text_field_options(read_only, on_submit, on_focus_change),
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "rich_text")]
@@ -2933,21 +3000,87 @@ pub fn py_toolbar(
 }
 
 #[pyfunction(name = "column")]
-#[pyo3(signature = (children, gap=0.0))]
-pub fn py_column(children: &Bound<'_, PyAny>, gap: f32) -> PyResult<PyWidget> {
-    Ok(PyWidget::from_binding(BindingWidget::column(
-        extract_binding_widgets(children)?,
-        gap,
-    )))
+#[pyo3(signature = (children, gap=0.0, justify=None, align_items=None, wrap=false))]
+pub fn py_column(
+    children: &Bound<'_, PyAny>,
+    gap: f32,
+    justify: Option<&str>,
+    align_items: Option<&str>,
+    wrap: bool,
+) -> PyResult<PyWidget> {
+    py_flex(Axis::Vertical, children, gap, justify, align_items, wrap)
 }
 
 #[pyfunction(name = "row")]
-#[pyo3(signature = (children, gap=0.0))]
-pub fn py_row(children: &Bound<'_, PyAny>, gap: f32) -> PyResult<PyWidget> {
-    Ok(PyWidget::from_binding(BindingWidget::row(
+#[pyo3(signature = (children, gap=0.0, justify=None, align_items=None, wrap=false))]
+pub fn py_row(
+    children: &Bound<'_, PyAny>,
+    gap: f32,
+    justify: Option<&str>,
+    align_items: Option<&str>,
+    wrap: bool,
+) -> PyResult<PyWidget> {
+    py_flex(Axis::Horizontal, children, gap, justify, align_items, wrap)
+}
+
+fn py_flex(
+    axis: Axis,
+    children: &Bound<'_, PyAny>,
+    gap: f32,
+    justify: Option<&str>,
+    align_items: Option<&str>,
+    wrap: bool,
+) -> PyResult<PyWidget> {
+    let justify = justify
+        .map(|value| {
+            binding_flex_justify_from_name(value)
+                .ok_or_else(|| PyValueError::new_err(format!("unknown justify '{value}'")))
+        })
+        .transpose()?;
+    Ok(PyWidget::from_binding(BindingWidget::flex_with_options(
+        axis,
         extract_binding_widgets(children)?,
         gap,
+        BindingFlexOptions {
+            justify,
+            align_items: align_items.map(py_alignment).transpose()?,
+            wrap,
+        },
     )))
+}
+
+#[pyfunction(name = "flex_item")]
+#[pyo3(signature = (child, grow=None, shrink=None, basis=None, min_width=None, min_height=None, max_width=None, max_height=None, align_self=None))]
+pub fn py_flex_item(
+    child: PyRef<'_, PyWidget>,
+    grow: Option<f32>,
+    shrink: Option<f32>,
+    basis: Option<f32>,
+    min_width: Option<f32>,
+    min_height: Option<f32>,
+    max_width: Option<f32>,
+    max_height: Option<f32>,
+    align_self: Option<&str>,
+) -> PyResult<PyWidget> {
+    let item = BindingFlexItemOptions {
+        grow,
+        shrink,
+        basis,
+        min_width,
+        min_height,
+        max_width,
+        max_height,
+        align_self: align_self.map(py_alignment).transpose()?,
+    };
+    Ok(PyWidget::from_binding(BindingWidget::flex_item(
+        child.binding_widget()?,
+        item.to_flex_item(),
+    )))
+}
+
+#[pyfunction(name = "spacer")]
+pub fn py_spacer() -> PyWidget {
+    PyWidget::from_binding(BindingWidget::spacer())
 }
 
 #[pyfunction(name = "grid")]
@@ -3495,12 +3628,13 @@ pub fn py_external_surface(
 }
 
 #[pyfunction(name = "tree_view")]
-#[pyo3(signature = (name, items, selected=None, on_change=None))]
+#[pyo3(signature = (name, items, selected=None, on_change=None, enabled=None))]
 pub fn py_tree_view(
     name: &Bound<'_, PyAny>,
     items: &Bound<'_, PyAny>,
     selected: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let selected = selected.map(binding_number_from_py).transpose()?;
     let action = on_change.map(|callback| {
@@ -3513,21 +3647,23 @@ pub fn py_tree_view(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::tree_view(
+    PyWidget::from_binding(BindingWidget::tree_view(
         binding_text_from_py(name)?,
         extract_tree_items(items)?,
         selected,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "layer_list")]
-#[pyo3(signature = (name, items, selected=None, on_change=None))]
+#[pyo3(signature = (name, items, selected=None, on_change=None, enabled=None))]
 pub fn py_layer_list(
     name: &Bound<'_, PyAny>,
     items: &Bound<'_, PyAny>,
     selected: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let selected = selected.map(binding_number_from_py).transpose()?;
     let action = on_change.map(|callback| {
@@ -3540,21 +3676,23 @@ pub fn py_layer_list(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::layer_list(
+    PyWidget::from_binding(BindingWidget::layer_list(
         binding_text_from_py(name)?,
         extract_layer_list_items(items)?,
         selected,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "menu")]
-#[pyo3(signature = (name, items, highlighted=None, on_activate=None))]
+#[pyo3(signature = (name, items, highlighted=None, on_activate=None, enabled=None))]
 pub fn py_menu(
     name: &Bound<'_, PyAny>,
     items: &Bound<'_, PyAny>,
     highlighted: Option<&Bound<'_, PyAny>>,
     on_activate: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let highlighted = highlighted.map(binding_number_from_py).transpose()?;
     let action = on_activate.map(|callback| {
@@ -3567,21 +3705,23 @@ pub fn py_menu(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::menu(
+    PyWidget::from_binding(BindingWidget::menu(
         binding_text_from_py(name)?,
         extract_menu_items(items)?,
         highlighted,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "tab_bar")]
-#[pyo3(signature = (name, tabs, selected=None, on_change=None))]
+#[pyo3(signature = (name, tabs, selected=None, on_change=None, enabled=None))]
 pub fn py_tab_bar(
     name: &Bound<'_, PyAny>,
     tabs: Vec<String>,
     selected: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let selected = selected.map(binding_number_from_py).transpose()?;
     let action = on_change.map(|callback| {
@@ -3594,22 +3734,24 @@ pub fn py_tab_bar(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::tab_bar(
+    PyWidget::from_binding(BindingWidget::tab_bar(
         binding_text_from_py(name)?,
         tabs,
         selected,
         action,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "tabs")]
-#[pyo3(signature = (name, tabs, selected=None, panels=None, on_change=None))]
+#[pyo3(signature = (name, tabs, selected=None, panels=None, on_change=None, enabled=None))]
 pub fn py_tabs(
     name: &Bound<'_, PyAny>,
     tabs: Vec<String>,
     selected: Option<&Bound<'_, PyAny>>,
     panels: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let action = on_change.map(|callback| {
         BindingSelectAction::new(move |index, value| {
@@ -3632,7 +3774,8 @@ pub fn py_tabs(
         action,
     )
     .map(PyWidget::from_binding)
-    .map_err(PyValueError::new_err)
+    .map_err(PyValueError::new_err)?
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "dialog")]
@@ -4011,7 +4154,7 @@ pub fn py_context_menu(
 }
 
 #[pyfunction(name = "tool_palette")]
-#[pyo3(signature = (name, items, selected=None, axis="vertical", on_change=None, extent=None, padding=None, gap=None, item_size=None, icon_size=None, background=None, divider=true))]
+#[pyo3(signature = (name, items, selected=None, axis="vertical", on_change=None, extent=None, padding=None, gap=None, item_size=None, icon_size=None, background=None, divider=true, enabled=None))]
 pub fn py_tool_palette(
     name: String,
     items: &Bound<'_, PyAny>,
@@ -4025,6 +4168,7 @@ pub fn py_tool_palette(
     icon_size: Option<f32>,
     background: Option<PyColor>,
     divider: bool,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let selected = selected.map(binding_number_from_py).transpose()?;
     let action = on_change.map(|callback| {
@@ -4037,7 +4181,7 @@ pub fn py_tool_palette(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::tool_palette(
+    PyWidget::from_binding(BindingWidget::tool_palette(
         name,
         extract_tool_palette_items(items)?,
         selected,
@@ -4050,11 +4194,12 @@ pub fn py_tool_palette(
         icon_size,
         background.map(Into::into),
         divider,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "preset_strip")]
-#[pyo3(signature = (name, presets, selected=None, on_change=None, item_width=None, item_height=None, gap=None))]
+#[pyo3(signature = (name, presets, selected=None, on_change=None, item_width=None, item_height=None, gap=None, enabled=None))]
 pub fn py_preset_strip(
     name: String,
     presets: Vec<String>,
@@ -4063,6 +4208,7 @@ pub fn py_preset_strip(
     item_width: Option<f32>,
     item_height: Option<f32>,
     gap: Option<f32>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let selected = selected.map(binding_number_from_py).transpose()?;
     let action = on_change.map(|callback| {
@@ -4075,7 +4221,7 @@ pub fn py_preset_strip(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::preset_strip(
+    PyWidget::from_binding(BindingWidget::preset_strip(
         name,
         presets,
         selected,
@@ -4083,7 +4229,8 @@ pub fn py_preset_strip(
         item_width,
         item_height,
         gap,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "browser_tab_bar")]
@@ -4122,7 +4269,7 @@ pub fn py_browser_tab_bar(
 }
 
 #[pyfunction(name = "color_palette")]
-#[pyo3(signature = (name, swatches, selected=None, on_change=None, columns=None, swatch_size=None, gap=None))]
+#[pyo3(signature = (name, swatches, selected=None, on_change=None, columns=None, swatch_size=None, gap=None, enabled=None))]
 pub fn py_color_palette(
     name: String,
     swatches: &Bound<'_, PyAny>,
@@ -4131,6 +4278,7 @@ pub fn py_color_palette(
     columns: Option<usize>,
     swatch_size: Option<f32>,
     gap: Option<f32>,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let selected = selected.map(binding_number_from_py).transpose()?;
     let action = on_change.map(|callback| {
@@ -4145,7 +4293,7 @@ pub fn py_color_palette(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::color_palette(
+    PyWidget::from_binding(BindingWidget::color_palette(
         name,
         extract_color_palette_swatches(swatches)?,
         selected,
@@ -4153,17 +4301,19 @@ pub fn py_color_palette(
         columns,
         swatch_size,
         gap,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "color_picker")]
-#[pyo3(signature = (name, color=None, on_change=None, show_alpha=true, compact=false))]
+#[pyo3(signature = (name, color=None, on_change=None, show_alpha=true, compact=false, enabled=None))]
 pub fn py_color_picker(
     name: String,
     color: Option<PyColor>,
     on_change: Option<Py<PyAny>>,
     show_alpha: bool,
     compact: bool,
+    enabled: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyWidget> {
     let action = on_change.map(|callback| {
         BindingColorAction::new(move |color| {
@@ -4177,13 +4327,14 @@ pub fn py_color_picker(
             })
         })
     });
-    Ok(PyWidget::from_binding(BindingWidget::color_picker(
+    PyWidget::from_binding(BindingWidget::color_picker(
         name,
         color.map(Into::into),
         action,
         show_alpha,
         compact,
-    )))
+    ))
+    .with_enabled(enabled)
 }
 
 #[pyfunction(name = "simple_color_picker")]
@@ -4265,6 +4416,8 @@ pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_toolbar, m)?)?;
     m.add_function(wrap_pyfunction!(py_column, m)?)?;
     m.add_function(wrap_pyfunction!(py_row, m)?)?;
+    m.add_function(wrap_pyfunction!(py_flex_item, m)?)?;
+    m.add_function(wrap_pyfunction!(py_spacer, m)?)?;
     m.add_function(wrap_pyfunction!(py_grid, m)?)?;
     m.add_function(wrap_pyfunction!(py_aspect_ratio, m)?)?;
     m.add_function(wrap_pyfunction!(py_safe_area, m)?)?;

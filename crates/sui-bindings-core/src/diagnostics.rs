@@ -535,7 +535,11 @@ pub fn binding_semantics_nodes(nodes: &[SemanticsNode]) -> Vec<BindingSemanticNo
                 hovered: node.state.hovered,
                 selected: node.state.selected,
                 expanded: node.state.expanded,
-                editable: node.editable_text.is_some(),
+                // A read-only text field exposes text semantics but cannot be edited.
+                editable: node
+                    .editable_text
+                    .as_ref()
+                    .is_some_and(|editable| !editable.readonly),
                 multiline: node
                     .editable_text
                     .as_ref()

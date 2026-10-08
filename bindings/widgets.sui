@@ -181,7 +181,7 @@ widget Button
   core_constructor button
   python function py_button
   js function js_button
-  api function Button(label: State | BindingValue, onPress?: () => void): Widget;
+  api function Button(label: State | BindingValue, onPress?: () => void, enabled?: State | boolean | number, appearance?: "filled" | "tonal" | "outline" | "ghost", tone?: SemanticTone | string, icon?: IconGlyph | string, minWidth?: number, semanticName?: string, description?: string): Widget;
   docs Button
   compat
 end
@@ -221,7 +221,7 @@ widget Checkbox
   core_constructor checkbox
   python function py_checkbox
   js function js_checkbox
-  api function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
+  api function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
   docs Checkbox
   compat
 end
@@ -231,7 +231,7 @@ widget Switch
   core_constructor switch
   python function py_switch
   js function js_switch
-  api function Switch(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
+  api function Switch(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
   docs Switch
   compat
 end
@@ -241,7 +241,7 @@ widget RadioButton
   core_constructor radio_button
   python function py_radio_button
   js function js_radio_button
-  api function RadioButton(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
+  api function RadioButton(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
   docs RadioButton
   compat
 end
@@ -251,7 +251,7 @@ widget RadioGroup
   core_constructor radio_group
   python function py_radio_group
   js function js_radio_group
-  api function RadioGroup(name: State | BindingValue, options: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
+  api function RadioGroup(name: State | BindingValue, options: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
   docs RadioGroup
   compat
 end
@@ -261,7 +261,7 @@ widget SegmentedControl
   core_constructor segmented_control
   python function py_segmented_control
   js function js_segmented_control
-  api function SegmentedControl(name: State | BindingValue, items: SegmentedControlItem[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
+  api function SegmentedControl(name: State | BindingValue, items: SegmentedControlItem[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
   docs SegmentedControl
   compat
 end
@@ -288,7 +288,7 @@ widget ListView
   core_constructor list_view
   python function py_list_view
   js function js_list_view
-  api function ListView(name: State | BindingValue, items: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
+  api function ListView(name: State | BindingValue, items: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
   docs ListView
   compat
 end
@@ -298,7 +298,7 @@ widget Table
   core_constructor table
   python function py_table
   js function js_table
-  api function Table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
+  api function Table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
   docs Table
   compat
 end
@@ -306,7 +306,7 @@ end
 alias DataGrid
   python function py_data_grid
   js function js_data_grid
-  api function DataGrid(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
+  api function DataGrid(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
   docs DataGrid
 end
 
@@ -315,7 +315,7 @@ widget Slider
   core_constructor slider
   python function py_slider
   js function js_slider
-  api function Slider(name: State | BindingValue, value?: State | number | boolean, min? as min_value: number, max? as max_value: number, step?: number, onChange?: (value: number) => void): Widget;
+  api function Slider(name: State | BindingValue, value?: State | number | boolean, min? as min_value: number, max? as max_value: number, step?: number, onChange?: (value: number) => void, enabled?: State | boolean | number): Widget;
   docs Slider
   compat
 end
@@ -325,7 +325,7 @@ widget NumberInput
   core_constructor number_input
   python function py_number_input
   js function js_number_input
-  api function NumberInput(name: State | BindingValue, value?: State | number | boolean, min? as min_value: number, max? as max_value: number, step?: number, precision?: int, onChange?: (value: number) => void): Widget;
+  api function NumberInput(name: State | BindingValue, value?: State | number | boolean, min? as min_value: number, max? as max_value: number, step?: number, precision?: int, onChange?: (value: number) => void, enabled?: State | boolean | number): Widget;
   docs NumberInput
   compat
 end
@@ -335,7 +335,7 @@ widget Select
   core_constructor select
   python function py_select
   js function js_select
-  api function Select(name: State | BindingValue, options: string[], selected?: State | number | boolean, placeholder?: string, onChange?: (index: int, value: string) => void): Widget;
+  api function Select(name: State | BindingValue, options: string[], selected?: State | number | boolean, placeholder?: string, onChange?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
   docs Select
   compat
 end
@@ -405,7 +405,7 @@ widget TextInput
   core_constructor text_input
   python function py_text_input
   js function js_text_input
-  api function TextInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  api function TextInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number, readOnly?: boolean, onSubmit?: (value: string) => void, onFocusChange?: (focused: boolean) => void): Widget;
   docs TextInput
   compat
 end
@@ -415,7 +415,7 @@ widget TextArea
   core_constructor text_area
   python function py_text_area
   js function js_text_area
-  api function TextArea(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  api function TextArea(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number, readOnly?: boolean, onSubmit?: (value: string) => void, onFocusChange?: (focused: boolean) => void): Widget;
   docs TextArea
   compat
 end
@@ -537,7 +537,7 @@ layout Column
   core_constructor column
   python function py_column
   js function js_column
-  api function Column(children: Widget[], gap?: number): Widget;
+  api function Column(children: Widget[], gap?: number, justify?: "start" | "center" | "end" | "space-between" | "space-around" | "space-evenly", alignItems?: "start" | "center" | "end" | "stretch", wrap?: boolean): Widget;
   docs Column
 end
 
@@ -545,8 +545,24 @@ layout Row
   core_constructor row
   python function py_row
   js function js_row
-  api function Row(children: Widget[], gap?: number): Widget;
+  api function Row(children: Widget[], gap?: number, justify?: "start" | "center" | "end" | "space-between" | "space-around" | "space-evenly", alignItems?: "start" | "center" | "end" | "stretch", wrap?: boolean): Widget;
   docs Row
+end
+
+layout FlexItem
+  core_constructor flex_item
+  python function py_flex_item
+  js function js_flex_item
+  api function FlexItem(child: Widget, grow?: number, shrink?: number, basis?: number, minWidth?: number, minHeight?: number, maxWidth?: number, maxHeight?: number, alignSelf?: "start" | "center" | "end" | "stretch"): Widget;
+  docs FlexItem
+end
+
+layout Spacer
+  core_constructor spacer
+  python function py_spacer
+  js function js_spacer
+  api function Spacer(): Widget;
+  docs Spacer
 end
 
 layout Grid
@@ -947,7 +963,7 @@ widget TreeView
   core_constructor tree_view
   python function py_tree_view
   js function js_tree_view
-  api function TreeView(name: State | BindingValue, items: TreeItem[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
+  api function TreeView(name: State | BindingValue, items: TreeItem[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
   docs TreeView
 end
 
@@ -966,7 +982,7 @@ widget LayerList
   core_constructor layer_list
   python function py_layer_list
   js function js_layer_list
-  api function LayerList(name: State | BindingValue, items: LayerListItem[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
+  api function LayerList(name: State | BindingValue, items: LayerListItem[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
   docs LayerList
 end
 
@@ -1007,7 +1023,7 @@ widget Menu
   core_constructor menu
   python function py_menu
   js function js_menu
-  api function Menu(name: State | BindingValue, items: MenuItem[], highlighted?: State | number | boolean, onActivate?: (index: int, value: string) => void): Widget;
+  api function Menu(name: State | BindingValue, items: MenuItem[], highlighted?: State | number | boolean, onActivate?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
   docs Menu
 end
 
@@ -1025,7 +1041,7 @@ widget TabBar
   core_constructor tab_bar
   python function py_tab_bar
   js function js_tab_bar
-  api function TabBar(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void): Widget;
+  api function TabBar(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, enabled?: State | boolean | number): Widget;
   docs TabBar
 end
 
@@ -1034,7 +1050,7 @@ widget Tabs
   core_constructor tabs
   python function py_tabs
   js function js_tabs
-  api function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, panels?: Widget[], onChange?: (index: int, label: string) => void): Widget;
+  api function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, panels?: Widget[], onChange?: (index: int, label: string) => void, enabled?: State | boolean | number): Widget;
   docs Tabs
 end
 
@@ -1188,7 +1204,7 @@ widget ToolPalette
   core_constructor tool_palette
   python function py_tool_palette
   js function js_tool_palette
-  api function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: int, value: string) => void, extent?: number, padding?: number, gap?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean): Widget;
+  api function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: int, value: string) => void, extent?: number, padding?: number, gap?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean, enabled?: State | boolean | number): Widget;
   docs ToolPalette
 end
 
@@ -1197,7 +1213,7 @@ widget PresetStrip
   core_constructor preset_strip
   python function py_preset_strip
   js function js_preset_strip
-  api function PresetStrip(name: string, presets: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, itemWidth?: number, itemHeight?: number, gap?: number): Widget;
+  api function PresetStrip(name: string, presets: string[], selected?: State | number | boolean, onChange?: (index: int, value: string) => void, itemWidth?: number, itemHeight?: number, gap?: number, enabled?: State | boolean | number): Widget;
   docs PresetStrip
 end
 
@@ -1215,7 +1231,7 @@ widget ColorPalette
   core_constructor color_palette
   python function py_color_palette
   js function js_color_palette
-  api function ColorPalette(name: string, swatches: ColorPaletteSwatch[], selected?: State | number | boolean, onChange?: (index: int, name: string, color: Color) => void, columns?: int, swatchSize?: number, gap?: number): Widget;
+  api function ColorPalette(name: string, swatches: ColorPaletteSwatch[], selected?: State | number | boolean, onChange?: (index: int, name: string, color: Color) => void, columns?: int, swatchSize?: number, gap?: number, enabled?: State | boolean | number): Widget;
   docs ColorPalette
 end
 
@@ -1224,7 +1240,7 @@ widget ColorPicker
   core_constructor color_picker
   python function py_color_picker
   js function js_color_picker
-  api function ColorPicker(name: string, color?: Color, onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
+  api function ColorPicker(name: string, color?: Color, onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean, enabled?: State | boolean | number): Widget;
   docs ColorPicker
 end
 
@@ -1257,7 +1273,7 @@ widget PasswordInput
   core_constructor password_input
   python function py_password_input
   js function js_password_input
-  api function PasswordInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  api function PasswordInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number, readOnly?: boolean, onSubmit?: (value: string) => void, onFocusChange?: (focused: boolean) => void): Widget;
   docs PasswordInput
   compat
 end
@@ -1267,7 +1283,7 @@ widget DateTimeInput
   core_constructor datetime_input
   python function py_datetime_input
   js function js_datetime_input
-  api function DateTimeInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+  api function DateTimeInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number): Widget;
   docs DateTimeInput
   compat
 end

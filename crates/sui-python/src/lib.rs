@@ -25,12 +25,13 @@ use sui_bindings_core::{
     BindingAction, BindingAnimatedValue, BindingAnimationClip, BindingAnimationDocument,
     BindingAnimationEditor, BindingAnimationKeyframe, BindingAnimationPlayer,
     BindingAnimationSample, BindingAnimationTimeline, BindingAnimationTrack, BindingAnimationValue,
-    BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec, BindingCanvasShape,
-    BindingCanvasStroke, BindingCanvasViewport, BindingColorAction, BindingColorPaletteSwatch,
-    BindingColorSelectAction, BindingCommandDispatchTrace, BindingConstraintCase,
-    BindingCustomEvent, BindingDialogOptions, BindingDockFloatingGroup, BindingDockLayout,
-    BindingDockNode, BindingDockPanel, BindingDockState, BindingDragScope, BindingEvent,
-    BindingEventContext, BindingEventRouteTrace, BindingFloatingStackWindow, BindingFloatingView,
+    BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec, BindingButtonOptions,
+    BindingCanvasShape, BindingCanvasStroke, BindingCanvasViewport, BindingColorAction,
+    BindingColorPaletteSwatch, BindingColorSelectAction, BindingCommandDispatchTrace,
+    BindingConstraintCase, BindingCustomEvent, BindingDialogOptions, BindingDockFloatingGroup,
+    BindingDockLayout, BindingDockNode, BindingDockPanel, BindingDockState, BindingDragScope,
+    BindingEvent, BindingEventContext, BindingEventRouteTrace, BindingFlexItemOptions,
+    BindingFlexOptions, BindingFloatingStackWindow, BindingFloatingView,
     BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFontHandle,
     BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle, BindingImeEvent,
     BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState, BindingKeyboardEvent,
@@ -44,16 +45,17 @@ use sui_bindings_core::{
     BindingSegmentedControlItem, BindingSelectAction, BindingSemanticNode, BindingShader,
     BindingSpring, BindingState, BindingStateSubscription, BindingStatusBarSegment,
     BindingStringAction, BindingStringsAction, BindingTableColumn, BindingTableRow, BindingText,
-    BindingTextSpan, BindingTheme, BindingToolPaletteItem, BindingTransition, BindingTreeItem,
-    BindingUiHandle, BindingValue, BindingVirtualListItem, BindingVirtualListModel, BindingWidget,
-    BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow, BindingWindowEvent,
-    BindingWindowId, ExternalBackendHandle, ExternalSync, ExternalTextureDescriptor,
-    ExternalTextureFormat, ExternalTextureValidationError, ForeignArrangeCtx,
-    ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
-    ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
+    BindingTextFieldOptions, BindingTextSpan, BindingTheme, BindingToolPaletteItem,
+    BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue, BindingVirtualListItem,
+    BindingVirtualListModel, BindingWidget, BindingWidgetRebuildTrace, BindingWidgetTiming,
+    BindingWindow, BindingWindowEvent, BindingWindowId, ExternalBackendHandle, ExternalSync,
+    ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
+    ForeignArrangeCtx, ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx,
+    ForeignMeasureCtx, ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
     RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_alignment_from_name,
-    binding_aspect_ratio_fit_from_name, binding_easing_from_name, binding_icon_glyph_from_name,
+    binding_aspect_ratio_fit_from_name, binding_button_appearance_from_name,
+    binding_easing_from_name, binding_flex_justify_from_name, binding_icon_glyph_from_name,
     binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
     binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
@@ -2438,6 +2440,17 @@ impl PyWidget {
         Self {
             kind: PyWidgetKind::Binding(widget),
         }
+    }
+
+    /// Apply a factory's `enabled` argument: a bool or a `State`.
+    fn with_enabled(self, enabled: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let Some(enabled) = enabled else {
+            return Ok(self);
+        };
+        let enabled = binding_bool_from_py(enabled)?;
+        Ok(Self::from_binding(
+            self.binding_widget()?.with_enabled(enabled),
+        ))
     }
 
     fn binding_widget(&self) -> PyResult<BindingWidget> {
@@ -5161,6 +5174,38 @@ fn foreign_py_error(py: Python<'_>, error: PyErr) -> ForeignCallbackFailure {
     let message = error.to_string();
     report_callback_error(py, error);
     ForeignCallbackFailure::new(message)
+}
+
+/// Build text-field options from the shared `read_only`, `on_submit`, and
+/// `on_focus_change` factory arguments.
+fn py_text_field_options(
+    read_only: bool,
+    on_submit: Option<Py<PyAny>>,
+    on_focus_change: Option<Py<PyAny>>,
+) -> BindingTextFieldOptions {
+    BindingTextFieldOptions {
+        read_only,
+        on_submit: on_submit.map(|callback| {
+            BindingStringAction::new(move |text| {
+                Python::attach(|py| {
+                    callback
+                        .call1(py, (text,))
+                        .map(|_| ())
+                        .map_err(|error| foreign_py_error(py, error))
+                })
+            })
+        }),
+        on_focus_change: on_focus_change.map(|callback| {
+            BindingBoolAction::new(move |focused| {
+                Python::attach(|py| {
+                    callback
+                        .call1(py, (focused,))
+                        .map(|_| ())
+                        .map_err(|error| foreign_py_error(py, error))
+                })
+            })
+        }),
+    }
 }
 
 /// Report a callback that broke the widget contract, such as returning the

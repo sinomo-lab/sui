@@ -6,9 +6,11 @@ use sui::Alignment;
 use sui::AnimationProperty;
 use sui::AnimationPropertyPath;
 use sui::AspectRatioFit;
+use sui::ButtonAppearance;
 use sui::Color;
 use sui::ColorPaletteSwatch;
 use sui::Easing;
+use sui::FlexJustify;
 use sui::IconGlyph;
 use sui::LayerListItem;
 use sui::MenuItem;
@@ -694,6 +696,28 @@ pub fn binding_alignment_from_name(value: &str) -> Option<Alignment> {
         "center" | "centre" | "middle" => Some(Alignment::Center),
         "end" | "right" | "bottom" => Some(Alignment::End),
         "stretch" | "fill" => Some(Alignment::Stretch),
+        _ => None,
+    }
+}
+
+pub fn binding_button_appearance_from_name(value: &str) -> Option<ButtonAppearance> {
+    match normalize_binding_name(value).as_str() {
+        "filled" | "solid" => Some(ButtonAppearance::Filled),
+        "tonal" => Some(ButtonAppearance::Tonal),
+        "outline" | "outlined" => Some(ButtonAppearance::Outline),
+        "ghost" => Some(ButtonAppearance::Ghost),
+        _ => None,
+    }
+}
+
+pub fn binding_flex_justify_from_name(value: &str) -> Option<FlexJustify> {
+    match normalize_binding_name(value).as_str() {
+        "start" => Some(FlexJustify::Start),
+        "center" | "centre" => Some(FlexJustify::Center),
+        "end" => Some(FlexJustify::End),
+        "spacebetween" => Some(FlexJustify::SpaceBetween),
+        "spacearound" => Some(FlexJustify::SpaceAround),
+        "spaceevenly" => Some(FlexJustify::SpaceEvenly),
         _ => None,
     }
 }

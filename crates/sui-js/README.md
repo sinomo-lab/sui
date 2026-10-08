@@ -102,6 +102,11 @@ options object. This avoids positional `undefined` placeholders as APIs grow.
 The original `PascalCase` positional functions remain available for existing
 applications.
 
+Interactive controls accept `enabled`, a boolean or a `State`. `column(...)`
+and `row(...)` take `justify`, `alignItems`, and `wrap`; wrap a direct child in
+`flexItem(child, { grow: 1 })` to size it along the main axis, and use
+`spacer()` to fill the remaining space.
+
 The portable media surface includes both `colorPicker(...)` and the compact,
 mode-selectable `simpleColorPicker(...)` (`hsl`, `hsv`, `rgb`, or `oklch`).
 Editor shells can use `DockState`, serializable `DockLayout`/`DockNode` values,

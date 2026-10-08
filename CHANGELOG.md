@@ -38,6 +38,16 @@ Versioning, with the usual expectation that the API may change during the
   follows its bound state.
 - Made state-bound labels of buttons, checkboxes, switches, and radio buttons
   update in place.
+- Added `enabled` to every control that can be disabled, as a boolean or a
+  `State`.
+- Gave `column` and `row` `justify`, `align_items`, and `wrap`, and added
+  `flex_item` for per-child grow, shrink, basis, size limits, and
+  `align_self`, plus `spacer`.
+- Gave `button` `appearance`, `tone`, `icon`, `min_width`, `semantic_name`,
+  and `description`.
+- Gave `text_input`, `text_area`, and `password_input` `read_only`,
+  `on_submit`, and `on_focus_change`. Semantic snapshots no longer report
+  read-only fields as editable.
 
 ### Rust
 

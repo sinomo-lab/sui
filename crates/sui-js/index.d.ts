@@ -1002,10 +1002,17 @@ export function Label(value: State | BindingValue): Widget;
 
 export function label(value: State | BindingValue): Widget;
 
-export function Button(label: State | BindingValue, onPress?: () => void): Widget;
+export function Button(label: State | BindingValue, onPress?: () => void, enabled?: State | boolean | number, appearance?: "filled" | "tonal" | "outline" | "ghost", tone?: SemanticTone | string, icon?: IconGlyph | string, minWidth?: number, semanticName?: string, description?: string): Widget;
 
 export interface ButtonOptions {
   onPress?: () => void;
+  enabled?: State | boolean | number;
+  appearance?: "filled" | "tonal" | "outline" | "ghost";
+  tone?: SemanticTone | string;
+  icon?: IconGlyph | string;
+  minWidth?: number;
+  semanticName?: string;
+  description?: string;
 }
 
 export function button(label: State | BindingValue, options?: ButtonOptions): Widget;
@@ -1043,47 +1050,52 @@ export interface LinkOptions {
 
 export function link(label: State | BindingValue, url: State | BindingValue, options?: LinkOptions): Widget;
 
-export function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
+export function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
 
 export interface CheckboxOptions {
   checked?: State | boolean | number;
   onChange?: (checked: boolean) => void;
+  enabled?: State | boolean | number;
 }
 
 export function checkbox(label: State | BindingValue, options?: CheckboxOptions): Widget;
 
-export function Switch(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
+export function Switch(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
 
 export interface SwitchOptions {
   checked?: State | boolean | number;
   onChange?: (checked: boolean) => void;
+  enabled?: State | boolean | number;
 }
 
 export function switchControl(label: State | BindingValue, options?: SwitchOptions): Widget;
 
-export function RadioButton(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void): Widget;
+export function RadioButton(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
 
 export interface RadioButtonOptions {
   checked?: State | boolean | number;
   onChange?: (checked: boolean) => void;
+  enabled?: State | boolean | number;
 }
 
 export function radioButton(label: State | BindingValue, options?: RadioButtonOptions): Widget;
 
-export function RadioGroup(name: State | BindingValue, options: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+export function RadioGroup(name: State | BindingValue, options: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface RadioGroupOptions {
   selected?: State | number | boolean;
   onChange?: (index: number, value: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function radioGroup(name: State | BindingValue, options: string[], config?: RadioGroupOptions): Widget;
 
-export function SegmentedControl(name: State | BindingValue, items: SegmentedControlItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+export function SegmentedControl(name: State | BindingValue, items: SegmentedControlItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface SegmentedControlOptions {
   selected?: State | number | boolean;
   onChange?: (index: number, value: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function segmentedControl(name: State | BindingValue, items: SegmentedControlItem[], options?: SegmentedControlOptions): Widget;
@@ -1106,34 +1118,37 @@ export interface PathBarOptions {
 
 export function pathBar(name: State | BindingValue, items: string[], options?: PathBarOptions): Widget;
 
-export function ListView(name: State | BindingValue, items: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+export function ListView(name: State | BindingValue, items: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface ListViewOptions {
   selected?: State | number | boolean;
   onChange?: (index: number, value: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function listView(name: State | BindingValue, items: string[], options?: ListViewOptions): Widget;
 
-export function Table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+export function Table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface TableOptions {
   selected?: State | number | boolean;
   onChange?: (index: number, value: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], options?: TableOptions): Widget;
 
-export function DataGrid(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+export function DataGrid(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface DataGridOptions {
   selected?: State | number | boolean;
   onChange?: (index: number, value: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function dataGrid(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], options?: DataGridOptions): Widget;
 
-export function Slider(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, onChange?: (value: number) => void): Widget;
+export function Slider(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, onChange?: (value: number) => void, enabled?: State | boolean | number): Widget;
 
 export interface SliderOptions {
   value?: State | number | boolean;
@@ -1141,11 +1156,12 @@ export interface SliderOptions {
   max?: number;
   step?: number;
   onChange?: (value: number) => void;
+  enabled?: State | boolean | number;
 }
 
 export function slider(name: State | BindingValue, options?: SliderOptions): Widget;
 
-export function NumberInput(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, precision?: number, onChange?: (value: number) => void): Widget;
+export function NumberInput(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, precision?: number, onChange?: (value: number) => void, enabled?: State | boolean | number): Widget;
 
 export interface NumberInputOptions {
   value?: State | number | boolean;
@@ -1154,16 +1170,18 @@ export interface NumberInputOptions {
   step?: number;
   precision?: number;
   onChange?: (value: number) => void;
+  enabled?: State | boolean | number;
 }
 
 export function numberInput(name: State | BindingValue, options?: NumberInputOptions): Widget;
 
-export function Select(name: State | BindingValue, options: string[], selected?: State | number | boolean, placeholder?: string, onChange?: (index: number, value: string) => void): Widget;
+export function Select(name: State | BindingValue, options: string[], selected?: State | number | boolean, placeholder?: string, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface SelectOptions {
   selected?: State | number | boolean;
   placeholder?: string;
   onChange?: (index: number, value: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function select(name: State | BindingValue, options: string[], config?: SelectOptions): Widget;
@@ -1227,22 +1245,30 @@ export interface BusyIndicatorOptions {
 
 export function busyIndicator(name: State | BindingValue, options?: BusyIndicatorOptions): Widget;
 
-export function TextInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+export function TextInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number, readOnly?: boolean, onSubmit?: (value: string) => void, onFocusChange?: (focused: boolean) => void): Widget;
 
 export interface TextInputOptions {
   value?: State | BindingValue;
   placeholder?: string;
   onChange?: (value: string) => void;
+  enabled?: State | boolean | number;
+  readOnly?: boolean;
+  onSubmit?: (value: string) => void;
+  onFocusChange?: (focused: boolean) => void;
 }
 
 export function textInput(name: State | BindingValue, options?: TextInputOptions): Widget;
 
-export function TextArea(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+export function TextArea(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number, readOnly?: boolean, onSubmit?: (value: string) => void, onFocusChange?: (focused: boolean) => void): Widget;
 
 export interface TextAreaOptions {
   value?: State | BindingValue;
   placeholder?: string;
   onChange?: (value: string) => void;
+  enabled?: State | boolean | number;
+  readOnly?: boolean;
+  onSubmit?: (value: string) => void;
+  onFocusChange?: (focused: boolean) => void;
 }
 
 export function textArea(name: State | BindingValue, options?: TextAreaOptions): Widget;
@@ -1361,21 +1387,46 @@ export interface ToolbarOptions {
 
 export function toolbar(children: Widget[], options?: ToolbarOptions): Widget;
 
-export function Column(children: Widget[], gap?: number): Widget;
+export function Column(children: Widget[], gap?: number, justify?: "start" | "center" | "end" | "space-between" | "space-around" | "space-evenly", alignItems?: "start" | "center" | "end" | "stretch", wrap?: boolean): Widget;
 
 export interface ColumnOptions {
   gap?: number;
+  justify?: "start" | "center" | "end" | "space-between" | "space-around" | "space-evenly";
+  alignItems?: "start" | "center" | "end" | "stretch";
+  wrap?: boolean;
 }
 
 export function column(children: Widget[], options?: ColumnOptions): Widget;
 
-export function Row(children: Widget[], gap?: number): Widget;
+export function Row(children: Widget[], gap?: number, justify?: "start" | "center" | "end" | "space-between" | "space-around" | "space-evenly", alignItems?: "start" | "center" | "end" | "stretch", wrap?: boolean): Widget;
 
 export interface RowOptions {
   gap?: number;
+  justify?: "start" | "center" | "end" | "space-between" | "space-around" | "space-evenly";
+  alignItems?: "start" | "center" | "end" | "stretch";
+  wrap?: boolean;
 }
 
 export function row(children: Widget[], options?: RowOptions): Widget;
+
+export function FlexItem(child: Widget, grow?: number, shrink?: number, basis?: number, minWidth?: number, minHeight?: number, maxWidth?: number, maxHeight?: number, alignSelf?: "start" | "center" | "end" | "stretch"): Widget;
+
+export interface FlexItemOptions {
+  grow?: number;
+  shrink?: number;
+  basis?: number;
+  minWidth?: number;
+  minHeight?: number;
+  maxWidth?: number;
+  maxHeight?: number;
+  alignSelf?: "start" | "center" | "end" | "stretch";
+}
+
+export function flexItem(child: Widget, options?: FlexItemOptions): Widget;
+
+export function Spacer(): Widget;
+
+export function spacer(): Widget;
 
 export function Grid(children: Widget[], columns?: number, name?: string, gap?: number, columnGap?: number, rowGap?: number): Widget;
 
@@ -1692,11 +1743,12 @@ export class TreeItem {
   constructor(label: string, detail?: string, expanded?: boolean, enabled?: boolean, children?: TreeItem[]);
 }
 
-export function TreeView(name: State | BindingValue, items: TreeItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+export function TreeView(name: State | BindingValue, items: TreeItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface TreeViewOptions {
   selected?: State | number | boolean;
   onChange?: (index: number, value: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function treeView(name: State | BindingValue, items: TreeItem[], options?: TreeViewOptions): Widget;
@@ -1705,11 +1757,12 @@ export class LayerListItem {
   constructor(label: string, detail?: string, visible?: boolean, locked?: boolean, enabled?: boolean);
 }
 
-export function LayerList(name: State | BindingValue, items: LayerListItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+export function LayerList(name: State | BindingValue, items: LayerListItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface LayerListOptions {
   selected?: State | number | boolean;
   onChange?: (index: number, value: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function layerList(name: State | BindingValue, items: LayerListItem[], options?: LayerListOptions): Widget;
@@ -1728,11 +1781,12 @@ export class ColorPaletteSwatch {
   readonly color: Color;
 }
 
-export function Menu(name: State | BindingValue, items: MenuItem[], highlighted?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
+export function Menu(name: State | BindingValue, items: MenuItem[], highlighted?: State | number | boolean, onActivate?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface MenuOptions {
   highlighted?: State | number | boolean;
   onActivate?: (index: number, value: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function menu(name: State | BindingValue, items: MenuItem[], options?: MenuOptions): Widget;
@@ -1745,21 +1799,23 @@ export interface ContextMenuOptions {
 
 export function contextMenu(name: string, trigger: Widget, items: MenuItem[], options?: ContextMenuOptions): Widget;
 
-export function TabBar(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void): Widget;
+export function TabBar(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface TabBarOptions {
   selected?: State | number | boolean;
   onChange?: (index: number, value: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function tabBar(name: State | BindingValue, tabs: string[], options?: TabBarOptions): Widget;
 
-export function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, panels?: Widget[], onChange?: (index: number, label: string) => void): Widget;
+export function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, panels?: Widget[], onChange?: (index: number, label: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface TabsOptions {
   selected?: State | number | boolean;
   panels?: Widget[];
   onChange?: (index: number, label: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function tabs(name: State | BindingValue, tabs: string[], options?: TabsOptions): Widget;
@@ -1927,7 +1983,7 @@ export interface PopoverOptions {
 
 export function popover(name: string, trigger: Widget, content: Widget, options?: PopoverOptions): Widget;
 
-export function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: number, value: string) => void, extent?: number, padding?: number, gap?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean): Widget;
+export function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: number, value: string) => void, extent?: number, padding?: number, gap?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean, enabled?: State | boolean | number): Widget;
 
 export interface ToolPaletteOptions {
   selected?: State | number | boolean;
@@ -1940,11 +1996,12 @@ export interface ToolPaletteOptions {
   iconSize?: number;
   background?: Color;
   divider?: boolean;
+  enabled?: State | boolean | number;
 }
 
 export function toolPalette(name: string, items: ToolPaletteItem[], options?: ToolPaletteOptions): Widget;
 
-export function PresetStrip(name: string, presets: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, itemWidth?: number, itemHeight?: number, gap?: number): Widget;
+export function PresetStrip(name: string, presets: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, itemWidth?: number, itemHeight?: number, gap?: number, enabled?: State | boolean | number): Widget;
 
 export interface PresetStripOptions {
   selected?: State | number | boolean;
@@ -1952,6 +2009,7 @@ export interface PresetStripOptions {
   itemWidth?: number;
   itemHeight?: number;
   gap?: number;
+  enabled?: State | boolean | number;
 }
 
 export function presetStrip(name: string, presets: string[], options?: PresetStripOptions): Widget;
@@ -1966,7 +2024,7 @@ export interface BrowserTabBarOptions {
 
 export function browserTabBar(name: string, tabs: string[], options?: BrowserTabBarOptions): Widget;
 
-export function ColorPalette(name: string, swatches: ColorPaletteSwatch[], selected?: State | number | boolean, onChange?: (index: number, name: string, color: Color) => void, columns?: number, swatchSize?: number, gap?: number): Widget;
+export function ColorPalette(name: string, swatches: ColorPaletteSwatch[], selected?: State | number | boolean, onChange?: (index: number, name: string, color: Color) => void, columns?: number, swatchSize?: number, gap?: number, enabled?: State | boolean | number): Widget;
 
 export interface ColorPaletteOptions {
   selected?: State | number | boolean;
@@ -1974,17 +2032,19 @@ export interface ColorPaletteOptions {
   columns?: number;
   swatchSize?: number;
   gap?: number;
+  enabled?: State | boolean | number;
 }
 
 export function colorPalette(name: string, swatches: ColorPaletteSwatch[], options?: ColorPaletteOptions): Widget;
 
-export function ColorPicker(name: string, color?: Color, onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
+export function ColorPicker(name: string, color?: Color, onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean, enabled?: State | boolean | number): Widget;
 
 export interface ColorPickerOptions {
   color?: Color;
   onChange?: (color: Color) => void;
   showAlpha?: boolean;
   compact?: boolean;
+  enabled?: State | boolean | number;
 }
 
 export function colorPicker(name: string, options?: ColorPickerOptions): Widget;
@@ -2009,22 +2069,27 @@ export class BrushPreviewSpec {
   readonly shape: "round" | "square";
 }
 
-export function PasswordInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+export function PasswordInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number, readOnly?: boolean, onSubmit?: (value: string) => void, onFocusChange?: (focused: boolean) => void): Widget;
 
 export interface PasswordInputOptions {
   value?: State | BindingValue;
   placeholder?: string;
   onChange?: (value: string) => void;
+  enabled?: State | boolean | number;
+  readOnly?: boolean;
+  onSubmit?: (value: string) => void;
+  onFocusChange?: (focused: boolean) => void;
 }
 
 export function passwordInput(name: State | BindingValue, options?: PasswordInputOptions): Widget;
 
-export function DateTimeInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void): Widget;
+export function DateTimeInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number): Widget;
 
 export interface DateTimeInputOptions {
   value?: State | BindingValue;
   placeholder?: string;
   onChange?: (value: string) => void;
+  enabled?: State | boolean | number;
 }
 
 export function dateTimeInput(name: State | BindingValue, options?: DateTimeInputOptions): Widget;

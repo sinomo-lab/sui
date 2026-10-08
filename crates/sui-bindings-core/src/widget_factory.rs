@@ -27,7 +27,10 @@ use crate::values::{
     BindingSegmentedControlItem, BindingStatusBarSegment, BindingTableColumn, BindingTableRow,
     BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem,
 };
-use crate::widget_descriptor::{BindingDialogOptions, BindingWidget, BindingWidgetKind};
+use crate::widget_descriptor::{
+    BindingButtonOptions, BindingDialogOptions, BindingFlexOptions, BindingTextFieldOptions,
+    BindingWidget, BindingWidgetKind,
+};
 use std::sync::Arc;
 use sui::Alignment;
 use sui::AspectRatioFit;
@@ -35,6 +38,7 @@ use sui::Axis;
 use sui::CanvasRulerAxis;
 use sui::Color;
 use sui::Easing;
+use sui::FlexItem;
 use sui::FloatingViewConfig;
 use sui::IconGlyph;
 use sui::Insets;
@@ -60,9 +64,18 @@ impl BindingWidget {
     }
 
     pub fn button(label: impl Into<BindingText>, action: Option<BindingAction>) -> Self {
+        Self::button_with_options(label, action, BindingButtonOptions::default())
+    }
+
+    pub fn button_with_options(
+        label: impl Into<BindingText>,
+        action: Option<BindingAction>,
+        options: BindingButtonOptions,
+    ) -> Self {
         Self::from_kind(BindingWidgetKind::Button {
             label: label.into(),
             action,
+            options,
         })
     }
 
@@ -506,11 +519,28 @@ impl BindingWidget {
         placeholder: Option<String>,
         action: Option<BindingStringAction>,
     ) -> Self {
+        Self::text_input_with_options(
+            name,
+            value,
+            placeholder,
+            action,
+            BindingTextFieldOptions::default(),
+        )
+    }
+
+    pub fn text_input_with_options(
+        name: impl Into<BindingText>,
+        value: impl Into<BindingText>,
+        placeholder: Option<String>,
+        action: Option<BindingStringAction>,
+        field: BindingTextFieldOptions,
+    ) -> Self {
         Self::from_kind(BindingWidgetKind::TextInput {
             name: name.into(),
             value: value.into(),
             placeholder,
             action,
+            field,
         })
     }
 
@@ -520,11 +550,28 @@ impl BindingWidget {
         placeholder: Option<String>,
         action: Option<BindingStringAction>,
     ) -> Self {
+        Self::password_input_with_options(
+            name,
+            value,
+            placeholder,
+            action,
+            BindingTextFieldOptions::default(),
+        )
+    }
+
+    pub fn password_input_with_options(
+        name: impl Into<BindingText>,
+        value: impl Into<BindingText>,
+        placeholder: Option<String>,
+        action: Option<BindingStringAction>,
+        field: BindingTextFieldOptions,
+    ) -> Self {
         Self::from_kind(BindingWidgetKind::PasswordInput {
             name: name.into(),
             value: value.into(),
             placeholder,
             action,
+            field,
         })
     }
 
@@ -548,11 +595,28 @@ impl BindingWidget {
         placeholder: Option<String>,
         action: Option<BindingStringAction>,
     ) -> Self {
+        Self::text_area_with_options(
+            name,
+            value,
+            placeholder,
+            action,
+            BindingTextFieldOptions::default(),
+        )
+    }
+
+    pub fn text_area_with_options(
+        name: impl Into<BindingText>,
+        value: impl Into<BindingText>,
+        placeholder: Option<String>,
+        action: Option<BindingStringAction>,
+        field: BindingTextFieldOptions,
+    ) -> Self {
         Self::from_kind(BindingWidgetKind::TextArea {
             name: name.into(),
             value: value.into(),
             placeholder,
             action,
+            field,
         })
     }
 
@@ -1781,11 +1845,32 @@ impl BindingWidget {
     }
 
     pub fn flex(axis: Axis, children: impl IntoIterator<Item = BindingWidget>, gap: f32) -> Self {
+        Self::flex_with_options(axis, children, gap, BindingFlexOptions::default())
+    }
+
+    pub fn flex_with_options(
+        axis: Axis,
+        children: impl IntoIterator<Item = BindingWidget>,
+        gap: f32,
+        options: BindingFlexOptions,
+    ) -> Self {
         Self::from_kind(BindingWidgetKind::Flex {
             axis,
             gap: gap.max(0.0),
             children: children.into_iter().collect(),
+            options,
         })
+    }
+
+    /// Size `child` with `item` when it is a direct child of a column or
+    /// row.
+    pub fn flex_item(child: BindingWidget, item: FlexItem) -> Self {
+        Self::from_kind(BindingWidgetKind::FlexItem { child, item })
+    }
+
+    /// Flexible empty space that grows to fill a column or row.
+    pub fn spacer() -> Self {
+        Self::from_kind(BindingWidgetKind::Spacer)
     }
 
     pub fn foreign(callbacks: impl ForeignWidgetCallbacks) -> Self {
@@ -1809,6 +1894,14 @@ impl BindingWidget {
     pub(crate) fn from_kind(kind: BindingWidgetKind) -> Self {
         Self {
             inner: Arc::new(kind),
+            enabled: None,
         }
+    }
+
+    /// Enable or disable an interactive control. A state-bound value
+    /// follows later changes. Widgets that cannot be disabled ignore it.
+    pub fn with_enabled(mut self, enabled: impl Into<BindingBool>) -> Self {
+        self.enabled = Some(enabled.into());
+        self
     }
 }

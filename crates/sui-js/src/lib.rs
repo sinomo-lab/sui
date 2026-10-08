@@ -20,12 +20,13 @@ use sui_bindings_core::{
     BindingAction, BindingAnimatedValue, BindingAnimationClip, BindingAnimationDocument,
     BindingAnimationEditor, BindingAnimationKeyframe, BindingAnimationPlayer,
     BindingAnimationSample, BindingAnimationTimeline, BindingAnimationTrack, BindingAnimationValue,
-    BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec, BindingCanvasShape,
-    BindingCanvasStroke, BindingCanvasViewport, BindingColorAction, BindingColorPaletteSwatch,
-    BindingColorSelectAction, BindingCommandDispatchTrace, BindingConstraintCase,
-    BindingCustomEvent, BindingDialogOptions, BindingDockFloatingGroup, BindingDockLayout,
-    BindingDockNode, BindingDockPanel, BindingDockState, BindingDragScope, BindingEvent,
-    BindingEventContext, BindingEventRouteTrace, BindingFloatingStackWindow, BindingFloatingView,
+    BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec, BindingButtonOptions,
+    BindingCanvasShape, BindingCanvasStroke, BindingCanvasViewport, BindingColorAction,
+    BindingColorPaletteSwatch, BindingColorSelectAction, BindingCommandDispatchTrace,
+    BindingConstraintCase, BindingCustomEvent, BindingDialogOptions, BindingDockFloatingGroup,
+    BindingDockLayout, BindingDockNode, BindingDockPanel, BindingDockState, BindingDragScope,
+    BindingEvent, BindingEventContext, BindingEventRouteTrace, BindingFlexItemOptions,
+    BindingFlexOptions, BindingFloatingStackWindow, BindingFloatingView,
     BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFontHandle,
     BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle, BindingImeEvent,
     BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState, BindingKeyboardEvent,
@@ -39,16 +40,17 @@ use sui_bindings_core::{
     BindingSegmentedControlItem, BindingSelectAction, BindingSemanticNode, BindingShader,
     BindingSpring, BindingState, BindingStateSubscription, BindingStatusBarSegment,
     BindingStringAction, BindingStringsAction, BindingTableColumn, BindingTableRow, BindingText,
-    BindingTextSpan, BindingTheme, BindingToolPaletteItem, BindingTransition, BindingTreeItem,
-    BindingUiHandle, BindingValue, BindingVirtualListItem, BindingVirtualListModel, BindingWidget,
-    BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow, BindingWindowEvent,
-    BindingWindowId, ExternalBackendHandle, ExternalSync, ExternalTextureDescriptor,
-    ExternalTextureFormat, ExternalTextureValidationError, ForeignArrangeCtx,
-    ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
-    ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
+    BindingTextFieldOptions, BindingTextSpan, BindingTheme, BindingToolPaletteItem,
+    BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue, BindingVirtualListItem,
+    BindingVirtualListModel, BindingWidget, BindingWidgetRebuildTrace, BindingWidgetTiming,
+    BindingWindow, BindingWindowEvent, BindingWindowId, ExternalBackendHandle, ExternalSync,
+    ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
+    ForeignArrangeCtx, ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx,
+    ForeignMeasureCtx, ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
     RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_alignment_from_name,
-    binding_aspect_ratio_fit_from_name, binding_easing_from_name, binding_icon_glyph_from_name,
+    binding_aspect_ratio_fit_from_name, binding_button_appearance_from_name,
+    binding_easing_from_name, binding_flex_justify_from_name, binding_icon_glyph_from_name,
     binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
     binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
@@ -2596,6 +2598,17 @@ impl JsWidget {
         Self {
             kind: JsWidgetKind::Binding(widget),
         }
+    }
+
+    /// Apply a factory's `enabled` argument: a boolean or a `State`.
+    fn with_enabled(self, enabled: Option<JsBindingBoolArg>) -> Result<Self> {
+        let Some(enabled) = enabled else {
+            return Ok(self);
+        };
+        Ok(Self::from_binding(
+            self.binding_widget()?
+                .with_enabled(binding_bool_from_js(enabled)),
+        ))
     }
 
     fn binding_widget(&self) -> Result<BindingWidget> {

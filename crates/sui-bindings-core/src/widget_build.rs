@@ -1,5 +1,8 @@
 use crate::drag::binding_drag_payload_text;
-use crate::errors::{ForeignCallbackError, ForeignCallbackPhase, ForeignWidgetId, themed_widget};
+use crate::errors::{
+    ForeignCallbackError, ForeignCallbackPhase, ForeignWidgetId, enabled_widget,
+    text_field_options, themed_widget,
+};
 use crate::foreign_widget::ForeignWidget;
 use crate::graphics::BindingScrollAxes;
 use crate::values::{
@@ -54,6 +57,7 @@ use sui::EmptyState;
 use sui::FieldGroup;
 use sui::FixedPaneSplit;
 use sui::Flex;
+use sui::FlexWrap;
 use sui::FloatingStack;
 use sui::FloatingWorkspace;
 use sui::FormRow;
@@ -153,8 +157,30 @@ impl BindingWidget {
                 }
                 BindingRuntimeWidget::new(label)
             }
-            BindingWidgetKind::Button { label, action } => {
+            BindingWidgetKind::Button {
+                label,
+                action,
+                options,
+            } => {
                 let mut button = Button::new(label.resolve());
+                if let Some(appearance) = options.appearance {
+                    button = button.appearance(appearance);
+                }
+                if let Some(tone) = options.tone {
+                    button = button.tone(tone);
+                }
+                if let Some(icon) = options.icon {
+                    button = button.icon(icon);
+                }
+                if let Some(min_width) = options.min_width {
+                    button = button.min_width(min_width);
+                }
+                if let Some(name) = &options.semantic_name {
+                    button = button.semantic_name(name.clone());
+                }
+                if let Some(description) = &options.description {
+                    button = button.description(description.clone());
+                }
                 if let Some(reader) = live_label(label) {
                     button = button.label_when(reader);
                 }
@@ -172,6 +198,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let button = enabled_widget!(button, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(button, errors))
             }
             BindingWidgetKind::Icon {
@@ -303,6 +330,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let checkbox = enabled_widget!(checkbox, self.enabled.as_ref());
                 BindingRuntimeWidget::new(BindingCheckboxWidget {
                     inner: themed_widget!(checkbox, errors),
                     checked: checked.clone(),
@@ -332,6 +360,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let switch = enabled_widget!(switch, self.enabled.as_ref());
                 BindingRuntimeWidget::new(BindingSwitchWidget {
                     inner: themed_widget!(switch, errors),
                     on: on.clone(),
@@ -365,6 +394,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let radio = enabled_widget!(radio, self.enabled.as_ref());
                 BindingRuntimeWidget::new(BindingRadioButtonWidget {
                     inner: themed_widget!(radio, errors),
                     selected: selected.clone(),
@@ -406,6 +436,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let radio_group = enabled_widget!(radio_group, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(radio_group, errors))
             }
             BindingWidgetKind::SegmentedControl {
@@ -445,6 +476,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let control = enabled_widget!(control, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(control, errors))
             }
             BindingWidgetKind::Breadcrumb {
@@ -527,6 +559,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let list_view = enabled_widget!(list_view, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(list_view, errors))
             }
             BindingWidgetKind::Table {
@@ -577,6 +610,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let table = enabled_widget!(table, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(table, errors))
             }
             BindingWidgetKind::TreeView {
@@ -612,6 +646,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let tree_view = enabled_widget!(tree_view, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(tree_view, errors))
             }
             BindingWidgetKind::LayerList {
@@ -651,6 +686,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let layer_list = enabled_widget!(layer_list, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(layer_list, errors))
             }
             BindingWidgetKind::Menu {
@@ -685,6 +721,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let menu = enabled_widget!(menu, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(menu, errors))
             }
             BindingWidgetKind::ContextMenu {
@@ -746,6 +783,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let tab_bar = enabled_widget!(tab_bar, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(tab_bar, errors))
             }
             BindingWidgetKind::Tabs {
@@ -793,6 +831,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let tab_widget = enabled_widget!(tab_widget, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(tab_widget, errors))
             }
             BindingWidgetKind::Dialog {
@@ -964,6 +1003,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let slider = enabled_widget!(slider, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(slider, errors))
             }
             BindingWidgetKind::NumberInput {
@@ -1003,6 +1043,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let number_input = enabled_widget!(number_input, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(number_input, errors))
             }
             BindingWidgetKind::Select {
@@ -1045,6 +1086,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let select = enabled_widget!(select, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(select, errors))
             }
             BindingWidgetKind::ProgressBar {
@@ -1074,6 +1116,7 @@ impl BindingWidget {
                 value,
                 placeholder,
                 action,
+                field,
             } => {
                 let mut text_input = TextInput::new(name.resolve()).value(value.resolve());
                 if let Some(placeholder) = placeholder {
@@ -1098,6 +1141,8 @@ impl BindingWidget {
                         }
                     });
                 }
+                let text_input = text_field_options!(text_input, field, errors);
+                let text_input = enabled_widget!(text_input, self.enabled.as_ref());
                 BindingRuntimeWidget::new(BindingTextInputWidget {
                     inner: themed_widget!(text_input, errors),
                     value: value.clone(),
@@ -1108,6 +1153,7 @@ impl BindingWidget {
                 value,
                 placeholder,
                 action,
+                field,
             } => {
                 let mut password_input = PasswordInput::new(name.resolve()).value(value.resolve());
                 if let Some(placeholder) = placeholder {
@@ -1132,6 +1178,8 @@ impl BindingWidget {
                         }
                     });
                 }
+                let password_input = text_field_options!(password_input, field, errors);
+                let password_input = enabled_widget!(password_input, self.enabled.as_ref());
                 BindingRuntimeWidget::new(BindingPasswordInputWidget {
                     inner: themed_widget!(password_input, errors),
                     value: value.clone(),
@@ -1166,6 +1214,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let datetime_input = enabled_widget!(datetime_input, self.enabled.as_ref());
                 BindingRuntimeWidget::new(BindingDateTimeInputWidget {
                     inner: themed_widget!(datetime_input, errors),
                     value: value.clone(),
@@ -1176,6 +1225,7 @@ impl BindingWidget {
                 value,
                 placeholder,
                 action,
+                field,
             } => {
                 let mut text_area = TextArea::new(name.resolve()).value(value.resolve());
                 if let Some(placeholder) = placeholder {
@@ -1200,6 +1250,8 @@ impl BindingWidget {
                         }
                     });
                 }
+                let text_area = text_field_options!(text_area, field, errors);
+                let text_area = enabled_widget!(text_area, self.enabled.as_ref());
                 BindingRuntimeWidget::new(BindingTextAreaWidget {
                     inner: themed_widget!(text_area, errors),
                     value: value.clone(),
@@ -1359,6 +1411,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let palette = enabled_widget!(palette, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(palette, errors))
             }
             BindingWidgetKind::ColorPicker {
@@ -1387,6 +1440,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let picker = enabled_widget!(picker, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(picker, errors))
             }
             BindingWidgetKind::SimpleColorPicker {
@@ -2928,6 +2982,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let palette = enabled_widget!(palette, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(palette, errors))
             }
             BindingWidgetKind::PresetStrip {
@@ -2978,6 +3033,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let strip = enabled_widget!(strip, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(strip, errors))
             }
             BindingWidgetKind::BrowserTabBar {
@@ -3046,13 +3102,31 @@ impl BindingWidget {
                 axis,
                 gap,
                 children,
+                options,
             } => {
                 let mut flex = Flex::new(*axis).gap(*gap);
+                if let Some(justify) = options.justify {
+                    flex = flex.justify(justify);
+                }
+                if let Some(alignment) = options.align_items {
+                    flex = flex.align_items(alignment);
+                }
+                if options.wrap {
+                    flex = flex.wrap(FlexWrap::Wrap);
+                }
                 for child in children {
-                    flex.push(child.into_runtime_widget(errors.clone()));
+                    match child.inner.as_ref() {
+                        BindingWidgetKind::FlexItem { child, item } => {
+                            flex.push_item(child.into_runtime_widget(errors.clone()), *item);
+                        }
+                        BindingWidgetKind::Spacer => flex.push_spacer(),
+                        _ => flex.push(child.into_runtime_widget(errors.clone())),
+                    }
                 }
                 BindingRuntimeWidget::new(flex)
             }
+            BindingWidgetKind::FlexItem { child, .. } => child.into_runtime_widget(errors),
+            BindingWidgetKind::Spacer => BindingRuntimeWidget::new(SizedBox::new()),
             BindingWidgetKind::Foreign {
                 callbacks,
                 children,

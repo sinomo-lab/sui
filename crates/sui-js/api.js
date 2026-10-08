@@ -9,7 +9,7 @@ function decorateApi(native) {
       return native.Label(value);
     },
     button(label, options = {}) {
-      return native.Button(label, options.onPress);
+      return native.Button(label, options.onPress, options.enabled, options.appearance, options.tone, options.icon, options.minWidth, options.semanticName, options.description);
     },
     icon(glyph, options = {}) {
       return native.Icon(glyph, options.semanticName, options.size, options.color);
@@ -21,19 +21,19 @@ function decorateApi(native) {
       return native.Link(label, url, options.semanticName, options.enabled, options.onOpen);
     },
     checkbox(label, options = {}) {
-      return native.Checkbox(label, options.checked, options.onChange);
+      return native.Checkbox(label, options.checked, options.onChange, options.enabled);
     },
     switchControl(label, options = {}) {
-      return native.Switch(label, options.checked, options.onChange);
+      return native.Switch(label, options.checked, options.onChange, options.enabled);
     },
     radioButton(label, options = {}) {
-      return native.RadioButton(label, options.checked, options.onChange);
+      return native.RadioButton(label, options.checked, options.onChange, options.enabled);
     },
     radioGroup(name, options, config = {}) {
-      return native.RadioGroup(name, options, config.selected, config.onChange);
+      return native.RadioGroup(name, options, config.selected, config.onChange, config.enabled);
     },
     segmentedControl(name, items, options = {}) {
-      return native.SegmentedControl(name, items, options.selected, options.onChange);
+      return native.SegmentedControl(name, items, options.selected, options.onChange, options.enabled);
     },
     breadcrumb(name, items, options = {}) {
       return native.Breadcrumb(name, items, options.current, options.onActivate);
@@ -42,22 +42,22 @@ function decorateApi(native) {
       return native.PathBar(name, items, options.current, options.onActivate);
     },
     listView(name, items, options = {}) {
-      return native.ListView(name, items, options.selected, options.onChange);
+      return native.ListView(name, items, options.selected, options.onChange, options.enabled);
     },
     table(name, columns, rows, options = {}) {
-      return native.Table(name, columns, rows, options.selected, options.onChange);
+      return native.Table(name, columns, rows, options.selected, options.onChange, options.enabled);
     },
     dataGrid(name, columns, rows, options = {}) {
-      return native.DataGrid(name, columns, rows, options.selected, options.onChange);
+      return native.DataGrid(name, columns, rows, options.selected, options.onChange, options.enabled);
     },
     slider(name, options = {}) {
-      return native.Slider(name, options.value, options.min, options.max, options.step, options.onChange);
+      return native.Slider(name, options.value, options.min, options.max, options.step, options.onChange, options.enabled);
     },
     numberInput(name, options = {}) {
-      return native.NumberInput(name, options.value, options.min, options.max, options.step, options.precision, options.onChange);
+      return native.NumberInput(name, options.value, options.min, options.max, options.step, options.precision, options.onChange, options.enabled);
     },
     select(name, options, config = {}) {
-      return native.Select(name, options, config.selected, config.placeholder, config.onChange);
+      return native.Select(name, options, config.selected, config.placeholder, config.onChange, config.enabled);
     },
     progressBar(name, options = {}) {
       return native.ProgressBar(name, options.value, options.min, options.max, options.showValue);
@@ -78,10 +78,10 @@ function decorateApi(native) {
       return native.BusyIndicator(name, options.label, options.size);
     },
     textInput(name, options = {}) {
-      return native.TextInput(name, options.value, options.placeholder, options.onChange);
+      return native.TextInput(name, options.value, options.placeholder, options.onChange, options.enabled, options.readOnly, options.onSubmit, options.onFocusChange);
     },
     textArea(name, options = {}) {
-      return native.TextArea(name, options.value, options.placeholder, options.onChange);
+      return native.TextArea(name, options.value, options.placeholder, options.onChange, options.enabled, options.readOnly, options.onSubmit, options.onFocusChange);
     },
     richText(spans, options = {}) {
       return native.RichText(spans, options.semanticName, options.minWidth, options.minHeight);
@@ -108,10 +108,16 @@ function decorateApi(native) {
       return native.Toolbar(children, options.axis, options.name, options.extent, options.padding, options.gap, options.background, options.divider);
     },
     column(children, options = {}) {
-      return native.Column(children, options.gap);
+      return native.Column(children, options.gap, options.justify, options.alignItems, options.wrap);
     },
     row(children, options = {}) {
-      return native.Row(children, options.gap);
+      return native.Row(children, options.gap, options.justify, options.alignItems, options.wrap);
+    },
+    flexItem(child, options = {}) {
+      return native.FlexItem(child, options.grow, options.shrink, options.basis, options.minWidth, options.minHeight, options.maxWidth, options.maxHeight, options.alignSelf);
+    },
+    spacer() {
+      return native.Spacer();
     },
     grid(children, options = {}) {
       return native.Grid(children, options.columns, options.name, options.gap, options.columnGap, options.rowGap);
@@ -174,22 +180,22 @@ function decorateApi(native) {
       return native.ExternalSurface(texture, options.desiredSize, options.name);
     },
     treeView(name, items, options = {}) {
-      return native.TreeView(name, items, options.selected, options.onChange);
+      return native.TreeView(name, items, options.selected, options.onChange, options.enabled);
     },
     layerList(name, items, options = {}) {
-      return native.LayerList(name, items, options.selected, options.onChange);
+      return native.LayerList(name, items, options.selected, options.onChange, options.enabled);
     },
     menu(name, items, options = {}) {
-      return native.Menu(name, items, options.highlighted, options.onActivate);
+      return native.Menu(name, items, options.highlighted, options.onActivate, options.enabled);
     },
     contextMenu(name, trigger, items, options = {}) {
       return native.ContextMenu(name, trigger, items, options.onActivate);
     },
     tabBar(name, tabs, options = {}) {
-      return native.TabBar(name, tabs, options.selected, options.onChange);
+      return native.TabBar(name, tabs, options.selected, options.onChange, options.enabled);
     },
     tabs(name, tabs, options = {}) {
-      return native.Tabs(name, tabs, options.selected, options.panels, options.onChange);
+      return native.Tabs(name, tabs, options.selected, options.panels, options.onChange, options.enabled);
     },
     dialog(title, content, options = {}) {
       return native.Dialog(title, content, options.open, options.description, options.modal, options.dismissOnScrim, options.maxWidth, options.actions, options.onDismiss);
@@ -240,28 +246,28 @@ function decorateApi(native) {
       return native.Popover(name, trigger, content, options.open, options.onOpenChange);
     },
     toolPalette(name, items, options = {}) {
-      return native.ToolPalette(name, items, options.selected, options.axis, options.onChange, options.extent, options.padding, options.gap, options.itemSize, options.iconSize, options.background, options.divider);
+      return native.ToolPalette(name, items, options.selected, options.axis, options.onChange, options.extent, options.padding, options.gap, options.itemSize, options.iconSize, options.background, options.divider, options.enabled);
     },
     presetStrip(name, presets, options = {}) {
-      return native.PresetStrip(name, presets, options.selected, options.onChange, options.itemWidth, options.itemHeight, options.gap);
+      return native.PresetStrip(name, presets, options.selected, options.onChange, options.itemWidth, options.itemHeight, options.gap, options.enabled);
     },
     browserTabBar(name, tabs, options = {}) {
       return native.BrowserTabBar(name, tabs, options.selected, options.onChange, options.onClose);
     },
     colorPalette(name, swatches, options = {}) {
-      return native.ColorPalette(name, swatches, options.selected, options.onChange, options.columns, options.swatchSize, options.gap);
+      return native.ColorPalette(name, swatches, options.selected, options.onChange, options.columns, options.swatchSize, options.gap, options.enabled);
     },
     colorPicker(name, options = {}) {
-      return native.ColorPicker(name, options.color, options.onChange, options.showAlpha, options.compact);
+      return native.ColorPicker(name, options.color, options.onChange, options.showAlpha, options.compact, options.enabled);
     },
     simpleColorPicker(name, options = {}) {
       return native.SimpleColorPicker(name, options.color, options.mode, options.onChange, options.showAlpha, options.compact);
     },
     passwordInput(name, options = {}) {
-      return native.PasswordInput(name, options.value, options.placeholder, options.onChange);
+      return native.PasswordInput(name, options.value, options.placeholder, options.onChange, options.enabled, options.readOnly, options.onSubmit, options.onFocusChange);
     },
     dateTimeInput(name, options = {}) {
-      return native.DateTimeInput(name, options.value, options.placeholder, options.onChange);
+      return native.DateTimeInput(name, options.value, options.placeholder, options.onChange, options.enabled);
     },
     actionCard(title, description, options = {}) {
       return native.ActionCard(title, description, options.icon, options.tone, options.enabled, options.onPress);

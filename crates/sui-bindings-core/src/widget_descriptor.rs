@@ -31,10 +31,13 @@ use std::sync::Arc;
 use sui::Alignment;
 use sui::AspectRatioFit;
 use sui::Axis;
+use sui::ButtonAppearance;
 use sui::CanvasRulerAxis;
 use sui::Color;
 use sui::DropEffect;
 use sui::Easing;
+use sui::FlexItem;
+use sui::FlexJustify;
 use sui::IconGlyph;
 use sui::Insets;
 use sui::SafeAreaEdges;
@@ -48,6 +51,81 @@ use sui::SurfaceBorder;
 use sui::SurfaceElevation;
 use sui::SurfaceRole;
 use sui::TooltipPlacement;
+
+/// Optional button presentation and semantics. `None` keeps
+/// `sui::Button`'s default: a neutral tonal button with no icon.
+#[derive(Debug, Clone, Default)]
+pub struct BindingButtonOptions {
+    pub appearance: Option<ButtonAppearance>,
+    pub tone: Option<SemanticTone>,
+    pub icon: Option<IconGlyph>,
+    pub min_width: Option<f32>,
+    /// Accessible name when it should differ from the visible label.
+    pub semantic_name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Optional behavior shared by single- and multi-line text fields.
+#[derive(Debug, Clone, Default)]
+pub struct BindingTextFieldOptions {
+    pub read_only: bool,
+    /// Called with the text when the user submits the field, such as by
+    /// pressing Enter in a single-line field.
+    pub on_submit: Option<BindingStringAction>,
+    pub on_focus_change: Option<BindingBoolAction>,
+}
+
+/// Optional flex container configuration. `None` keeps `sui::Flex`'s
+/// default.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BindingFlexOptions {
+    pub justify: Option<FlexJustify>,
+    pub align_items: Option<Alignment>,
+    pub wrap: bool,
+}
+
+/// Per-child flex sizing from host-language options. `None` keeps
+/// `sui::FlexItem::new()`'s default: no growth, shrink 1, automatic basis,
+/// no size limits, and the container's cross-axis alignment.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BindingFlexItemOptions {
+    pub grow: Option<f32>,
+    pub shrink: Option<f32>,
+    /// Main-axis starting size in logical pixels.
+    pub basis: Option<f32>,
+    pub min_width: Option<f32>,
+    pub min_height: Option<f32>,
+    pub max_width: Option<f32>,
+    pub max_height: Option<f32>,
+    pub align_self: Option<Alignment>,
+}
+
+impl BindingFlexItemOptions {
+    pub fn to_flex_item(self) -> FlexItem {
+        let mut item = FlexItem::new();
+        if let Some(grow) = self.grow {
+            item = item.grow(grow);
+        }
+        if let Some(shrink) = self.shrink {
+            item = item.shrink(shrink);
+        }
+        if let Some(basis) = self.basis {
+            item = item.basis(basis);
+        }
+        let min = item.min_size;
+        item = item.min_size(Size::new(
+            self.min_width.unwrap_or(min.width),
+            self.min_height.unwrap_or(min.height),
+        ));
+        let max = item.max_size;
+        item = item.max_size(Size::new(
+            self.max_width.unwrap_or(max.width),
+            self.max_height.unwrap_or(max.height),
+        ));
+        item.align_self = self.align_self;
+        item
+    }
+}
 
 /// Optional dialog configuration. Defaults match `sui::Dialog`: modal, and
 /// not dismissed by a scrim click.
@@ -80,6 +158,9 @@ impl Default for BindingDialogOptions {
 #[derive(Clone)]
 pub struct BindingWidget {
     pub(crate) inner: Arc<BindingWidgetKind>,
+    /// Whether an interactive control accepts input; `None` keeps the
+    /// control's default. Applied by controls that support disabling.
+    pub(crate) enabled: Option<BindingBool>,
 }
 
 #[derive(Clone)]
@@ -586,12 +667,20 @@ impl fmt::Debug for BindingWidget {
                 axis,
                 gap,
                 children,
+                options,
             } => f
                 .debug_struct("BindingWidget::Flex")
                 .field("axis", axis)
                 .field("gap", gap)
+                .field("options", options)
                 .field("children", children)
                 .finish(),
+            BindingWidgetKind::FlexItem { child, item } => f
+                .debug_struct("BindingWidget::FlexItem")
+                .field("item", item)
+                .field("child", child)
+                .finish(),
+            BindingWidgetKind::Spacer => f.debug_tuple("BindingWidget::Spacer").finish(),
             BindingWidgetKind::Foreign { children, .. } => f
                 .debug_struct("BindingWidget::Foreign")
                 .field("children", children)
@@ -608,6 +697,7 @@ pub(crate) enum BindingWidgetKind {
     Button {
         label: BindingText,
         action: Option<BindingAction>,
+        options: BindingButtonOptions,
     },
     Icon {
         glyph: IconGlyph,
@@ -787,12 +877,14 @@ pub(crate) enum BindingWidgetKind {
         value: BindingText,
         placeholder: Option<String>,
         action: Option<BindingStringAction>,
+        field: BindingTextFieldOptions,
     },
     PasswordInput {
         name: BindingText,
         value: BindingText,
         placeholder: Option<String>,
         action: Option<BindingStringAction>,
+        field: BindingTextFieldOptions,
     },
     DateTimeInput {
         name: BindingText,
@@ -805,6 +897,7 @@ pub(crate) enum BindingWidgetKind {
         value: BindingText,
         placeholder: Option<String>,
         action: Option<BindingStringAction>,
+        field: BindingTextFieldOptions,
     },
     RichText {
         spans: Vec<BindingTextSpan>,
@@ -1325,7 +1418,16 @@ pub(crate) enum BindingWidgetKind {
         axis: Axis,
         gap: f32,
         children: Vec<BindingWidget>,
+        options: BindingFlexOptions,
     },
+    /// A child's flex sizing, applied when it is a direct child of a flex
+    /// container. Elsewhere only the child is built.
+    FlexItem {
+        child: BindingWidget,
+        item: FlexItem,
+    },
+    /// Flexible empty space in a flex container.
+    Spacer,
     Foreign {
         callbacks: Arc<dyn ForeignWidgetCallbacks>,
         children: Vec<BindingWidget>,
