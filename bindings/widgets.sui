@@ -113,7 +113,7 @@ rust-widget TrailingSlotRow bound TrailingSlotRow
 rust-widget TreeView bound TreeView
 rust-widget VirtualList manual-wrapper VirtualList
 rust-widget VirtualScrollView bound VirtualScrollView
-rust-widget VirtualTable equivalent Table
+rust-widget VirtualTable bound VirtualTable
 
 descriptor TextSpan
   core_descriptor BindingTextSpan
@@ -797,6 +797,48 @@ descriptor VirtualListModel
   docs VirtualListModel
 end
 
+descriptor VirtualTableColumn
+  core_descriptor BindingVirtualTableColumn
+  python class
+  js class
+  api class
+    constructor(key: id, title: string, width?: number, minWidth?: number, maxWidth?: number, resizable?: boolean, alignment?: "start" | "center" | "end" | "left" | "right", sortDirection?: "ascending" | "descending");
+    readonly key: id;
+    readonly title: string;
+  endapi
+  docs VirtualTableColumn
+end
+
+descriptor VirtualTableRow
+  core_descriptor BindingVirtualTableRow
+  python class
+  js class
+  api class
+    constructor(key: id, cells: string[]);
+    readonly key: id;
+    readonly cells: string[];
+  endapi
+  docs VirtualTableRow
+end
+
+descriptor TableModel
+  core_descriptor BindingTableModel
+  python class
+  js class
+  api class
+    constructor(rows?: VirtualTableRow[]);
+    readonly size: int;
+    get(key: id): string[] | null;
+    replace(rows: VirtualTableRow[]): boolean;
+    append(row: VirtualTableRow): boolean;
+    insert(index: int, row: VirtualTableRow): boolean;
+    update(row: VirtualTableRow): boolean;
+    remove(key: id): boolean;
+    setSort(columnKey?: id, direction?: "ascending" | "descending"): boolean;
+  endapi
+  docs TableModel
+end
+
 descriptor CanvasViewport
   core_descriptor BindingCanvasViewport
   python class
@@ -960,6 +1002,15 @@ widget VirtualList
   api function VirtualList(name: string, model: VirtualListModel, estimatedRowHeight?: number, gap?: number, padding?: number, rowPadding?: number, overscanViewports?: number, cacheCapacity?: number, selectable?: boolean, transparent?: boolean, stickToEnd?: boolean, overlayScrollBars?: boolean, onChange?: (key: string) => void, onNearStart?: () => void, onNearEnd?: () => void): Widget;
   docs VirtualList
   compat
+end
+
+widget VirtualTable
+  core_kind VirtualTable
+  core_constructor virtual_table
+  python function py_virtual_table
+  js function js_virtual_table
+  api function VirtualTable(name: string, columns: VirtualTableColumn[], model: TableModel, selected?: State, rowHeight?: number, onChange?: (key: id) => void, onRowActivate?: (key: id) => void, onHeaderActivate?: (columnKey: id) => void, onColumnResize?: (columnKey: id, width: number) => void, onNearEnd?: () => void, enabled?: State | boolean | number): Widget;
+  docs VirtualTable
 end
 
 widget ScrollView

@@ -263,3 +263,29 @@ impl fmt::Debug for BindingColorSelectAction {
             .finish_non_exhaustive()
     }
 }
+
+#[derive(Clone)]
+pub struct BindingIdNumberAction {
+    pub(crate) callback: Arc<dyn Fn(u64, f64) -> ForeignCallbackResult<()> + Send + Sync + 'static>,
+}
+
+impl BindingIdNumberAction {
+    pub fn new(
+        callback: impl Fn(u64, f64) -> ForeignCallbackResult<()> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub fn run(&self, id: u64, value: f64) -> ForeignCallbackResult<()> {
+        (self.callback)(id, value)
+    }
+}
+
+impl fmt::Debug for BindingIdNumberAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingIdNumberAction")
+            .finish_non_exhaustive()
+    }
+}

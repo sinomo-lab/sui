@@ -352,6 +352,12 @@ impl BindingWidget {
                 shown.bind_ui_handle(handle);
             }
             BindingWidgetKind::VirtualList { .. } => {}
+            BindingWidgetKind::VirtualTable { model, options, .. } => {
+                model.bind_ui_handle(handle);
+                if let Some(selected) = &options.selected {
+                    selected.bind_ui_handle(handle.clone());
+                }
+            }
             BindingWidgetKind::Canvas { .. } | BindingWidgetKind::CanvasRuler { .. } => {}
             BindingWidgetKind::DragDropHost { child, .. }
             | BindingWidgetKind::Draggable { child, .. }

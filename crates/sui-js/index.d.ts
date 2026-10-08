@@ -1618,6 +1618,30 @@ export class VirtualListModel {
   replace(items: VirtualListItem[]): boolean;
 }
 
+export class VirtualTableColumn {
+  constructor(key: string, title: string, width?: number, minWidth?: number, maxWidth?: number, resizable?: boolean, alignment?: "start" | "center" | "end" | "left" | "right", sortDirection?: "ascending" | "descending");
+  readonly key: string;
+  readonly title: string;
+}
+
+export class VirtualTableRow {
+  constructor(key: string, cells: string[]);
+  readonly key: string;
+  readonly cells: string[];
+}
+
+export class TableModel {
+  constructor(rows?: VirtualTableRow[]);
+  readonly size: number;
+  get(key: string): string[] | null;
+  replace(rows: VirtualTableRow[]): boolean;
+  append(row: VirtualTableRow): boolean;
+  insert(index: number, row: VirtualTableRow): boolean;
+  update(row: VirtualTableRow): boolean;
+  remove(key: string): boolean;
+  setSort(columnKey?: string, direction?: "ascending" | "descending"): boolean;
+}
+
 export class CanvasViewport {
   constructor(panX?: number, panY?: number, zoom?: number, rotation?: number);
   readonly panX: number;
@@ -1759,6 +1783,21 @@ export interface VirtualListOptions {
 }
 
 export function virtualList(name: string, model: VirtualListModel, options?: VirtualListOptions): Widget;
+
+export function VirtualTable(name: string, columns: VirtualTableColumn[], model: TableModel, selected?: State, rowHeight?: number, onChange?: (key: string) => void, onRowActivate?: (key: string) => void, onHeaderActivate?: (columnKey: string) => void, onColumnResize?: (columnKey: string, width: number) => void, onNearEnd?: () => void, enabled?: State | boolean | number): Widget;
+
+export interface VirtualTableOptions {
+  selected?: State;
+  rowHeight?: number;
+  onChange?: (key: string) => void;
+  onRowActivate?: (key: string) => void;
+  onHeaderActivate?: (columnKey: string) => void;
+  onColumnResize?: (columnKey: string, width: number) => void;
+  onNearEnd?: () => void;
+  enabled?: State | boolean | number;
+}
+
+export function virtualTable(name: string, columns: VirtualTableColumn[], model: TableModel, options?: VirtualTableOptions): Widget;
 
 export function ScrollView(child: Widget, axes?: ScrollAxes, name?: string, controller?: ScrollController): Widget;
 

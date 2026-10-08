@@ -29,6 +29,9 @@ use crate::values::{
     BindingSegmentedControlItem, BindingStatusBarSegment, BindingTableColumn, BindingTableRow,
     BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem,
 };
+use crate::virtual_table::{
+    BindingTableModel, BindingVirtualTableColumn, BindingVirtualTableOptions,
+};
 use crate::widget_descriptor::BindingLabelOptions;
 use crate::widget_descriptor::BindingWidgetBuilder;
 use crate::widget_descriptor::{
@@ -1431,6 +1434,22 @@ impl BindingWidget {
             on_change,
             on_near_start,
             on_near_end,
+        })
+    }
+
+    /// A virtualized table over a keyed, thread-safe row model. Only the
+    /// visible rows are realized; selection is by row key.
+    pub fn virtual_table(
+        name: impl Into<String>,
+        columns: impl IntoIterator<Item = BindingVirtualTableColumn>,
+        model: BindingTableModel,
+        options: BindingVirtualTableOptions,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::VirtualTable {
+            name: name.into(),
+            columns: columns.into_iter().collect(),
+            model,
+            options,
         })
     }
 

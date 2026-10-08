@@ -3263,3 +3263,204 @@ fn binding_popover_follows_bound_open_state() {
     let snapshot = runtime.render_window(window_id).unwrap();
     assert!(has_body(&snapshot), "{:?}", snapshot.semantics_names);
 }
+
+fn virtual_table_rows(count: u64) -> Vec<BindingVirtualTableRow> {
+    (1..=count)
+        .map(|key| {
+            BindingVirtualTableRow::new(key, [format!("Row {key}"), format!("{}", key * 10)])
+                .unwrap()
+        })
+        .collect()
+}
+
+fn virtual_table_click(runtime: &mut BindingRuntime, window: BindingWindowId, position: Point) {
+    let mut down = BindingPointerEvent::new(BindingPointerEventKind::Down, position);
+    down.button = Some(BindingPointerButton::Primary);
+    down.buttons = 1;
+    runtime
+        .handle_event(window, BindingEvent::Pointer(down))
+        .unwrap();
+    let mut up = BindingPointerEvent::new(BindingPointerEventKind::Up, position);
+    up.button = Some(BindingPointerButton::Primary);
+    runtime
+        .handle_event(window, BindingEvent::Pointer(up))
+        .unwrap();
+}
+
+fn virtual_table_row_center(snapshot: &BindingRenderSnapshot, name: &str) -> Point {
+    let node = snapshot
+        .find_nodes(Some("list_item"), Some(name), None, None, None, None)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("no row named {name}: {:?}", snapshot.semantics_names));
+    Point::new(node.x + node.width * 0.5, node.y + node.height * 0.5)
+}
+
+#[test]
+fn binding_table_model_mutates_rows_by_key_and_rejects_bad_keys() {
+    assert!(BindingVirtualTableRow::new(0, ["Zero"]).is_err());
+    let duplicate = vec![
+        BindingVirtualTableRow::new(1, ["A"]).unwrap(),
+        BindingVirtualTableRow::new(1, ["B"]).unwrap(),
+    ];
+    assert!(BindingTableModel::new(duplicate).is_err());
+
+    let model = BindingTableModel::new(virtual_table_rows(3)).unwrap();
+    assert_eq!(model.len(), 3);
+    assert!(
+        model
+            .insert(0, BindingVirtualTableRow::new(9, ["Nine"]).unwrap())
+            .unwrap()
+    );
+    assert!(
+        model
+            .append(BindingVirtualTableRow::new(1, ["Again"]).unwrap())
+            .is_err()
+    );
+    assert_eq!(model.keys(), vec![9, 1, 2, 3]);
+    assert!(model.update(BindingVirtualTableRow::new(2, ["Two", "20"]).unwrap()));
+    assert!(!model.update(BindingVirtualTableRow::new(2, ["Two", "20"]).unwrap()));
+    assert!(!model.update(BindingVirtualTableRow::new(42, ["Missing"]).unwrap()));
+    assert_eq!(
+        model.get(2),
+        Some(vec!["Two".to_string(), "20".to_string()])
+    );
+    assert!(model.remove(9));
+    assert!(!model.remove(9));
+    assert_eq!(model.keys(), vec![1, 2, 3]);
+    assert!(model.set_sort(Some(1), Some(sui::VirtualTableSortDirection::Ascending)));
+    assert!(!model.set_sort(Some(1), Some(sui::VirtualTableSortDirection::Ascending)));
+    assert!(model.set_sort(None, None));
+    assert_eq!(
+        binding_sort_direction_from_name("Desc"),
+        Some(sui::VirtualTableSortDirection::Descending)
+    );
+}
+
+#[test]
+fn binding_virtual_table_realizes_visible_rows_and_selects_by_key() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<BindingTableModel>();
+
+    let model = BindingTableModel::new(virtual_table_rows(10_000)).unwrap();
+    let selected = BindingState::new(0_i64);
+    let changes = Arc::new(Mutex::new(Vec::new()));
+    let headers = Arc::new(Mutex::new(Vec::new()));
+    let options = BindingVirtualTableOptions {
+        selected: Some(selected.clone()),
+        on_change: Some(BindingIdAction::new({
+            let changes = Arc::clone(&changes);
+            move |key| {
+                recover_lock(&changes).push(key);
+                Ok(())
+            }
+        })),
+        on_header_activate: Some(BindingIdAction::new({
+            let headers = Arc::clone(&headers);
+            let model = model.clone();
+            move |key| {
+                recover_lock(&headers).push(key);
+                // Sorting is application policy: reverse the rows.
+                let mut keys = model.keys();
+                keys.reverse();
+                let rows = keys
+                    .into_iter()
+                    .map(|key| BindingVirtualTableRow::new(key, model.get(key).unwrap()).unwrap())
+                    .collect::<Vec<_>>();
+                model.replace(rows).unwrap();
+                model.set_sort(Some(key), Some(sui::VirtualTableSortDirection::Descending));
+                Ok(())
+            }
+        })),
+        ..BindingVirtualTableOptions::default()
+    };
+    let root = BindingWidget::virtual_table(
+        "Rows",
+        [
+            BindingVirtualTableColumn::new(10, "Name"),
+            BindingVirtualTableColumn::new(20, "Value").alignment(TableColumnAlignment::End),
+        ],
+        model.clone(),
+        options,
+    );
+    let app = BindingApp::new().with_window(
+        BindingWindow::new("Virtual table", root).with_initial_size(Size::new(640.0, 480.0)),
+    );
+    let mut runtime = app.start().unwrap();
+    let window = runtime.window_id_at(0).unwrap();
+    let initial = runtime.render_window(window).unwrap();
+
+    let rows = initial.find_nodes(Some("list_item"), None, None, None, None, None);
+    assert!(!rows.is_empty() && rows.len() < 40, "{} rows", rows.len());
+    assert_eq!(rows[0].name.as_deref(), Some("Row 1"));
+    assert!(
+        initial
+            .semantics_values
+            .iter()
+            .any(|value| value == "10000 rows")
+    );
+    assert!(
+        !initial
+            .semantics_names
+            .iter()
+            .any(|name| name == "Row 9000")
+    );
+
+    let row = virtual_table_row_center(&initial, "Row 3");
+    virtual_table_click(&mut runtime, window, row);
+    assert_eq!(selected.get(), BindingValue::Integer(3));
+    assert_eq!(*recover_lock(&changes), vec![3]);
+    let snapshot = runtime.render_window(window).unwrap();
+    let row = snapshot
+        .find_nodes(Some("list_item"), Some("Row 3"), None, None, None, None)
+        .remove(0);
+    assert!(row.selected);
+
+    // Keyboard selection moves by row and writes the key back.
+    runtime
+        .handle_event(
+            window,
+            BindingEvent::Keyboard(BindingKeyboardEvent::new(
+                "ArrowDown",
+                BindingKeyState::Pressed,
+            )),
+        )
+        .unwrap();
+    assert_eq!(selected.get(), BindingValue::Integer(4));
+
+    // Updates from another thread show without rebuilding the tree.
+    let worker = {
+        let model = model.clone();
+        std::thread::spawn(move || {
+            model.update(BindingVirtualTableRow::new(1, ["Updated", "1"]).unwrap());
+            model.remove(2);
+        })
+    };
+    worker.join().unwrap();
+    let updated = runtime.render_window(window).unwrap();
+    assert!(updated.semantics_names.iter().any(|name| name == "Updated"));
+    assert!(!updated.semantics_names.iter().any(|name| name == "Row 2"));
+    assert!(
+        updated
+            .semantics_values
+            .iter()
+            .any(|value| value == "9999 rows")
+    );
+
+    // Header activation reports the column key; the app reorders rows and
+    // the table follows, keeping the selection on key 4.
+    let table = updated
+        .find_nodes(Some("table"), None, None, None, None, None)
+        .remove(0);
+    virtual_table_click(
+        &mut runtime,
+        window,
+        Point::new(table.x + 40.0, table.y + 20.0),
+    );
+    assert_eq!(*recover_lock(&headers), vec![10]);
+    let sorted = runtime.render_window(window).unwrap();
+    let rows = sorted.find_nodes(Some("list_item"), None, None, None, None, None);
+    assert_eq!(rows[0].name.as_deref(), Some("Row 10000"));
+    assert_eq!(selected.get(), BindingValue::Integer(4));
+    assert!(!sorted.semantics_selected.iter().any(|selected| *selected));
+}

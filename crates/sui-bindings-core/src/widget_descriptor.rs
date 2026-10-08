@@ -31,6 +31,9 @@ use crate::values::{
     BindingSegmentedControlItem, BindingStatusBarSegment, BindingTableColumn, BindingTableRow,
     BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem, binding_icon_glyph_name,
 };
+use crate::virtual_table::{
+    BindingTableModel, BindingVirtualTableColumn, BindingVirtualTableOptions,
+};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -569,6 +572,17 @@ impl fmt::Debug for BindingWidget {
             BindingWidgetKind::VirtualList { name, model, .. } => f
                 .debug_struct("BindingWidget::VirtualList")
                 .field("name", name)
+                .field("model", model)
+                .finish_non_exhaustive(),
+            BindingWidgetKind::VirtualTable {
+                name,
+                columns,
+                model,
+                ..
+            } => f
+                .debug_struct("BindingWidget::VirtualTable")
+                .field("name", name)
+                .field("columns", columns)
                 .field("model", model)
                 .finish_non_exhaustive(),
             BindingWidgetKind::Canvas { name, shapes, .. } => f
@@ -1294,6 +1308,12 @@ pub(crate) enum BindingWidgetKind {
         on_change: Option<BindingIdAction>,
         on_near_start: Option<BindingAction>,
         on_near_end: Option<BindingAction>,
+    },
+    VirtualTable {
+        name: String,
+        columns: Vec<BindingVirtualTableColumn>,
+        model: BindingTableModel,
+        options: BindingVirtualTableOptions,
     },
     Canvas {
         name: String,

@@ -132,6 +132,12 @@ dismissal callback; querying, ranking, and execution remain JavaScript policy.
 `VirtualListModel` provides stable keyed, thread-safe incremental text rows;
 `virtualList(...)` realizes only visible rows and exposes options-object
 selection and near-edge callbacks.
+`virtualTable(name, columns, model, options)` does the same for a table: a
+thread-safe `TableModel` holds keyed `VirtualTableRow` values, each
+`VirtualTableColumn` sets widths, alignment, and resizing, and selection,
+row activation, header activation, and column resizing report string keys.
+Sorting stays application policy: reorder the model in `onHeaderActivate` and
+show the direction with `model.setSort(columnKey, "ascending")`.
 `CanvasViewport`, `CanvasStroke`, and `CanvasShape` are value descriptors used
 by retained `canvas(...)` and `canvasRuler(...)` factories.
 Portable `DragScope`, `dragDropHost(...)`, `draggable(...)`, and

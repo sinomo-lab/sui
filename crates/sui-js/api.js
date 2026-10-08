@@ -179,6 +179,9 @@ function decorateApi(native) {
     virtualList(name, model, options = {}) {
       return native.VirtualList(name, model, options.estimatedRowHeight, options.gap, options.padding, options.rowPadding, options.overscanViewports, options.cacheCapacity, options.selectable, options.transparent, options.stickToEnd, options.overlayScrollBars, options.onChange, options.onNearStart, options.onNearEnd);
     },
+    virtualTable(name, columns, model, options = {}) {
+      return native.VirtualTable(name, columns, model, options.selected, options.rowHeight, options.onChange, options.onRowActivate, options.onHeaderActivate, options.onColumnResize, options.onNearEnd, options.enabled);
+    },
     scrollView(child, options = {}) {
       return native.ScrollView(child, options.axes, options.name, options.controller);
     },

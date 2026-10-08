@@ -16,7 +16,7 @@ documents and completed plans are removed.
   the built-in widgets onto the shared builder, event, and state vocabulary in
   phases, deprecating old names along the way.
 - [Cross-language bindings](./cross-language-bindings-plan.md) tracks package
-  publication, desktop smoke coverage, editor/virtual-table parity, browser
+  publication, desktop smoke coverage, editor-surface parity, browser
   JavaScript/WASM support, custom shader registration, and zero-copy binding
   composition. Native Python and Node/Electron alpha APIs, generated coverage,
   and CPU external-surface composition already exist.

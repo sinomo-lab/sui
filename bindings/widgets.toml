@@ -773,6 +773,33 @@ ts_kind = "class"
 docs = ["VirtualListModel"]
 
 [[item]]
+name = "VirtualTableColumn"
+kind = "descriptor"
+core_descriptor = "BindingVirtualTableColumn"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["VirtualTableColumn"]
+
+[[item]]
+name = "VirtualTableRow"
+kind = "descriptor"
+core_descriptor = "BindingVirtualTableRow"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["VirtualTableRow"]
+
+[[item]]
+name = "TableModel"
+kind = "descriptor"
+core_descriptor = "BindingTableModel"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["TableModel"]
+
+[[item]]
 name = "CanvasViewport"
 kind = "descriptor"
 core_descriptor = "BindingCanvasViewport"
@@ -916,6 +943,18 @@ js_rust = "js_virtual_list"
 ts_kind = "function"
 docs = ["VirtualList"]
 compat = true
+
+[[item]]
+name = "VirtualTable"
+kind = "widget"
+core_kind = "VirtualTable"
+core_constructor = "virtual_table"
+python_kind = "function"
+python_rust = "py_virtual_table"
+js_kind = "function"
+js_rust = "js_virtual_table"
+ts_kind = "function"
+docs = ["VirtualTable"]
 
 [[item]]
 name = "ScrollView"
@@ -2270,5 +2309,5 @@ bindings = ["VirtualScrollView"]
 
 [[rust_widget]]
 name = "VirtualTable"
-classification = "equivalent"
-bindings = ["Table"]
+classification = "bound"
+bindings = ["VirtualTable"]

@@ -13,6 +13,7 @@ use crate::values::{
     BindingTableColumn, BindingTableRow, BindingText, BindingTextSpan, BindingToolPaletteItem,
     BindingTreeItem, binding_number_to_index,
 };
+use crate::virtual_table::BindingVirtualTableWidget;
 use crate::widget_adapters::BindingScrollControlledWidget;
 use crate::widget_adapters::{
     BindingBusyIndicatorWidget, BindingCheckboxWidget, BindingCommandPaletteWidget,
@@ -2485,6 +2486,19 @@ impl BindingWidget {
                 }
                 BindingRuntimeWidget::new(themed_widget!(list, errors))
             }
+            BindingWidgetKind::VirtualTable {
+                name,
+                columns,
+                model,
+                options,
+            } => BindingRuntimeWidget::new(BindingVirtualTableWidget::new(
+                name.clone(),
+                columns.clone(),
+                model.clone(),
+                options.clone(),
+                self.enabled.clone(),
+                errors.clone(),
+            )),
             BindingWidgetKind::Canvas {
                 name,
                 viewport,

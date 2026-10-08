@@ -2,7 +2,7 @@
 
 **Status:** Active. The native Python and Node/Electron alpha foundations and
 generated API coverage are implemented. Native package release, platform smoke
-coverage, exact editor/virtual-table parity, browser bindings, custom WGSL, and
+coverage, exact editor-surface parity, browser bindings, custom WGSL, and
 zero-copy binding composition remain open.
 
 This document tracks unfinished binding work. Current setup and examples live
@@ -20,7 +20,7 @@ release gates.
 | --- | --- | --- |
 | Native Python and Node/Electron API | Implemented alpha | Preserve lifecycle, state, resource, paint, semantics, animation, and rich-document contracts during release work. |
 | Generated APIs and widget classification | Implemented | Keep generation and coverage checks passing as public Rust APIs evolve. |
-| Exact portable widget parity | Partial | `TextSurface` uses `TextArea` and `VirtualTable` uses `Table`; editor-surface behavior, virtual rows, and arbitrary foreign row renderers still need dedicated contracts and tests. |
+| Exact portable widget parity | Partial | `VirtualTable` is bound directly over a thread-safe keyed `TableModel` with conformance tests. `TextSurface` uses `TextArea`; editor-surface behavior still needs dedicated contracts and tests. |
 | Native packages | Partial | Local builds, loaders, metadata, and declarations exist; supported artifact matrices, release CI, clean-install tests, and publication remain open. |
 | Desktop smoke coverage | Partial | Host-driven tests and examples exist; supported-platform real-window lifecycle/input/render coverage remains open. |
 | Browser JavaScript/WASM bindings | Not implemented | Define and implement the browser package and lifecycle; the Rust/WASM demo is an existing, separate surface. |
@@ -77,7 +77,8 @@ here so documentation coverage remains auditable:
   `ToolPaletteItem`, `ColorPaletteSwatch`, `BrushPreviewSpec`, and
   `FloatingStackWindow`, `RichDocument`, `RichDocumentUpdate`, `ConstraintCase`,
   `ResponsiveSidebarState`, `MasterDetailState`, `ScrollController`, `NotificationCenter`,
-  `VirtualListItem`, `VirtualListModel`, `CanvasViewport`, `CanvasStroke`,
+  `VirtualListItem`, `VirtualListModel`, `VirtualTableColumn`,
+  `VirtualTableRow`, `TableModel`, `CanvasViewport`, `CanvasStroke`,
   `CanvasShape`, `PixelCanvasState`, `PixelCanvasExport`, `DragScope`,
   `FloatingView`, `FloatingViewSnapshot`, and `FloatingWorkspaceState`, plus the
   `DockNode`, `DockFloatingGroup`, `DockLayout`, `DockState`, and
@@ -105,7 +106,7 @@ here so documentation coverage remains auditable:
   `SemanticRegion`, `FormRow`, `FieldGroup`,
   `FormSection`, `PanelSection`, `Dock`, `FixedPaneSplit`,
   `MeasuredBottomDock`, `SplitView`, `SwitchView`, `RebuildOnChange`, `TrailingSlotRow`,
-  `VirtualScrollView`, and `VirtualList`.
+  `VirtualScrollView`, `VirtualList`, and `VirtualTable`.
 - Interop: `ExternalSurface`.
 
 The manifest also classifies every public Rust `Widget` implementation. Most
@@ -118,9 +119,10 @@ translate its reorder event. `Spinner` is represented by `BusyIndicator`, and
 
 Every current public Rust `Widget` implementation now has a cross-language
 binding, a manual portable wrapper, or a documented host-language equivalent.
-`TextSurface` is represented by `TextArea`, while `VirtualTable` is currently
-represented by `Table`; arbitrary foreign row renderers and true virtual-table
-parity remain unfinished.
+`TextSurface` is represented by `TextArea`. `VirtualTable` is bound directly:
+a thread-safe `TableModel` of keyed text-cell rows feeds a table that realizes
+only visible rows, selects by row key, and leaves sorting to the application
+through header activation and `TableModel.set_sort`.
 `RebuildOnChange` is bound directly and rebuilds a subtree from a host-language
 callback when watched states change. `RebuildOnConstraints` maps to
 `ConstraintView`, and standalone `ScrollBar` behavior is owned by `ScrollView`
@@ -199,22 +201,21 @@ Keep deterministic host-driven tests as the primary compatibility suite; use
 desktop smoke tests to catch packaging, event-loop, graphics, and dynamic
 library failures.
 
-### 3. Close editor and virtual-table parity gaps
+### 3. Close the editor-surface parity gap
 
 **Status: partial.** Every public Rust widget has a classification, including
-documented equivalents. Keep those equivalents explicit while extending the
-portable API:
+documented equivalents, and `VirtualTable` is now bound directly with
+Python conformance tests. Keep the remaining equivalent explicit while
+extending the portable API:
 
 - define the supported editor-surface behavior beyond the current `TextArea`
   equivalent, including styled content and large-document viewport behavior;
-- provide true virtual-table row lifecycle and arbitrary foreign row-renderer
-  callbacks with UI-thread ownership and retained identity;
 - add matching Python/JavaScript conformance tests for the newly supported
   behavior before changing an equivalent into a direct binding or wrapper.
 
-These are capability follow-ups. The first native alpha may retain documented
+This is a capability follow-up. The first native alpha may retain documented
 equivalents; complete classification alone must not be advertised as exact
-editor or virtual-table parity.
+editor parity.
 
 ### 4. Design browser JavaScript/WASM bindings
 

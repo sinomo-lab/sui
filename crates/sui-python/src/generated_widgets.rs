@@ -1202,6 +1202,171 @@ impl PyVirtualListModel {
     }
 }
 
+fn py_sort_direction(value: &str) -> PyResult<sui_crate::VirtualTableSortDirection> {
+    sui_bindings_core::binding_sort_direction_from_name(value).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "sort direction must be 'ascending' or 'descending', got '{value}'"
+        ))
+    })
+}
+
+/// A column of a `virtual_table`. The key identifies the column in
+/// callbacks and in `TableModel.set_sort`.
+#[pyclass(name = "VirtualTableColumn", module = "sinomo_ui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyVirtualTableColumn {
+    inner: sui_bindings_core::BindingVirtualTableColumn,
+}
+
+#[pymethods]
+impl PyVirtualTableColumn {
+    #[new]
+    #[pyo3(signature = (
+        key, title, width=None, min_width=None, max_width=None, resizable=true,
+        alignment="start", sort_direction=None
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        key: u64,
+        title: String,
+        width: Option<f32>,
+        min_width: Option<f32>,
+        max_width: Option<f32>,
+        resizable: bool,
+        alignment: &str,
+        sort_direction: Option<&str>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: sui_bindings_core::BindingVirtualTableColumn::new(key, title)
+                .width(width)
+                .min_width(min_width)
+                .max_width(max_width)
+                .resizable(resizable)
+                .alignment(py_table_column_alignment(alignment)?)
+                .sort_direction(sort_direction.map(py_sort_direction).transpose()?),
+        })
+    }
+
+    #[getter]
+    pub fn key(&self) -> u64 {
+        self.inner.key()
+    }
+
+    #[getter]
+    pub fn title(&self) -> &str {
+        self.inner.title()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.inner)
+    }
+}
+
+/// A keyed row of text cells for a `TableModel`. Keys are non-zero.
+#[pyclass(name = "VirtualTableRow", module = "sinomo_ui", skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyVirtualTableRow {
+    inner: sui_bindings_core::BindingVirtualTableRow,
+}
+
+#[pymethods]
+impl PyVirtualTableRow {
+    #[new]
+    pub fn new(key: u64, cells: Vec<String>) -> PyResult<Self> {
+        sui_bindings_core::BindingVirtualTableRow::new(key, cells)
+            .map(|inner| Self { inner })
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    pub fn key(&self) -> u64 {
+        self.inner.key
+    }
+
+    #[getter]
+    pub fn cells(&self) -> Vec<String> {
+        self.inner.cells.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("{:?}", self.inner)
+    }
+}
+
+fn extract_virtual_table_rows(
+    rows: &Bound<'_, PyAny>,
+) -> PyResult<Vec<sui_bindings_core::BindingVirtualTableRow>> {
+    Ok(rows
+        .extract::<Vec<PyRef<'_, PyVirtualTableRow>>>()?
+        .iter()
+        .map(|row| row.inner.clone())
+        .collect())
+}
+
+/// The thread-safe, keyed rows of a `virtual_table`. Any thread may change
+/// it; the table re-reads only the rows it shows.
+#[pyclass(name = "TableModel", module = "sinomo_ui", frozen, skip_from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyTableModel {
+    inner: sui_bindings_core::BindingTableModel,
+}
+
+#[pymethods]
+impl PyTableModel {
+    #[new]
+    #[pyo3(signature = (rows=None))]
+    pub fn new(rows: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let rows = rows
+            .map(extract_virtual_table_rows)
+            .transpose()?
+            .unwrap_or_default();
+        sui_bindings_core::BindingTableModel::new(rows)
+            .map(|inner| Self { inner })
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    pub fn size(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn get(&self, key: u64) -> Option<Vec<String>> {
+        self.inner.get(key)
+    }
+
+    pub fn replace(&self, rows: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.inner
+            .replace(extract_virtual_table_rows(rows)?)
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn append(&self, row: PyRef<'_, PyVirtualTableRow>) -> PyResult<bool> {
+        self.inner
+            .append(row.inner.clone())
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn insert(&self, index: usize, row: PyRef<'_, PyVirtualTableRow>) -> PyResult<bool> {
+        self.inner
+            .insert(index, row.inner.clone())
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn update(&self, row: PyRef<'_, PyVirtualTableRow>) -> bool {
+        self.inner.update(row.inner.clone())
+    }
+
+    pub fn remove(&self, key: u64) -> bool {
+        self.inner.remove(key)
+    }
+
+    #[pyo3(signature = (column_key=None, direction=None))]
+    pub fn set_sort(&self, column_key: Option<u64>, direction: Option<&str>) -> PyResult<bool> {
+        let direction = direction.map(py_sort_direction).transpose()?;
+        Ok(self.inner.set_sort(column_key, direction))
+    }
+}
+
 #[pyclass(name = "CanvasViewport", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyCanvasViewport {
@@ -3547,6 +3712,77 @@ pub fn py_virtual_list(
     )))
 }
 
+#[pyfunction(name = "virtual_table")]
+#[pyo3(signature = (
+    name, columns, model, selected=None, row_height=None, on_change=None,
+    on_row_activate=None, on_header_activate=None, on_column_resize=None,
+    on_near_end=None, enabled=None
+))]
+#[allow(clippy::too_many_arguments)]
+pub fn py_virtual_table(
+    name: String,
+    columns: &Bound<'_, PyAny>,
+    model: PyRef<'_, PyTableModel>,
+    selected: Option<PyRef<'_, PyState>>,
+    row_height: Option<f32>,
+    on_change: Option<Py<PyAny>>,
+    on_row_activate: Option<Py<PyAny>>,
+    on_header_activate: Option<Py<PyAny>>,
+    on_column_resize: Option<Py<PyAny>>,
+    on_near_end: Option<Py<PyAny>>,
+    enabled: Option<&Bound<'_, PyAny>>,
+) -> PyResult<PyWidget> {
+    let columns = columns
+        .extract::<Vec<PyRef<'_, PyVirtualTableColumn>>>()?
+        .iter()
+        .map(|column| column.inner.clone())
+        .collect::<Vec<_>>();
+    let id_action = |callback: Py<PyAny>| {
+        BindingIdAction::new(move |key| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (key,))
+                    .map(|_| ())
+                    .map_err(|error| foreign_py_error(py, error))
+            })
+        })
+    };
+    let options = sui_bindings_core::BindingVirtualTableOptions {
+        selected: selected.map(|state| state.inner.clone()),
+        row_height,
+        on_change: on_change.map(id_action),
+        on_row_activate: on_row_activate.map(id_action),
+        on_header_activate: on_header_activate.map(id_action),
+        on_column_resize: on_column_resize.map(|callback| {
+            sui_bindings_core::BindingIdNumberAction::new(move |key, width| {
+                Python::attach(|py| {
+                    callback
+                        .call1(py, (key, width))
+                        .map(|_| ())
+                        .map_err(|error| foreign_py_error(py, error))
+                })
+            })
+        }),
+        on_near_end: on_near_end.map(|callback| {
+            BindingAction::new(move || {
+                Python::attach(|py| {
+                    callback
+                        .call0(py)
+                        .map(|_| ())
+                        .map_err(|error| foreign_py_error(py, error))
+                })
+            })
+        }),
+    };
+    PyWidget::from_binding(BindingWidget::virtual_table(
+        name,
+        columns,
+        model.inner.clone(),
+        options,
+    ))
+    .with_enabled(enabled)
+}
+
 #[pyfunction(name = "canvas")]
 #[pyo3(signature = (name, shapes=None, viewport=None, draw_stroke=None, desired_size=None))]
 pub fn py_canvas(
@@ -4610,6 +4846,9 @@ pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_notification_host, m)?)?;
     m.add_class::<PyVirtualListItem>()?;
     m.add_class::<PyVirtualListModel>()?;
+    m.add_class::<PyVirtualTableColumn>()?;
+    m.add_class::<PyVirtualTableRow>()?;
+    m.add_class::<PyTableModel>()?;
     m.add_class::<PyCanvasViewport>()?;
     m.add_class::<PyCanvasStroke>()?;
     m.add_class::<PyCanvasShape>()?;
@@ -4623,6 +4862,7 @@ pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_draggable, m)?)?;
     m.add_function(wrap_pyfunction!(py_drop_target, m)?)?;
     m.add_function(wrap_pyfunction!(py_virtual_list, m)?)?;
+    m.add_function(wrap_pyfunction!(py_virtual_table, m)?)?;
     m.add_function(wrap_pyfunction!(py_scroll_view, m)?)?;
     m.add_function(wrap_pyfunction!(py_external_surface, m)?)?;
     m.add_class::<PyListItem>()?;

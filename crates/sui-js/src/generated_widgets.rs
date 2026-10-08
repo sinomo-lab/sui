@@ -1339,6 +1339,183 @@ impl JsVirtualListModel {
     }
 }
 
+fn sort_direction_from_js(value: &str) -> Result<sui_crate::VirtualTableSortDirection> {
+    sui_bindings_core::binding_sort_direction_from_name(value).ok_or_else(|| {
+        napi_invalid_arg(format!(
+            "sort direction must be 'ascending' or 'descending', got '{value}'"
+        ))
+    })
+}
+
+#[napi(js_name = "VirtualTableColumn")]
+#[derive(Debug, Clone)]
+pub struct JsVirtualTableColumn {
+    inner: sui_bindings_core::BindingVirtualTableColumn,
+}
+
+#[napi]
+impl JsVirtualTableColumn {
+    #[napi(constructor)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        key: String,
+        title: String,
+        width: Option<f64>,
+        min_width: Option<f64>,
+        max_width: Option<f64>,
+        resizable: Option<bool>,
+        alignment: Option<String>,
+        sort_direction: Option<String>,
+    ) -> Result<Self> {
+        Ok(Self {
+            inner: sui_bindings_core::BindingVirtualTableColumn::new(
+                parse_u64_string(&key, "table column key")?,
+                title,
+            )
+            .width(width.map(|value| value as f32))
+            .min_width(min_width.map(|value| value as f32))
+            .max_width(max_width.map(|value| value as f32))
+            .resizable(resizable.unwrap_or(true))
+            .alignment(table_column_alignment_from_js(
+                alignment.as_deref().unwrap_or("start"),
+            )?)
+            .sort_direction(
+                sort_direction
+                    .as_deref()
+                    .map(sort_direction_from_js)
+                    .transpose()?,
+            ),
+        })
+    }
+
+    #[napi(getter)]
+    pub fn key(&self) -> String {
+        self.inner.key().to_string()
+    }
+
+    #[napi(getter)]
+    pub fn title(&self) -> String {
+        self.inner.title().to_string()
+    }
+}
+
+#[napi(js_name = "VirtualTableRow")]
+#[derive(Debug, Clone)]
+pub struct JsVirtualTableRow {
+    inner: sui_bindings_core::BindingVirtualTableRow,
+}
+
+#[napi]
+impl JsVirtualTableRow {
+    #[napi(constructor)]
+    pub fn new(key: String, cells: Vec<String>) -> Result<Self> {
+        sui_bindings_core::BindingVirtualTableRow::new(
+            parse_u64_string(&key, "table row key")?,
+            cells,
+        )
+        .map(|inner| Self { inner })
+        .map_err(napi_invalid_arg)
+    }
+
+    #[napi(getter)]
+    pub fn key(&self) -> String {
+        self.inner.key.to_string()
+    }
+
+    #[napi(getter)]
+    pub fn cells(&self) -> Vec<String> {
+        self.inner.cells.clone()
+    }
+}
+
+fn extract_virtual_table_rows(
+    rows: &Array<'_>,
+) -> Result<Vec<sui_bindings_core::BindingVirtualTableRow>> {
+    let mut out = Vec::with_capacity(rows.len() as usize);
+    for index in 0..rows.len() {
+        let row = rows
+            .get::<ClassInstance<'_, JsVirtualTableRow>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("table row {index} is missing")))?;
+        out.push(row.inner.clone());
+    }
+    Ok(out)
+}
+
+#[napi(js_name = "TableModel")]
+#[derive(Debug, Clone)]
+pub struct JsTableModel {
+    inner: sui_bindings_core::BindingTableModel,
+}
+
+#[napi]
+impl JsTableModel {
+    #[napi(constructor)]
+    pub fn new(rows: Option<Array<'_>>) -> Result<Self> {
+        let rows = rows
+            .as_ref()
+            .map(extract_virtual_table_rows)
+            .transpose()?
+            .unwrap_or_default();
+        sui_bindings_core::BindingTableModel::new(rows)
+            .map(|inner| Self { inner })
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(getter)]
+    pub fn size(&self) -> u32 {
+        self.inner.len() as u32
+    }
+
+    #[napi]
+    pub fn get(&self, key: String) -> Result<Option<Vec<String>>> {
+        Ok(self.inner.get(parse_u64_string(&key, "table row key")?))
+    }
+
+    #[napi]
+    pub fn replace(&self, rows: Array<'_>) -> Result<bool> {
+        self.inner
+            .replace(extract_virtual_table_rows(&rows)?)
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn append(&self, row: &JsVirtualTableRow) -> Result<bool> {
+        self.inner
+            .append(row.inner.clone())
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn insert(&self, index: u32, row: &JsVirtualTableRow) -> Result<bool> {
+        self.inner
+            .insert(index as usize, row.inner.clone())
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi]
+    pub fn update(&self, row: &JsVirtualTableRow) -> bool {
+        self.inner.update(row.inner.clone())
+    }
+
+    #[napi]
+    pub fn remove(&self, key: String) -> Result<bool> {
+        Ok(self.inner.remove(parse_u64_string(&key, "table row key")?))
+    }
+
+    #[napi]
+    pub fn set_sort(&self, column_key: Option<String>, direction: Option<String>) -> Result<bool> {
+        let column_key = column_key
+            .as_deref()
+            .map(|key| parse_u64_string(key, "table column key"))
+            .transpose()?;
+        let direction = direction
+            .as_deref()
+            .map(sort_direction_from_js)
+            .transpose()?;
+        Ok(self.inner.set_sort(column_key, direction))
+    }
+}
+
 #[napi(js_name = "CanvasViewport")]
 #[derive(Debug, Clone, Copy)]
 pub struct JsCanvasViewport {
@@ -3116,6 +3293,85 @@ pub fn js_virtual_list(
         binding_action_from_js_callback(env, on_near_start)?,
         binding_action_from_js_callback(env, on_near_end)?,
     )))
+}
+
+fn js_id_action(
+    env: Env,
+    callback: Option<Function<'_, FnArgs<(String,)>, ()>>,
+) -> Result<Option<BindingIdAction>> {
+    callback
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingIdAction::new(move |key| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call(FnArgs::from((key.to_string(),)))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()
+}
+
+#[napi(js_name = "VirtualTable")]
+#[allow(clippy::too_many_arguments)]
+pub fn js_virtual_table(
+    env: Env,
+    name: String,
+    columns: Array<'_>,
+    model: &JsTableModel,
+    selected: Option<&JsState>,
+    row_height: Option<f64>,
+    on_change: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_row_activate: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_header_activate: Option<Function<'_, FnArgs<(String,)>, ()>>,
+    on_column_resize: Option<Function<'_, FnArgs<(String, f64)>, ()>>,
+    on_near_end: Option<Function<'_, (), ()>>,
+    enabled: Option<JsBindingBoolArg>,
+) -> Result<JsWidget> {
+    let mut column_values = Vec::with_capacity(columns.len() as usize);
+    for index in 0..columns.len() {
+        let column = columns
+            .get::<ClassInstance<'_, JsVirtualTableColumn>>(index)?
+            .ok_or_else(|| napi_invalid_arg(format!("table column {index} is missing")))?;
+        column_values.push(column.inner.clone());
+    }
+    let on_column_resize = on_column_resize
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(sui_bindings_core::BindingIdNumberAction::new(
+                move |key, width| {
+                    let env = env.to_env();
+                    let callback = callback
+                        .borrow_back(&env)
+                        .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                    callback
+                        .call(FnArgs::from((key.to_string(), width)))
+                        .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                },
+            ))
+        })
+        .transpose()?;
+    let options = sui_bindings_core::BindingVirtualTableOptions {
+        selected: selected.map(|state| state.inner.clone()),
+        row_height: row_height.map(|value| value as f32),
+        on_change: js_id_action(env, on_change)?,
+        on_row_activate: js_id_action(env, on_row_activate)?,
+        on_header_activate: js_id_action(env, on_header_activate)?,
+        on_column_resize,
+        on_near_end: binding_action_from_js_callback(env, on_near_end)?,
+    };
+    JsWidget::from_binding(BindingWidget::virtual_table(
+        name,
+        column_values,
+        model.inner.clone(),
+        options,
+    ))
+    .with_enabled(enabled)
 }
 
 #[napi(js_name = "Canvas")]

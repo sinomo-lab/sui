@@ -59,6 +59,14 @@ Versioning, with the usual expectation that the API may change during the
 - Gave `text_input`, `text_area`, and `password_input` `read_only`,
   `on_submit`, and `on_focus_change`. Semantic snapshots no longer report
   read-only fields as editable.
+- Bound `VirtualTable` directly as `virtual_table` instead of mapping it to
+  `table`. It realizes only visible rows of a thread-safe `TableModel` of keyed
+  `VirtualTableRow` values that any thread may update, and selects by row key,
+  writing the key back to a bound `State` as an integer.
+  `VirtualTableColumn` sets widths, alignment, resizing, and the sort
+  indicator; `on_row_activate`, `on_header_activate`, `on_column_resize`, and
+  `on_near_end` report keys. Sorting stays application policy: reorder the
+  model and show the direction with `TableModel.set_sort`.
 
 ### Rust
 

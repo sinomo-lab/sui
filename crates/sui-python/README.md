@@ -316,6 +316,47 @@ For application services and worker results, register a named handler with
 The binding maps this dynamic-language message API onto the UI task queue,
 preserving UI-thread delivery without exposing Rust generic command keys.
 
+## Virtual tables
+
+`virtual_table(name, columns, model, ...)` shows a large table and realizes
+only the rows in view. Rows live in a `TableModel` of `VirtualTableRow(key,
+cells)` values with stable, non-zero integer keys. Any thread may call
+`replace`, `append`, `insert`, `update`, or `remove`; the table wakes and
+re-reads the visible rows. Each `VirtualTableColumn(key, title, ...)` sets a
+width, `min_width`, `max_width`, `resizable`, `alignment`, and an initial
+`sort_direction`.
+
+Selection is by row key: a bound `selected` state receives the key as an
+`int`, and `on_change(key)` reports it. `on_row_activate(key)` runs on
+double-click or Enter, `on_column_resize(column_key, width)` while a column is
+dragged, and `on_near_end()` when scrolling approaches the last row.
+
+Sorting is application policy. Reorder the model in `on_header_activate` and
+show the direction with `model.set_sort(column_key, "ascending" | "descending")`;
+call `set_sort()` with no arguments to clear it. Selection follows the key
+through the reorder:
+
+```python
+model = sui.TableModel([sui.VirtualTableRow(i, [f"File {i}", f"{i} KB"]) for i in range(1, 10_001)])
+selected = sui.State(0)
+descending = False
+
+def sort_by(column_key):
+    global descending
+    descending = not descending
+    keys = sorted(range(1, 10_001), reverse=descending)
+    model.replace([sui.VirtualTableRow(key, model.get(key)) for key in keys])
+    model.set_sort(column_key, "descending" if descending else "ascending")
+
+table = sui.virtual_table(
+    "Files",
+    [sui.VirtualTableColumn(1, "Name", width=240), sui.VirtualTableColumn(2, "Size", alignment="end")],
+    model,
+    selected=selected,
+    on_header_activate=sort_by,
+)
+```
+
 ## Errors in callbacks
 
 Callbacks have no Python caller to receive their exceptions, so SUI reports
