@@ -480,6 +480,53 @@ fn foreign_widget_can_measure_arrange_and_paint_retained_children() {
 }
 
 #[test]
+fn foreign_error_sink_keeps_only_the_most_recent_errors() {
+    let sink = ForeignErrorSink::new();
+    for index in 0..FOREIGN_ERROR_SINK_CAPACITY + 10 {
+        sink.push(ForeignCallbackError::new(
+            ForeignWidgetId::new(1),
+            ForeignCallbackPhase::Event,
+            format!("error {index}"),
+        ));
+    }
+
+    let errors = sink.snapshot();
+    assert_eq!(errors.len(), FOREIGN_ERROR_SINK_CAPACITY);
+    assert_eq!(errors[0].message, "error 10");
+}
+
+#[test]
+fn ui_task_queue_counts_only_non_quiet_tasks_and_forwards_exit_requests() {
+    let queue = UiTaskQueue::new();
+    let handle = queue.handle();
+    let ran = Arc::new(AtomicUsize::new(0));
+    for quiet in [true, false, true] {
+        let ran = Arc::clone(&ran);
+        let task = move || {
+            ran.fetch_add(1, Ordering::SeqCst);
+        };
+        if quiet {
+            handle.post_quiet(task);
+        } else {
+            handle.post(task);
+        }
+    }
+    assert_eq!(queue.drain(), 1);
+    assert_eq!(ran.load(Ordering::SeqCst), 3);
+
+    assert!(!handle.request_exit());
+    let exits = Arc::new(AtomicUsize::new(0));
+    let exits_for_hook = Arc::clone(&exits);
+    queue.set_exit_hook(move || {
+        exits_for_hook.fetch_add(1, Ordering::SeqCst);
+    });
+    assert!(handle.request_exit());
+    queue.clear_exit_hook();
+    assert!(!handle.request_exit());
+    assert_eq!(exits.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn foreign_widget_callback_failures_are_captured() {
     let sink = ForeignErrorSink::new();
     let widget = ForeignWidget::new(FailingCallbacks).with_error_sink(sink.clone());
@@ -1928,7 +1975,7 @@ fn binding_select_updates_bound_state_from_keyboard() {
         )
         .unwrap();
 
-    assert_eq!(selected.get(), BindingValue::Number(1.0));
+    assert_eq!(selected.get(), BindingValue::Integer(1));
     assert_eq!(
         changes.lock().unwrap().as_slice(),
         &[(1, "Final".to_string())]
@@ -1987,7 +2034,7 @@ fn binding_radio_group_updates_bound_state_from_pointer() {
         .handle_event(window_id, BindingEvent::Pointer(up))
         .unwrap();
 
-    assert_eq!(selected.get(), BindingValue::Number(1.0));
+    assert_eq!(selected.get(), BindingValue::Integer(1));
     assert_eq!(
         changes.lock().unwrap().as_slice(),
         &[(1, "Medium".to_string())]
@@ -2073,13 +2120,13 @@ fn binding_segmented_control_updates_bound_state_from_pointer() {
             runtime
                 .handle_event(window_id, BindingEvent::Pointer(up))
                 .unwrap();
-            if selected.get() == BindingValue::Number(1.0) {
+            if selected.get() == BindingValue::Integer(1) {
                 break 'scan;
             }
         }
     }
 
-    assert_eq!(selected.get(), BindingValue::Number(1.0));
+    assert_eq!(selected.get(), BindingValue::Integer(1));
     assert_eq!(
         changes.lock().unwrap().as_slice(),
         &[(1, "Gallery".to_string())]
@@ -2149,7 +2196,7 @@ fn binding_list_view_updates_bound_state_from_pointer() {
         .handle_event(window_id, BindingEvent::Pointer(up))
         .unwrap();
 
-    assert_eq!(selected.get(), BindingValue::Number(1.0));
+    assert_eq!(selected.get(), BindingValue::Integer(1));
     assert_eq!(
         changes.lock().unwrap().as_slice(),
         &[(1, "Canvas".to_string())]
@@ -3187,4 +3234,32 @@ fn simple_color_picker_mode_names_include_oklch() {
         Some(sui::SimpleColorPickerMode::Hsv)
     );
     assert_eq!(binding_simple_color_picker_mode_from_name("lab"), None);
+}
+
+#[test]
+fn binding_popover_follows_bound_open_state() {
+    let open = BindingState::new(false);
+    let app = BindingApp::new().with_window(BindingWindow::new(
+        "Popover state",
+        BindingWidget::popover(
+            "Details",
+            BindingWidget::button("More", None),
+            BindingWidget::label("Popover body"),
+            open.clone(),
+        ),
+    ));
+    let mut runtime = app.start().unwrap();
+    let window_id = runtime.window_id_at(0).unwrap();
+    let has_body = |snapshot: &BindingRenderSnapshot| {
+        snapshot
+            .semantics_names
+            .iter()
+            .any(|name| name == "Popover body")
+    };
+    assert!(!has_body(&runtime.render_window(window_id).unwrap()));
+
+    open.set(true);
+    assert_eq!(runtime.drain_ui_tasks().unwrap(), 1);
+    let snapshot = runtime.render_window(window_id).unwrap();
+    assert!(has_body(&snapshot), "{:?}", snapshot.semantics_names);
 }

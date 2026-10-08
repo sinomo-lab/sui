@@ -49,6 +49,34 @@ use sui::SurfaceElevation;
 use sui::SurfaceRole;
 use sui::TooltipPlacement;
 
+/// Optional dialog configuration. Defaults match `sui::Dialog`: modal, and
+/// not dismissed by a scrim click.
+#[derive(Debug, Clone)]
+pub struct BindingDialogOptions {
+    pub description: Option<String>,
+    pub modal: bool,
+    pub dismiss_on_scrim: bool,
+    pub max_width: Option<f32>,
+    /// Footer controls placed outside the scrolling body.
+    pub actions: Vec<BindingWidget>,
+    /// Called after the user dismisses the dialog. A state-bound `shown`
+    /// value is set to `false` first.
+    pub on_dismiss: Option<BindingAction>,
+}
+
+impl Default for BindingDialogOptions {
+    fn default() -> Self {
+        Self {
+            description: None,
+            modal: true,
+            dismiss_on_scrim: false,
+            max_width: None,
+            actions: Vec::new(),
+            on_dismiss: None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct BindingWidget {
     pub(crate) inner: Arc<BindingWidgetKind>,
@@ -684,11 +712,15 @@ pub(crate) enum BindingWidgetKind {
         name: BindingText,
         tabs: Vec<String>,
         selected: Option<BindingNumber>,
+        /// One panel per tab, or empty to show each tab's label as its panel.
+        panels: Vec<BindingWidget>,
+        action: Option<BindingSelectAction>,
     },
     Dialog {
         title: BindingText,
         content: BindingWidget,
         shown: BindingBool,
+        options: BindingDialogOptions,
     },
     SignalMeter {
         name: BindingText,
@@ -1251,7 +1283,8 @@ pub(crate) enum BindingWidgetKind {
         name: String,
         trigger: BindingWidget,
         content: BindingWidget,
-        open: bool,
+        open: BindingBool,
+        action: Option<BindingBoolAction>,
     },
     ToolPalette {
         name: String,

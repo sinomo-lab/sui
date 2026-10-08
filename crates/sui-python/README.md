@@ -174,9 +174,17 @@ primary actions, checked controls, links, focus rings, thin indicators,
 selection borders, and glows; surfaces, selection fills, fields, menus, and
 scroll chrome remain neutral.
 
-`App.run()` blocks until the desktop application exits. Use
+`App.run()` blocks until the desktop application exits, with the GIL
+released so other Python threads keep running. Use
 `App.run_with_handle(callback)` when startup code needs the thread-safe
-`UiHandle` after the event loop is ready.
+`UiHandle` after the event loop is ready; `ui_handle.request_exit()` ends the
+loop from any thread.
+
+Ctrl+C stops a running app: `run()` raises `KeyboardInterrupt` within a
+fraction of a second. A callback that raises `KeyboardInterrupt` or
+`SystemExit` (for example `sys.exit()` in a button handler) also stops the
+loop, and `run()` re-raises that exception. Call `run()` from the main thread,
+once per process: the platform event loop cannot be created twice.
 
 Use `App.start()` for embedding, deterministic tests, or host-driven rendering:
 
@@ -227,6 +235,12 @@ bounds, actions, values, and interaction state; pass one to `running.hover`,
 
 ## State and threading
 
+`State` holds a `str`, `int`, `float`, or `bool`, and `get()` returns the
+same Python type that was stored. Selection widgets write their index back as
+an `int`. Widgets bound to a `State` (labels, checked values, selections, and
+the open state of `dialog`, `popover`, and the sheets) follow later changes to
+it, and write user changes back.
+
 `State` values used by an application are attached to its UI task queue when
 the app starts or runs. Updates from outside the UI drain path are queued and
 mark the affected windows for redraw. `UiHandle.post(callback)` is the normal
@@ -244,6 +258,26 @@ For application services and worker results, register a named handler with
 `app.on(name, callback)` and publish through `ui_handle.emit(name, payload)`.
 The binding maps this dynamic-language message API onto the UI task queue,
 preserving UI-thread delivery without exposing Rust generic command keys.
+
+## Errors in callbacks
+
+Callbacks have no Python caller to receive their exceptions, so SUI reports
+each one with its full traceback through `sys.excepthook` and keeps the app
+running. Install your own handler to log, collect, or re-raise them:
+
+```python
+errors = []
+previous = sui.set_exception_handler(errors.append)
+```
+
+The handler receives the exception object; its traceback is in
+`__traceback__`. Pass `None` to restore the default. If the handler itself
+raises, both exceptions are reported through `sys.excepthook`.
+
+`KeyboardInterrupt` and `SystemExit` are never reported this way: they stop
+the app and are re-raised by the call that drove it, `App.run()` for desktop
+apps or the `RunningApp` method (`click`, `drain`, `render`, ...) in
+host-driven tests.
 
 ## Custom widgets and resources
 
@@ -280,6 +314,8 @@ implemented yet.
 ## Current limitations
 
 - Wheels and release automation are not published; users build from source.
+- `App.run()` can run once per process, so notebooks cannot re-run a desktop
+  app in the same kernel. Use `App.start()` for repeatable host-driven runs.
 - Every public Rust widget is classified as directly bound, manually wrapped,
   or represented by a documented Python-level equivalent. Some equivalents
   intentionally expose portable value models instead of Rust closure or `Any`
@@ -300,8 +336,19 @@ Rust-side binding tests do not require an installed extension module:
 cargo test -p sinomo-ui-python
 ```
 
-After a Maturin build, run all three Python examples as the package-level smoke
-test.
+The Python test suite runs against the extension built by `uv sync` or
+`uv run maturin develop --uv`, from `crates/sui-python`. It includes the
+examples:
+
+```bash
+uv run pytest
+```
+
+Tests that open real desktop windows are skipped unless enabled:
+
+```bash
+SUI_DESKTOP_TESTS=1 uv run pytest
+```
 
 ## More documentation
 

@@ -3149,29 +3149,74 @@ pub fn js_tab_bar(
 
 #[napi(js_name = "Tabs")]
 pub fn js_tabs(
+    env: Env,
     name: JsBindingTextArg,
     tabs: Vec<String>,
     selected: Option<JsBindingNumberArg>,
+    panels: Option<Array<'_>>,
+    on_change: Option<Function<'_, FnArgs<(u32, String)>, ()>>,
 ) -> Result<JsWidget> {
-    Ok(JsWidget::from_binding(BindingWidget::tabs(
+    let action = on_change
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingSelectAction::new(move |index, value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call(FnArgs::from((index as u32, value)))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    BindingWidget::tabs_with_panels(
         binding_text_from_js(name),
         tabs,
         selected.map(binding_number_from_js),
-    )))
+        panels
+            .as_ref()
+            .map(extract_binding_widgets)
+            .transpose()?
+            .unwrap_or_default(),
+        action,
+    )
+    .map(JsWidget::from_binding)
+    .map_err(|error| napi_invalid_arg(&error))
 }
 
 #[napi(js_name = "Dialog")]
 pub fn js_dialog(
+    env: Env,
     title: JsBindingTextArg,
     content: ClassInstance<'_, JsWidget>,
     open: Option<JsBindingBoolArg>,
+    description: Option<String>,
+    modal: Option<bool>,
+    dismiss_on_scrim: Option<bool>,
+    max_width: Option<f64>,
+    actions: Option<Array<'_>>,
+    on_dismiss: Option<Function<'_, (), ()>>,
 ) -> Result<JsWidget> {
-    Ok(JsWidget::from_binding(BindingWidget::dialog(
+    Ok(JsWidget::from_binding(BindingWidget::dialog_with_options(
         binding_text_from_js(title),
         content.binding_widget()?,
         open
             .map(binding_bool_from_js)
             .unwrap_or(BindingBool::Static(true)),
+        BindingDialogOptions {
+            description,
+            modal: modal.unwrap_or(true),
+            dismiss_on_scrim: dismiss_on_scrim.unwrap_or(false),
+            max_width: max_width.map(|value| value as f32),
+            actions: actions
+                .as_ref()
+                .map(extract_binding_widgets)
+                .transpose()?
+                .unwrap_or_default(),
+            on_dismiss: binding_action_from_js_callback(env, on_dismiss)?,
+        },
     )))
 }
 
@@ -3429,16 +3474,20 @@ pub fn js_tooltip(
 
 #[napi(js_name = "Popover")]
 pub fn js_popover(
+    env: Env,
     name: String,
     trigger: ClassInstance<'_, JsWidget>,
     content: ClassInstance<'_, JsWidget>,
-    open: Option<bool>,
+    open: Option<JsBindingBoolArg>,
+    on_open_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
 ) -> Result<JsWidget> {
-    Ok(JsWidget::from_binding(BindingWidget::popover(
+    Ok(JsWidget::from_binding(BindingWidget::popover_with_open_change(
         name,
         trigger.binding_widget()?,
         content.binding_widget()?,
-        open.unwrap_or(false),
+        open.map(binding_bool_from_js)
+            .unwrap_or(BindingBool::Static(false)),
+        binding_bool_action_from_js_callback(env, on_open_change)?,
     )))
 }
 
@@ -3728,6 +3777,27 @@ fn binding_action_from_js_callback(
                     .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
                 callback
                     .call(())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()
+}
+
+fn binding_bool_action_from_js_callback(
+    env: Env,
+    callback: Option<Function<'_, FnArgs<(bool,)>, ()>>,
+) -> Result<Option<BindingBoolAction>> {
+    callback
+        .map(|callback| {
+            let env = JsEnvHandle::from_env(env);
+            let callback = callback.create_ref()?;
+            Ok::<_, Error>(BindingBoolAction::new(move |value| {
+                let env = env.to_env();
+                let callback = callback
+                    .borrow_back(&env)
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                callback
+                    .call(FnArgs::from((value,)))
                     .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
             }))
         })

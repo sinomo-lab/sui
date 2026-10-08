@@ -12,6 +12,9 @@ use sui::Constraints;
 use sui::DateTimeInput;
 use sui::Event;
 use sui::EventCtx;
+use sui::InvalidationKind;
+use sui::InvalidationRequest;
+use sui::InvalidationTarget;
 use sui::MeasureCtx;
 use sui::PaintCtx;
 use sui::PasswordInput;
@@ -850,12 +853,20 @@ impl BindingUiTaskRootWidget {
         Self { inner, ui_tasks }
     }
 
+    /// Run posted UI work. Bound state carries no per-widget dependencies, so
+    /// real work invalidates the whole window, as the desktop loop's
+    /// command handler does.
     pub(crate) fn drain_ui_tasks(&self, ctx: &mut EventCtx) -> usize {
         let drained = self.ui_tasks.drain();
         if drained > 0 {
-            ctx.request_measure();
-            ctx.request_paint();
-            ctx.request_semantics();
+            let window = InvalidationTarget::Window(ctx.window_id());
+            for kind in [
+                InvalidationKind::Measure,
+                InvalidationKind::Paint,
+                InvalidationKind::Semantics,
+            ] {
+                ctx.request(InvalidationRequest::new(window, kind));
+            }
         }
         drained
     }

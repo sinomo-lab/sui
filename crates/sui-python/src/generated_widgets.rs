@@ -429,6 +429,10 @@ impl PyColorPaletteSwatch {
 #[derive(Debug, Clone)]
 pub struct PyBrushPreviewSpec {
     inner: BindingBrushPreviewSpec,
+    color: PyColor,
+    size: f32,
+    opacity: f32,
+    shape: &'static str,
 }
 
 #[pymethods]
@@ -436,9 +440,9 @@ impl PyBrushPreviewSpec {
     #[new]
     #[pyo3(signature = (color, size=18.0, opacity=1.0, shape="round"))]
     pub fn new(color: PyColor, size: f32, opacity: f32, shape: &str) -> PyResult<Self> {
-        let shape = match shape {
-            "round" | "circle" => sui_crate::BrushPreviewShape::Round,
-            "square" => sui_crate::BrushPreviewShape::Square,
+        let (shape, shape_name) = match shape {
+            "round" | "circle" => (sui_crate::BrushPreviewShape::Round, "round"),
+            "square" => (sui_crate::BrushPreviewShape::Square, "square"),
             _ => {
                 return Err(PyValueError::new_err(
                     "brush preview shape must be 'round' or 'square'",
@@ -447,7 +451,31 @@ impl PyBrushPreviewSpec {
         };
         Ok(Self {
             inner: BindingBrushPreviewSpec::new(color.into(), size, opacity, shape),
+            color,
+            size,
+            opacity,
+            shape: shape_name,
         })
+    }
+
+    #[getter]
+    pub fn color(&self) -> PyColor {
+        self.color
+    }
+
+    #[getter]
+    pub fn size(&self) -> f32 {
+        self.size
+    }
+
+    #[getter]
+    pub fn opacity(&self) -> f32 {
+        self.opacity
+    }
+
+    #[getter]
+    pub fn shape(&self) -> &'static str {
+        self.shape
     }
 
     fn __repr__(&self) -> String {
@@ -1487,7 +1515,7 @@ pub fn py_button(label: &Bound<'_, PyAny>, on_press: Option<Py<PyAny>>) -> PyRes
                 callback
                     .call0(py)
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1539,7 +1567,7 @@ pub fn py_icon_button(
                 callback
                     .call0(py)
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1574,7 +1602,7 @@ pub fn py_link(
                 callback
                     .call1(py, (url,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1604,7 +1632,7 @@ pub fn py_checkbox(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1632,7 +1660,7 @@ pub fn py_switch(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1661,7 +1689,7 @@ pub fn py_radio_button(
                 callback
                     .call1(py, (true,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1687,7 +1715,7 @@ pub fn py_radio_group(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1714,7 +1742,7 @@ pub fn py_segmented_control(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1739,7 +1767,7 @@ fn py_breadcrumb_widget(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1788,7 +1816,7 @@ pub fn py_list_view(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1814,7 +1842,7 @@ fn py_table_widget(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1871,7 +1899,7 @@ pub fn py_slider(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1906,7 +1934,7 @@ pub fn py_number_input(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -1937,7 +1965,7 @@ pub fn py_select(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -2075,7 +2103,7 @@ pub fn py_action_card(
                 callback
                     .call0(py)
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -2350,7 +2378,7 @@ pub fn py_side_sheet(
                 callback
                     .call0(py)
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -2403,7 +2431,7 @@ pub fn py_bottom_sheet(
                 callback
                     .call0(py)
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -2450,7 +2478,7 @@ pub fn py_split_view(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -2579,7 +2607,7 @@ pub fn py_reorderable_list(
                 callback
                     .call1(py, (item, from_index, to_index))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -2611,7 +2639,7 @@ pub fn py_text_input(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -2641,7 +2669,7 @@ pub fn py_password_input(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -2671,7 +2699,7 @@ pub fn py_datetime_input(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -2701,7 +2729,7 @@ pub fn py_text_area(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -2743,7 +2771,7 @@ pub fn py_rich_document_view(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     };
@@ -2753,7 +2781,7 @@ pub fn py_rich_document_view(
                 callback
                     .call1(py, (id,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -2796,7 +2824,7 @@ pub fn py_color_swatch(
                 callback
                     .call0(py)
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3042,7 +3070,7 @@ pub fn py_adaptive_view(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3092,7 +3120,7 @@ pub fn py_responsive_sidebar(
                 callback
                     .call1(py, (value,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3183,7 +3211,7 @@ pub fn py_virtual_list(
                 callback
                     .call1(py, (key,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3193,7 +3221,7 @@ pub fn py_virtual_list(
                 callback
                     .call0(py)
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     };
@@ -3327,7 +3355,7 @@ pub fn py_drag_drop_host(
                 callback
                     .call1(py, (paths,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3337,7 +3365,7 @@ pub fn py_drag_drop_host(
                 callback
                     .call1(py, (path,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3347,7 +3375,7 @@ pub fn py_drag_drop_host(
                 callback
                     .call0(py)
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3382,7 +3410,7 @@ pub fn py_draggable(
                 callback
                     .call1(py, (payload,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     };
@@ -3415,7 +3443,7 @@ pub fn py_drop_target(
                 callback
                     .call1(py, (payload,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3425,7 +3453,7 @@ pub fn py_drop_target(
                 callback
                     .call1(py, (hovered,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3481,7 +3509,7 @@ pub fn py_tree_view(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3508,7 +3536,7 @@ pub fn py_layer_list(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3535,7 +3563,7 @@ pub fn py_menu(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3562,7 +3590,7 @@ pub fn py_tab_bar(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3575,34 +3603,80 @@ pub fn py_tab_bar(
 }
 
 #[pyfunction(name = "tabs")]
-#[pyo3(signature = (name, tabs, selected=None))]
+#[pyo3(signature = (name, tabs, selected=None, panels=None, on_change=None))]
 pub fn py_tabs(
     name: &Bound<'_, PyAny>,
     tabs: Vec<String>,
     selected: Option<&Bound<'_, PyAny>>,
+    panels: Option<&Bound<'_, PyAny>>,
+    on_change: Option<Py<PyAny>>,
 ) -> PyResult<PyWidget> {
-    Ok(PyWidget::from_binding(BindingWidget::tabs(
+    let action = on_change.map(|callback| {
+        BindingSelectAction::new(move |index, value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (index, value))
+                    .map(|_| ())
+                    .map_err(|error| foreign_py_error(py, error))
+            })
+        })
+    });
+    BindingWidget::tabs_with_panels(
         binding_text_from_py(name)?,
         tabs,
         selected.map(binding_number_from_py).transpose()?,
-    )))
+        panels
+            .map(extract_binding_widgets)
+            .transpose()?
+            .unwrap_or_default(),
+        action,
+    )
+    .map(PyWidget::from_binding)
+    .map_err(PyValueError::new_err)
 }
 
 #[pyfunction(name = "dialog")]
-#[pyo3(signature = (title, content, open=None))]
+#[pyo3(signature = (title, content, open=None, description=None, modal=true, dismiss_on_scrim=false, max_width=None, actions=None, on_dismiss=None))]
 pub fn py_dialog(
     title: &Bound<'_, PyAny>,
     content: PyRef<'_, PyWidget>,
     open: Option<&Bound<'_, PyAny>>,
+    description: Option<String>,
+    modal: bool,
+    dismiss_on_scrim: bool,
+    max_width: Option<f32>,
+    actions: Option<&Bound<'_, PyAny>>,
+    on_dismiss: Option<Py<PyAny>>,
 ) -> PyResult<PyWidget> {
     let open = open
         .map(binding_bool_from_py)
         .transpose()?
         .unwrap_or(BindingBool::Static(true));
-    Ok(PyWidget::from_binding(BindingWidget::dialog(
+    let on_dismiss = on_dismiss.map(|callback| {
+        BindingAction::new(move || {
+            Python::attach(|py| {
+                callback
+                    .call0(py)
+                    .map(|_| ())
+                    .map_err(|error| foreign_py_error(py, error))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::dialog_with_options(
         binding_text_from_py(title)?,
         content.binding_widget()?,
         open,
+        BindingDialogOptions {
+            description,
+            modal,
+            dismiss_on_scrim,
+            max_width,
+            actions: actions
+                .map(extract_binding_widgets)
+                .transpose()?
+                .unwrap_or_default(),
+            on_dismiss,
+        },
     )))
 }
 
@@ -3622,7 +3696,7 @@ pub fn py_command_palette(
                 callback
                     .call0(py)
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3879,18 +3953,34 @@ pub fn py_tooltip(
 }
 
 #[pyfunction(name = "popover")]
-#[pyo3(signature = (name, trigger, content, open=false))]
+#[pyo3(signature = (name, trigger, content, open=None, on_open_change=None))]
 pub fn py_popover(
     name: String,
     trigger: PyRef<'_, PyWidget>,
     content: PyRef<'_, PyWidget>,
-    open: bool,
+    open: Option<&Bound<'_, PyAny>>,
+    on_open_change: Option<Py<PyAny>>,
 ) -> PyResult<PyWidget> {
-    Ok(PyWidget::from_binding(BindingWidget::popover(
+    let open = open
+        .map(binding_bool_from_py)
+        .transpose()?
+        .unwrap_or(BindingBool::Static(false));
+    let action = on_open_change.map(|callback| {
+        BindingBoolAction::new(move |value| {
+            Python::attach(|py| {
+                callback
+                    .call1(py, (value,))
+                    .map(|_| ())
+                    .map_err(|error| foreign_py_error(py, error))
+            })
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::popover_with_open_change(
         name,
         trigger.binding_widget()?,
         content.binding_widget()?,
         open,
+        action,
     )))
 }
 
@@ -3908,7 +3998,7 @@ pub fn py_context_menu(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3943,7 +4033,7 @@ pub fn py_tool_palette(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -3981,7 +4071,7 @@ pub fn py_preset_strip(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -4012,7 +4102,7 @@ pub fn py_browser_tab_bar(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -4022,7 +4112,7 @@ pub fn py_browser_tab_bar(
                 callback
                     .call1(py, (index, value))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -4047,11 +4137,11 @@ pub fn py_color_palette(
         BindingColorSelectAction::new(move |index, name, color| {
             Python::attach(|py| {
                 let color = Py::new(py, PyColor::from(color))
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                    .map_err(|error| foreign_py_error(py, error))?;
                 callback
                     .call1(py, (index, name, color))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -4079,11 +4169,11 @@ pub fn py_color_picker(
         BindingColorAction::new(move |color| {
             Python::attach(|py| {
                 let color = Py::new(py, PyColor::from(color))
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                    .map_err(|error| foreign_py_error(py, error))?;
                 callback
                     .call1(py, (color,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });
@@ -4112,11 +4202,11 @@ pub fn py_simple_color_picker(
         BindingColorAction::new(move |color| {
             Python::attach(|py| {
                 let color = Py::new(py, PyColor::from(color))
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                    .map_err(|error| foreign_py_error(py, error))?;
                 callback
                     .call1(py, (color,))
                     .map(|_| ())
-                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                    .map_err(|error| foreign_py_error(py, error))
             })
         })
     });

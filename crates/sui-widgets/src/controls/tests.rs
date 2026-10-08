@@ -1063,6 +1063,41 @@ fn label_dynamic_text_updates_named_semantic_value() -> Result<()> {
 }
 
 #[test]
+fn control_labels_follow_label_when_readers() -> Result<()> {
+    let label = Rc::new(RefCell::new("Save".to_string()));
+    let reader = || {
+        let label = Rc::clone(&label);
+        move || label.borrow().clone()
+    };
+    let (mut runtime, window_id) = build_runtime(
+        crate::Flex::new(sui_layout::Axis::Vertical)
+            .with_child(Button::new("--").label_when(reader()))
+            .with_child(Checkbox::new("--").label_when(reader()))
+            .with_child(Switch::new("--").label_when(reader()))
+            .with_child(RadioButton::new("--").label_when(reader())),
+    );
+
+    let names = |output: &RenderOutput| {
+        output
+            .semantics
+            .iter()
+            .filter_map(|node| node.name.clone())
+            .collect::<Vec<_>>()
+    };
+    let output = runtime.render(window_id)?;
+    assert_eq!(names(&output), ["Save", "Save", "Save", "Save"]);
+
+    *label.borrow_mut() = "Saved".to_string();
+    runtime.handle_event(
+        window_id,
+        Event::Window(WindowEvent::Resized(Size::new(320.0, 240.0))),
+    )?;
+    let output = runtime.render(window_id)?;
+    assert_eq!(names(&output), ["Saved", "Saved", "Saved", "Saved"]);
+    Ok(())
+}
+
+#[test]
 fn label_observable_text_invalidates_without_window_refresh() -> Result<()> {
     let text = Signal::named("zoom_label", "Zoom 25%".to_string());
     let (mut runtime, window_id) = build_runtime(

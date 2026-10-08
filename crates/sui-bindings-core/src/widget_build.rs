@@ -131,6 +131,14 @@ use sui::VirtualListSelectionMode;
 use sui::VirtualScrollView;
 use sui::containers::Padding as PaddingWidget;
 
+/// A reader for a state-bound label; static labels need none.
+fn live_label(label: &BindingText) -> Option<impl Fn() -> String + 'static> {
+    matches!(label, BindingText::State(_)).then(|| {
+        let label = label.clone();
+        move || label.resolve()
+    })
+}
+
 impl BindingWidget {
     pub(crate) fn into_runtime_widget(&self, context: BindingBuildContext) -> BindingRuntimeWidget {
         let errors = context;
@@ -147,6 +155,9 @@ impl BindingWidget {
             }
             BindingWidgetKind::Button { label, action } => {
                 let mut button = Button::new(label.resolve());
+                if let Some(reader) = live_label(label) {
+                    button = button.label_when(reader);
+                }
                 if let Some(action) = action.clone() {
                     button = button.on_press({
                         let errors = errors.clone();
@@ -270,6 +281,9 @@ impl BindingWidget {
                 action,
             } => {
                 let mut checkbox = Checkbox::new(label.resolve()).checked(checked.resolve());
+                if let Some(reader) = live_label(label) {
+                    checkbox = checkbox.label_when(reader);
+                }
                 let state = checked.state();
                 if state.is_some() || action.is_some() {
                     let action = action.clone();
@@ -296,6 +310,9 @@ impl BindingWidget {
             }
             BindingWidgetKind::Switch { label, on, action } => {
                 let mut switch = Switch::new(label.resolve()).checked(on.resolve());
+                if let Some(reader) = live_label(label) {
+                    switch = switch.label_when(reader);
+                }
                 let state = on.state();
                 if state.is_some() || action.is_some() {
                     let action = action.clone();
@@ -326,6 +343,9 @@ impl BindingWidget {
                 action,
             } => {
                 let mut radio = RadioButton::new(label.resolve()).checked(selected.resolve());
+                if let Some(reader) = live_label(label) {
+                    radio = radio.label_when(reader);
+                }
                 let state = selected.state();
                 if state.is_some() || action.is_some() {
                     let action = action.clone();
@@ -373,7 +393,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     radio_group = radio_group.on_change(move |index, value| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, value)
@@ -412,7 +432,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     control = control.on_change(move |index, value| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, value)
@@ -455,7 +475,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     breadcrumb = breadcrumb.on_activate(move |index, value| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, value)
@@ -494,7 +514,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     list_view = list_view.on_change(move |index, value| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, value)
@@ -543,7 +563,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     table = table.on_change(move |index| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         let value = row_values.get(index).cloned().unwrap_or_default();
                         if let Some(action) = &action
@@ -579,7 +599,7 @@ impl BindingWidget {
                     tree_view = tree_view.on_change(move |path, value| {
                         let index = path.first().copied().unwrap_or(0);
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, value)
@@ -618,7 +638,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     layer_list = layer_list.on_change(move |index, value| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, value)
@@ -652,7 +672,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     menu = menu.on_activate(move |index, item| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, item.label().to_string())
@@ -713,7 +733,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     tab_bar = tab_bar.on_change(move |index, value| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, value)
@@ -732,15 +752,46 @@ impl BindingWidget {
                 name,
                 tabs,
                 selected,
+                panels,
+                action,
             } => {
                 let mut tab_widget = Tabs::new(name.resolve());
-                if let Some(selected) = selected
-                    && let Some(index) = binding_number_to_index(selected.resolve())
-                {
-                    tab_widget = tab_widget.selected(index);
+                for (index, label) in tabs.iter().enumerate() {
+                    tab_widget = match panels.get(index) {
+                        Some(panel) => {
+                            tab_widget.tab(label.clone(), panel.into_runtime_widget(errors.clone()))
+                        }
+                        None => tab_widget.tab(label.clone(), Label::new(label.clone())),
+                    };
                 }
-                for label in tabs {
-                    tab_widget = tab_widget.tab(label.clone(), Label::new(label.clone()));
+                if let Some(selected) = selected {
+                    if let Some(index) = binding_number_to_index(selected.resolve()) {
+                        tab_widget = tab_widget.selected(index);
+                    }
+                    if matches!(selected, BindingNumber::State(_)) {
+                        let selected = selected.clone();
+                        tab_widget = tab_widget
+                            .selected_when(move || binding_number_to_index(selected.resolve()));
+                    }
+                }
+                let state = selected.as_ref().and_then(BindingNumber::state);
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    tab_widget = tab_widget.on_change(move |index, value| {
+                        if let Some(state) = &state {
+                            state.set(index as i64);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(index, value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
                 }
                 BindingRuntimeWidget::new(themed_widget!(tab_widget, errors))
             }
@@ -748,11 +799,46 @@ impl BindingWidget {
                 title,
                 content,
                 shown,
+                options,
             } => {
-                let dialog =
+                let mut dialog =
                     Dialog::new(title.resolve(), content.into_runtime_widget(errors.clone()))
-                        .open(shown.resolve());
-                BindingRuntimeWidget::new(dialog)
+                        .open(shown.resolve())
+                        .modal(options.modal)
+                        .dismiss_on_scrim(options.dismiss_on_scrim);
+                if matches!(shown, BindingBool::State(_)) {
+                    let shown = shown.clone();
+                    dialog = dialog.open_when(move || shown.resolve());
+                }
+                if let Some(description) = &options.description {
+                    dialog = dialog.description(description.clone());
+                }
+                if let Some(max_width) = options.max_width {
+                    dialog = dialog.max_width(max_width);
+                }
+                for action in &options.actions {
+                    dialog = dialog.action(action.into_runtime_widget(errors.clone()));
+                }
+                let shown_state = shown.state();
+                if shown_state.is_some() || options.on_dismiss.is_some() {
+                    let on_dismiss = options.on_dismiss.clone();
+                    let callback_errors = errors.clone();
+                    dialog = dialog.on_dismiss(move || {
+                        if let Some(state) = &shown_state {
+                            state.set(false);
+                        }
+                        if let Some(action) = &on_dismiss
+                            && let Err(error) = action.run()
+                        {
+                            callback_errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(themed_widget!(dialog, errors))
             }
             BindingWidgetKind::SignalMeter {
                 name,
@@ -946,7 +1032,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     select = select.on_change(move |index, value| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, value)
@@ -1260,7 +1346,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     palette = palette.on_change(move |index, name, color| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, name, color)
@@ -2745,14 +2831,39 @@ impl BindingWidget {
                 trigger,
                 content,
                 open,
-            } => BindingRuntimeWidget::new(
-                Popover::new(
+                action,
+            } => {
+                let mut popover = Popover::new(
                     name.clone(),
                     trigger.into_runtime_widget(errors.clone()),
                     content.into_runtime_widget(errors.clone()),
                 )
-                .open(*open),
-            ),
+                .open(open.resolve());
+                if matches!(open, BindingBool::State(_)) {
+                    let open = open.clone();
+                    popover = popover.open_when(move || open.resolve());
+                }
+                let state = open.state();
+                if state.is_some() || action.is_some() {
+                    let action = action.clone();
+                    let errors = errors.clone();
+                    popover = popover.on_open_change(move |value| {
+                        if let Some(state) = &state {
+                            state.set(value);
+                        }
+                        if let Some(action) = &action
+                            && let Err(error) = action.run(value)
+                        {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                        }
+                    });
+                }
+                BindingRuntimeWidget::new(popover)
+            }
             BindingWidgetKind::ToolPalette {
                 name,
                 items,
@@ -2804,7 +2915,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     palette = palette.on_change(move |index, value| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, value)
@@ -2854,7 +2965,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     strip = strip.on_change(move |index, value| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, value)
@@ -2892,7 +3003,7 @@ impl BindingWidget {
                     let errors = errors.clone();
                     tab_bar = tab_bar.on_change(move |index, value| {
                         if let Some(state) = &state {
-                            state.set(index as f64);
+                            state.set(index as i64);
                         }
                         if let Some(action) = &action
                             && let Err(error) = action.run(index, value)

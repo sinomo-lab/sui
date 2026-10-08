@@ -108,6 +108,7 @@ pub use docking::BindingFloatingWorkspaceState;
 pub use documents::BindingRichDocument;
 pub use documents::BindingRichDocumentUpdate;
 pub use drag::BindingDragScope;
+pub use errors::FOREIGN_ERROR_SINK_CAPACITY;
 pub use errors::ForeignCallbackError;
 pub use errors::ForeignCallbackFailure;
 pub use errors::ForeignCallbackPhase;
@@ -201,6 +202,7 @@ pub use values::binding_surface_elevation_from_name;
 pub use values::binding_surface_role_from_name;
 pub use values::binding_tooltip_placement_from_name;
 pub use values::{binding_shadow_placement_from_name, binding_shadow_placement_name};
+pub use widget_descriptor::BindingDialogOptions;
 pub use widget_descriptor::BindingWidget;
 
 #[cfg(test)]

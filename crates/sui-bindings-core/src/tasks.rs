@@ -15,9 +15,17 @@ pub struct UiTaskQueue {
 
 #[derive(Default)]
 pub(crate) struct UiTaskQueueInner {
-    pub(crate) tasks: Mutex<VecDeque<UiTask>>,
+    pub(crate) tasks: Mutex<VecDeque<QueuedUiTask>>,
     pub(crate) wake: Mutex<Option<UiWake>>,
+    pub(crate) exit: Mutex<Option<UiWake>>,
     pub(crate) draining_depth: AtomicUsize,
+}
+
+pub(crate) struct QueuedUiTask {
+    task: UiTask,
+    /// Quiet tasks are housekeeping that does not change the widget tree, so
+    /// draining them alone does not count as UI work.
+    quiet: bool,
 }
 
 impl UiTaskQueue {
@@ -46,21 +54,34 @@ impl UiTaskQueue {
         *recover_lock(&self.inner.wake) = None;
     }
 
+    /// Install the callback that [`BindingUiHandle::request_exit`] forwards
+    /// to while a platform event loop is running.
+    pub fn set_exit_hook(&self, exit: impl Fn() + Send + Sync + 'static) {
+        *recover_lock(&self.inner.exit) = Some(Arc::new(exit));
+    }
+
+    pub fn clear_exit_hook(&self) {
+        *recover_lock(&self.inner.exit) = None;
+    }
+
     pub fn post(&self, task: impl FnOnce() + Send + 'static) {
         self.handle().post(task);
     }
 
+    /// Run every queued task and return how many were not quiet.
     pub fn drain(&self) -> usize {
         self.inner.draining_depth.fetch_add(1, Ordering::SeqCst);
         let _guard = UiTaskDrainGuard { inner: &self.inner };
         let mut drained = 0;
         loop {
-            let task = recover_lock(&self.inner.tasks).pop_front();
-            let Some(task) = task else {
+            let queued = recover_lock(&self.inner.tasks).pop_front();
+            let Some(queued) = queued else {
                 break;
             };
-            task();
-            drained += 1;
+            (queued.task)();
+            if !queued.quiet {
+                drained += 1;
+            }
         }
         drained
     }
@@ -105,10 +126,33 @@ impl BindingUiHandle {
     }
 
     pub fn post(&self, task: impl FnOnce() + Send + 'static) {
-        recover_lock(&self.inner.tasks).push_back(Box::new(task));
+        self.enqueue(Box::new(task), false);
+    }
+
+    /// Post housekeeping that does not change the widget tree. Draining only
+    /// quiet tasks does not request layout, paint, or semantics updates.
+    pub fn post_quiet(&self, task: impl FnOnce() + Send + 'static) {
+        self.enqueue(Box::new(task), true);
+    }
+
+    fn enqueue(&self, task: UiTask, quiet: bool) {
+        recover_lock(&self.inner.tasks).push_back(QueuedUiTask { task, quiet });
         let wake = recover_lock(&self.inner.wake).clone();
         if let Some(wake) = wake {
             wake();
+        }
+    }
+
+    /// Ask the running platform event loop to exit. Returns `false` when no
+    /// event loop is running, such as for host-driven runtimes.
+    pub fn request_exit(&self) -> bool {
+        let exit = recover_lock(&self.inner.exit).clone();
+        match exit {
+            Some(exit) => {
+                exit();
+                true
+            }
+            None => false,
         }
     }
 

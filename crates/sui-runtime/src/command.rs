@@ -172,6 +172,7 @@ type ExternalWaker = dyn Fn() + Send + Sync + 'static;
 struct CommandHub {
     state: Mutex<CommandHubState>,
     wake_pending: AtomicBool,
+    exit_requested: AtomicBool,
     waker: RwLock<Option<Arc<ExternalWaker>>>,
 }
 
@@ -186,6 +187,7 @@ impl CommandHub {
         Arc::new(Self {
             state: Mutex::new(CommandHubState::default()),
             wake_pending: AtomicBool::new(false),
+            exit_requested: AtomicBool::new(false),
             waker: RwLock::new(None),
         })
     }
@@ -283,6 +285,20 @@ impl CommandSender {
 
     pub fn wake(&self) {
         self.hub.wake();
+    }
+
+    /// Ask the platform loop to exit after it finishes the current turn.
+    ///
+    /// The request is sticky: once made, the runtime reports it until the
+    /// loop has exited. Windows are not closed one by one first.
+    pub fn request_exit(&self) {
+        self.hub.exit_requested.store(true, Ordering::Release);
+        self.hub.wake();
+    }
+
+    /// Whether [`request_exit`](Self::request_exit) has been called.
+    pub fn exit_requested(&self) -> bool {
+        self.hub.exit_requested.load(Ordering::Acquire)
     }
 
     pub fn send<T>(&self, target: CommandTarget, key: CommandKey<T>, payload: T) -> u64
@@ -711,6 +727,23 @@ mod tests {
             wake_count_for_callback.fetch_add(1, Ordering::Relaxed);
         })));
 
+        assert_eq!(wake_count.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn exit_requests_are_sticky_and_wake_the_platform() {
+        let sender = CommandSender::new();
+        let wake_count = Arc::new(AtomicU64::new(0));
+        let wake_count_for_callback = Arc::clone(&wake_count);
+        sender.set_waker(Some(Arc::new(move || {
+            wake_count_for_callback.fetch_add(1, Ordering::Relaxed);
+        })));
+        assert!(!sender.exit_requested());
+
+        sender.clone().request_exit();
+        let _ = sender.drain();
+
+        assert!(sender.exit_requested());
         assert_eq!(wake_count.load(Ordering::Relaxed), 1);
     }
 }

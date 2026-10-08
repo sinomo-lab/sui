@@ -9,6 +9,9 @@ use std::sync::Mutex;
 pub enum BindingValue {
     String(String),
     Number(f64),
+    /// An integer from a host language that distinguishes integers from
+    /// floats. Numeric widget bindings accept it like [`Self::Number`].
+    Integer(i64),
     Bool(bool),
 }
 
@@ -73,7 +76,18 @@ impl BindingValue {
                 }
                 text
             }
+            Self::Integer(value) => value.to_string(),
             Self::Bool(value) => value.to_string(),
+        }
+    }
+
+    /// The value as a number, if it is numeric or boolean.
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Number(value) => Some(*value),
+            Self::Integer(value) => Some(*value as f64),
+            Self::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
+            Self::String(_) => None,
         }
     }
 }
@@ -93,6 +107,12 @@ impl From<&str> for BindingValue {
 impl From<f64> for BindingValue {
     fn from(value: f64) -> Self {
         Self::Number(value)
+    }
+}
+
+impl From<i64> for BindingValue {
+    fn from(value: i64) -> Self {
+        Self::Integer(value)
     }
 }
 

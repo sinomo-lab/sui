@@ -1837,11 +1837,20 @@ impl Widget for Popover {
                 f32::INFINITY
             },
         );
-        let surface_size = self
-            .surface
-            .measure(ctx, Constraints::new(Size::ZERO, surface_max));
+        // Only measure the surface while it is shown. A hidden surface
+        // measures to zero, and its pod would cache that zero under the very
+        // constraints the open surface is measured with. An open state read
+        // from `open_when` flips inside this measure, after the pass scope
+        // was built, so a pass that re-measures the popover only as an
+        // ancestor of something else would get that stale zero back.
         let presented = self.state.borrow().is_presented();
-        let focus_size = if presented { surface_size } else { Size::ZERO };
+        let surface_size = if presented {
+            self.surface
+                .measure(ctx, Constraints::new(Size::ZERO, surface_max))
+        } else {
+            Size::ZERO
+        };
+        let focus_size = surface_size;
         self.focus_surface
             .measure(ctx, Constraints::tight(focus_size));
         constraints.clamp(trigger_size)

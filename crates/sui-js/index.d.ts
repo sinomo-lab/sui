@@ -1754,18 +1754,26 @@ export interface TabBarOptions {
 
 export function tabBar(name: State | BindingValue, tabs: string[], options?: TabBarOptions): Widget;
 
-export function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean): Widget;
+export function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, panels?: Widget[], onChange?: (index: number, label: string) => void): Widget;
 
 export interface TabsOptions {
   selected?: State | number | boolean;
+  panels?: Widget[];
+  onChange?: (index: number, label: string) => void;
 }
 
 export function tabs(name: State | BindingValue, tabs: string[], options?: TabsOptions): Widget;
 
-export function Dialog(title: State | BindingValue, content: Widget, open?: State | boolean | number): Widget;
+export function Dialog(title: State | BindingValue, content: Widget, open?: State | boolean | number, description?: string, modal?: boolean, dismissOnScrim?: boolean, maxWidth?: number, actions?: Widget[], onDismiss?: () => void): Widget;
 
 export interface DialogOptions {
   open?: State | boolean | number;
+  description?: string;
+  modal?: boolean;
+  dismissOnScrim?: boolean;
+  maxWidth?: number;
+  actions?: Widget[];
+  onDismiss?: () => void;
 }
 
 export function dialog(title: State | BindingValue, content: Widget, options?: DialogOptions): Widget;
@@ -1910,10 +1918,11 @@ export interface TooltipOptions {
 
 export function tooltip(text: string, child: Widget, options?: TooltipOptions): Widget;
 
-export function Popover(name: string, trigger: Widget, content: Widget, open?: boolean): Widget;
+export function Popover(name: string, trigger: Widget, content: Widget, open?: State | boolean | number, onOpenChange?: (open: boolean) => void): Widget;
 
 export interface PopoverOptions {
-  open?: boolean;
+  open?: State | boolean | number;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function popover(name: string, trigger: Widget, content: Widget, options?: PopoverOptions): Widget;

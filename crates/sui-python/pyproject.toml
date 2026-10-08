@@ -30,3 +30,9 @@ dev = [
     "mypy>=1.15",
     "pytest>=8",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "desktop: opens real desktop windows; runs only with SUI_DESKTOP_TESTS=1",
+]

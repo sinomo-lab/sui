@@ -1020,6 +1020,11 @@ impl DesktopApp {
     }
 
     fn drive_runtime(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
+        if self.runtime.exit_requested() {
+            event_loop.exit();
+            return Ok(());
+        }
+
         // Winit may deliver AboutToWait and user events before the first
         // Resumed callback. In particular, Android has no native window (and
         // therefore cannot create a wgpu surface) during that interval.

@@ -126,17 +126,13 @@ impl BindingNumber {
     pub fn resolve(&self) -> f64 {
         match self {
             Self::Static(value) => *value,
-            Self::State(state) => match state.get() {
-                BindingValue::Number(value) => value,
-                BindingValue::Bool(value) => {
-                    if value {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                }
-                BindingValue::String(value) => value.parse::<f64>().unwrap_or(0.0),
-            },
+            Self::State(state) => {
+                let value = state.get();
+                value.as_f64().unwrap_or_else(|| match value {
+                    BindingValue::String(text) => text.parse::<f64>().unwrap_or(0.0),
+                    _ => 0.0,
+                })
+            }
         }
     }
 

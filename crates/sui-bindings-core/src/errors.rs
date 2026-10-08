@@ -123,6 +123,11 @@ impl ForeignCallbackError {
     }
 }
 
+/// Most recent callback errors a [`ForeignErrorSink`] keeps. Bindings report
+/// each failure to the host language as it happens; the sink is a bounded
+/// record for diagnostics and tests, not the reporting channel.
+pub const FOREIGN_ERROR_SINK_CAPACITY: usize = 256;
+
 #[derive(Clone, Default)]
 pub struct ForeignErrorSink {
     pub(crate) errors: Arc<Mutex<Vec<ForeignCallbackError>>>,
@@ -133,8 +138,14 @@ impl ForeignErrorSink {
         Self::default()
     }
 
+    /// Record an error, dropping the oldest once the sink holds
+    /// [`FOREIGN_ERROR_SINK_CAPACITY`] errors.
     pub fn push(&self, error: ForeignCallbackError) {
-        recover_lock(&self.errors).push(error);
+        let mut errors = recover_lock(&self.errors);
+        if errors.len() >= FOREIGN_ERROR_SINK_CAPACITY {
+            errors.remove(0);
+        }
+        errors.push(error);
     }
 
     pub fn drain(&self) -> Vec<ForeignCallbackError> {

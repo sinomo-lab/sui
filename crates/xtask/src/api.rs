@@ -1,6 +1,7 @@
 //! Language-neutral binding signatures. Numeric semantics are explicit in the
 //! specification; names never determine a parameter's type.
 use crate::{to_lower_camel_case, to_snake_case};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ApiType {
@@ -357,23 +358,29 @@ fn ts_parameters(parameters: &[ApiParameter]) -> String {
         .join(", ")
 }
 
-fn python_parameters(parameters: &[ApiParameter], has_self: bool) -> String {
-    let mut values = if has_self {
-        vec!["self".to_string()]
-    } else {
-        Vec::new()
-    };
+/// Render Python parameters. Optional parameters accept `None` unless their
+/// name is in `non_nullable`: the Rust binding gives them a concrete default
+/// and a non-`Option` type, so passing `None` explicitly raises `TypeError`.
+fn python_parameters(
+    parameters: &[ApiParameter],
+    receiver: Option<&str>,
+    non_nullable: &BTreeSet<String>,
+) -> String {
+    let mut values = receiver.map(str::to_string).into_iter().collect::<Vec<_>>();
     for parameter in parameters {
+        let name = parameter
+            .python_name
+            .clone()
+            .unwrap_or_else(|| to_snake_case(&parameter.name));
         let mut ty = parameter.ty.python();
-        if parameter.optional && !ty.split('|').any(|part| part.trim() == "None") {
+        if parameter.optional
+            && !non_nullable.contains(&name)
+            && !ty.split('|').any(|part| part.trim() == "None")
+        {
             ty.push_str(" | None");
         }
         values.push(format!(
-            "{}: {ty}{}",
-            parameter
-                .python_name
-                .clone()
-                .unwrap_or_else(|| to_snake_case(&parameter.name)),
+            "{name}: {ty}{}",
             if parameter.optional { " = ..." } else { "" }
         ));
     }
@@ -414,7 +421,7 @@ impl ApiFunction {
             self.return_type.typescript()
         )
     }
-    pub fn python(&self, name: &str) -> String {
+    pub fn python(&self, name: &str, non_nullable: &BTreeSet<String>) -> String {
         let parameters = self
             .required
             .iter()
@@ -423,7 +430,7 @@ impl ApiFunction {
             .collect::<Vec<_>>();
         format!(
             "def {name}({}) -> {}: ...\n",
-            python_parameters(&parameters, false),
+            python_parameters(&parameters, None, non_nullable),
             self.return_type.python()
         )
     }
@@ -480,11 +487,20 @@ impl ApiMember {
             ),
         }
     }
-    pub fn python(&self) -> String {
+    /// The Python name of this member, used to look up its Rust binding.
+    pub fn python_name(&self) -> String {
+        match self {
+            Self::Constructor(_) => "__new__".to_string(),
+            Self::Property { name, .. } | Self::Method { name, .. } => to_snake_case(name),
+        }
+    }
+    /// Render this member for a Python stub. PyO3 exposes `#[new]` as
+    /// `__new__`, so constructors are declared that way for stubtest.
+    pub fn python(&self, non_nullable: &BTreeSet<String>) -> String {
         match self {
             Self::Constructor(p) => format!(
-                "    def __init__({}) -> None: ...\n",
-                python_parameters(p, true)
+                "    def __new__({}) -> Self: ...\n",
+                python_parameters(p, Some("cls"), non_nullable)
             ),
             Self::Property {
                 name,
@@ -513,7 +529,7 @@ impl ApiMember {
                     ""
                 },
                 to_snake_case(name),
-                python_parameters(parameters, !is_static),
+                python_parameters(parameters, (!is_static).then_some("self"), non_nullable),
                 result.python()
             ),
         }
@@ -528,11 +544,19 @@ mod tests {
         for name in ["index", "rowIndex", "arbitraryName"] {
             let function =
                 ApiFunction::parse("Choose", &format!("Choose({name}: int): boolean;")).unwrap();
-            assert!(function.python("choose").contains(": int"));
+            assert!(
+                function
+                    .python("choose", &BTreeSet::new())
+                    .contains(": int")
+            );
             assert!(function.typescript().contains(": number"));
             let floating =
                 ApiFunction::parse("Choose", &format!("Choose({name}: number): boolean;")).unwrap();
-            assert!(floating.python("choose").contains(": float"));
+            assert!(
+                floating
+                    .python("choose", &BTreeSet::new())
+                    .contains(": float")
+            );
         }
     }
     #[test]
@@ -566,7 +590,7 @@ mod tests {
             ApiFunction::parse("Slider", "Slider(min? as min_value: number): Widget;").unwrap();
         assert_eq!(function.typescript(), "Slider(min?: number): Widget;");
         assert_eq!(
-            function.python("slider"),
+            function.python("slider", &BTreeSet::new()),
             "def slider(min_value: float | None = ...) -> Widget: ...\n"
         );
     }

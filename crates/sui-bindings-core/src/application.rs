@@ -407,6 +407,16 @@ impl BindingApp {
             let window_id = runtime
                 .add_window(builder)
                 .map_err(|error| error.to_string())?;
+            // A platform host reports the created window's size; do the same
+            // so host-driven layout sees the window's viewport.
+            if let Some(size) = window.initial_size {
+                runtime
+                    .handle_event(
+                        window_id,
+                        sui::Event::Window(sui::WindowEvent::Resized(size)),
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
             if let Some(options) = self.render_options {
                 sui::set_window_render_options(window_id, options.into_sui());
             }
@@ -470,22 +480,31 @@ impl BindingApp {
             let app_window = window
                 .configure_app_window(SuiWindow::new(window.title.clone()).root(root))
                 .on_command(BINDING_UI_TASKS_READY, move |ctx, _| {
-                    tasks_for_window.drain();
-                    ctx.request_measure();
-                    ctx.request_paint();
-                    ctx.request_semantics();
+                    if tasks_for_window.drain() > 0 {
+                        ctx.request_measure();
+                        ctx.request_paint();
+                        ctx.request_semantics();
+                    }
                 });
             app = app.window(app_window);
         }
 
         let tasks_for_waker = ui_tasks.clone();
-        app.run_with_handle(move |native_ui| {
-            tasks_for_waker.set_waker(move || {
-                native_ui.broadcast_application(BINDING_UI_TASKS_READY, ());
-            });
-            on_ready(ui_handle);
-        })
-        .map_err(|error| error.to_string())
+        let result = app
+            .run_with_handle(move |native_ui| {
+                let exit_ui = native_ui.clone();
+                tasks_for_waker.set_exit_hook(move || exit_ui.request_exit());
+                tasks_for_waker.set_waker(move || {
+                    native_ui.broadcast_application(BINDING_UI_TASKS_READY, ());
+                });
+                on_ready(ui_handle);
+            })
+            .map_err(|error| error.to_string());
+        // Handles may outlive the loop; posts and exit requests after this
+        // point must not reach the finished platform.
+        ui_tasks.clear_exit_hook();
+        ui_tasks.clear_waker();
+        result
     }
 
     #[cfg(not(feature = "desktop"))]

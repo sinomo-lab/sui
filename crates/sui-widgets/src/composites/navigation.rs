@@ -2294,6 +2294,7 @@ pub struct Tabs {
     pub(super) widths: Vec<f32>,
     pub(super) gap: Option<f32>,
     pub(super) panel_frame: Rect,
+    pub(super) selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
     pub(super) on_change: Option<Box<dyn FnMut(usize, String)>>,
     pub(super) on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize, String)>>,
 }
@@ -2321,6 +2322,7 @@ impl Tabs {
             widths: Vec::new(),
             gap: None,
             panel_frame: Rect::ZERO,
+            selected_reader: None,
             on_change: None,
             on_change_with_ctx: None,
         }
@@ -2387,8 +2389,24 @@ impl Tabs {
     pub fn selected(mut self, index: impl Into<Option<usize>>) -> Self {
         let index = index.into().unwrap_or(0);
         self.selected = index;
+        self.selected_reader = None;
         self.selection_from = index;
         self.selection_animation = Progress::new(1.0);
+        self
+    }
+
+    /// [`Self::selected`], read each time the tabs lay out or handle an
+    /// event. `None` keeps the current tab.
+    pub fn selected_when<F>(mut self, selected: F) -> Self
+    where
+        F: Fn() -> Option<usize> + 'static,
+    {
+        if let Some(index) = selected() {
+            self.selected = index;
+            self.selection_from = index;
+            self.selection_animation = Progress::new(1.0);
+        }
+        self.selected_reader = Some(Box::new(selected));
         self
     }
 
@@ -2407,6 +2425,20 @@ impl Tabs {
     {
         self.on_change_with_ctx = Some(Box::new(on_change));
         self
+    }
+
+    /// Follow [`Self::selected_when`]. An external change jumps straight to
+    /// the new tab; only user selection animates.
+    pub(super) fn sync_selected_reader(&mut self) {
+        let Some(index) = self.selected_reader.as_ref().and_then(|reader| reader()) else {
+            return;
+        };
+        let index = index.min(self.labels.len().saturating_sub(1));
+        if index != self.selected {
+            self.selected = index;
+            self.selection_from = index;
+            self.selection_animation = Progress::new(1.0);
+        }
     }
 
     pub fn tab<W>(mut self, label: impl Into<String>, panel: W) -> Self
@@ -2594,6 +2626,7 @@ impl Tabs {
 
 impl Widget for Tabs {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_selected_reader();
         if !self.enabled.get() {
             // Disabled, the widget takes no input, but it lets go of a
             // pointer it captured while enabled.
@@ -2670,6 +2703,7 @@ impl Widget for Tabs {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_selected_reader();
         let theme = self.resolved_theme();
         let text_style = theme.text_style(theme.palette.text);
         let tab_padding = theme.metrics.tab_padding;

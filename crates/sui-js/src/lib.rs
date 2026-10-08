@@ -23,9 +23,9 @@ use sui_bindings_core::{
     BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec, BindingCanvasShape,
     BindingCanvasStroke, BindingCanvasViewport, BindingColorAction, BindingColorPaletteSwatch,
     BindingColorSelectAction, BindingCommandDispatchTrace, BindingConstraintCase,
-    BindingCustomEvent, BindingDockFloatingGroup, BindingDockLayout, BindingDockNode,
-    BindingDockPanel, BindingDockState, BindingDragScope, BindingEvent, BindingEventContext,
-    BindingEventRouteTrace, BindingFloatingStackWindow, BindingFloatingView,
+    BindingCustomEvent, BindingDialogOptions, BindingDockFloatingGroup, BindingDockLayout,
+    BindingDockNode, BindingDockPanel, BindingDockState, BindingDragScope, BindingEvent,
+    BindingEventContext, BindingEventRouteTrace, BindingFloatingStackWindow, BindingFloatingView,
     BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFontHandle,
     BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle, BindingImeEvent,
     BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState, BindingKeyboardEvent,
@@ -4654,6 +4654,7 @@ fn binding_value_to_js(value: BindingValue) -> Either3<String, f64, bool> {
     match value {
         BindingValue::String(value) => Either3::A(value),
         BindingValue::Number(value) => Either3::B(value),
+        BindingValue::Integer(value) => Either3::B(value as f64),
         BindingValue::Bool(value) => Either3::C(value),
     }
 }
@@ -4775,6 +4776,7 @@ unsafe fn binding_bool_arg_from_napi(
         JsStateOrValue::State(state) => Ok(BindingBool::State(state)),
         JsStateOrValue::Value(BindingValue::Bool(value)) => Ok(BindingBool::Static(value)),
         JsStateOrValue::Value(BindingValue::Number(value)) => Ok(BindingBool::Static(value != 0.0)),
+        JsStateOrValue::Value(BindingValue::Integer(value)) => Ok(BindingBool::Static(value != 0)),
         JsStateOrValue::Value(BindingValue::String(_)) => Err(napi_invalid_arg(
             "boolean bindings must be a State, boolean, or number",
         )),
@@ -4788,6 +4790,9 @@ unsafe fn binding_number_arg_from_napi(
     match unsafe { state_or_value_from_napi(env, value)? } {
         JsStateOrValue::State(state) => Ok(BindingNumber::State(state)),
         JsStateOrValue::Value(BindingValue::Number(value)) => Ok(BindingNumber::Static(value)),
+        JsStateOrValue::Value(BindingValue::Integer(value)) => {
+            Ok(BindingNumber::Static(value as f64))
+        }
         JsStateOrValue::Value(BindingValue::Bool(value)) => {
             Ok(BindingNumber::Static(if value { 1.0 } else { 0.0 }))
         }

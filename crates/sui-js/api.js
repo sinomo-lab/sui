@@ -189,10 +189,10 @@ function decorateApi(native) {
       return native.TabBar(name, tabs, options.selected, options.onChange);
     },
     tabs(name, tabs, options = {}) {
-      return native.Tabs(name, tabs, options.selected);
+      return native.Tabs(name, tabs, options.selected, options.panels, options.onChange);
     },
     dialog(title, content, options = {}) {
-      return native.Dialog(title, content, options.open);
+      return native.Dialog(title, content, options.open, options.description, options.modal, options.dismissOnScrim, options.maxWidth, options.actions, options.onDismiss);
     },
     commandPalette(name, content, options = {}) {
       return native.CommandPalette(name, content, options.description, options.open, options.maxWidth, options.onDismiss);
@@ -237,7 +237,7 @@ function decorateApi(native) {
       return native.Tooltip(text, child, options.placement);
     },
     popover(name, trigger, content, options = {}) {
-      return native.Popover(name, trigger, content, options.open);
+      return native.Popover(name, trigger, content, options.open, options.onOpenChange);
     },
     toolPalette(name, items, options = {}) {
       return native.ToolPalette(name, items, options.selected, options.axis, options.onChange, options.extent, options.padding, options.gap, options.itemSize, options.iconSize, options.background, options.divider);

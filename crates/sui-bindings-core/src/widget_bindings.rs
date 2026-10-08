@@ -100,20 +100,32 @@ impl BindingWidget {
                     selected.bind_ui_handle(handle);
                 }
             }
-            BindingWidgetKind::Tabs { name, selected, .. } => {
+            BindingWidgetKind::Tabs {
+                name,
+                selected,
+                panels,
+                ..
+            } => {
                 name.bind_ui_handle(handle);
                 if let Some(selected) = selected {
                     selected.bind_ui_handle(handle);
+                }
+                for panel in panels {
+                    panel.bind_ui_handle(handle);
                 }
             }
             BindingWidgetKind::Dialog {
                 title,
                 content,
                 shown,
+                options,
             } => {
                 title.bind_ui_handle(handle);
                 content.bind_ui_handle(handle);
                 shown.bind_ui_handle(handle);
+                for action in &options.actions {
+                    action.bind_ui_handle(handle);
+                }
             }
             BindingWidgetKind::SignalMeter { name, active, .. } => {
                 name.bind_ui_handle(handle);
@@ -400,10 +412,14 @@ impl BindingWidget {
                 status_bar.bind_ui_handle(handle);
             }
             BindingWidgetKind::Popover {
-                trigger, content, ..
+                trigger,
+                content,
+                open,
+                ..
             } => {
                 trigger.bind_ui_handle(handle);
                 content.bind_ui_handle(handle);
+                open.bind_ui_handle(handle);
             }
             BindingWidgetKind::ToolPalette { selected, .. }
             | BindingWidgetKind::PresetStrip { selected, .. }

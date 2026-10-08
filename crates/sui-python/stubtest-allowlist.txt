@@ -1,0 +1,8 @@
+# mypy stubtest allowlist for the sinomo_ui package.
+#
+# Used by:
+#   uv run python -m mypy.stubtest sinomo_ui --allowlist stubtest-allowlist.txt
+#
+# The stub currently matches the runtime exactly, so there are no entries.
+# Every entry added here must carry a comment explaining why the mismatch
+# is intentional.

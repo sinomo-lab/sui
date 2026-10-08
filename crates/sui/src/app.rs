@@ -393,6 +393,12 @@ impl UiHandle {
         self.commands.wake();
     }
 
+    /// Ask the application to exit. `App::run` returns once the platform
+    /// loop finishes its current turn; this may be called from any thread.
+    pub fn request_exit(&self) {
+        self.commands.request_exit();
+    }
+
     pub fn send<T>(&self, target: CommandTarget, key: CommandKey<T>, payload: T) -> u64
     where
         T: Send + Sync + 'static,

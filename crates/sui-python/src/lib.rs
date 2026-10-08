@@ -12,6 +12,9 @@ use std::{
 };
 
 use ::sui as sui_crate;
+use callback_errors::{
+    SignalPoller, raise_pending_exit, report_callback_error, set_active_loop, start_signal_poller,
+};
 use pyo3::{
     Bound, Py, PyAny, PyErr, PyResult, Python,
     exceptions::{PyOSError, PyRuntimeError, PyValueError},
@@ -25,9 +28,9 @@ use sui_bindings_core::{
     BindingApp, BindingBool, BindingBoolAction, BindingBrushPreviewSpec, BindingCanvasShape,
     BindingCanvasStroke, BindingCanvasViewport, BindingColorAction, BindingColorPaletteSwatch,
     BindingColorSelectAction, BindingCommandDispatchTrace, BindingConstraintCase,
-    BindingCustomEvent, BindingDockFloatingGroup, BindingDockLayout, BindingDockNode,
-    BindingDockPanel, BindingDockState, BindingDragScope, BindingEvent, BindingEventContext,
-    BindingEventRouteTrace, BindingFloatingStackWindow, BindingFloatingView,
+    BindingCustomEvent, BindingDialogOptions, BindingDockFloatingGroup, BindingDockLayout,
+    BindingDockNode, BindingDockPanel, BindingDockState, BindingDragScope, BindingEvent,
+    BindingEventContext, BindingEventRouteTrace, BindingFloatingStackWindow, BindingFloatingView,
     BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFontHandle,
     BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle, BindingImeEvent,
     BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState, BindingKeyboardEvent,
@@ -619,6 +622,7 @@ impl PyEventContext {
         recover_lock(&self.inner).request_arrange();
     }
 
+    #[pyo3(signature = (rect=None))]
     pub fn request_paint(&self, rect: Option<PyRect>) {
         let mut context = recover_lock(&self.inner);
         if let Some(rect) = rect {
@@ -1936,6 +1940,8 @@ impl PyFontHandle {
 
 include!("generated_widgets.rs");
 
+mod callback_errors;
+
 #[pyclass(
     name = "ImageHandle",
     frozen,
@@ -2504,9 +2510,9 @@ impl PyState {
                 match value.and_then(|value| selector_for_observer.call1(py, (value,))) {
                     Ok(selected) => match binding_value_from_py(selected.bind(py)) {
                         Ok(selected) => derived_for_observer.set(selected),
-                        Err(error) => error.print(py),
+                        Err(error) => report_callback_error(py, error),
                     },
-                    Err(error) => error.print(py),
+                    Err(error) => report_callback_error(py, error),
                 }
             });
         });
@@ -2519,10 +2525,10 @@ impl PyState {
         PyStateSubscription {
             inner: Mutex::new(Some(self.inner.observe(move |value| {
                 Python::attach(|py| {
-                    if let Ok(value) = binding_value_to_py(py, value)
-                        && let Err(error) = callback.call1(py, (value,))
+                    if let Err(error) = binding_value_to_py(py, value)
+                        .and_then(|value| callback.call1(py, (value,)))
                     {
-                        error.print(py);
+                        report_callback_error(py, error);
                     }
                 });
             }))),
@@ -2803,6 +2809,53 @@ pub struct PyApp {
     inner: BindingApp,
 }
 
+impl PyApp {
+    /// Run the desktop event loop with the GIL released. Ctrl+C, or a
+    /// callback raising `KeyboardInterrupt` or `SystemExit`, stops the loop
+    /// and the exception is re-raised here.
+    fn run_loop(&self, py: Python<'_>, on_ready: Option<Py<PyAny>>) -> PyResult<()> {
+        // An interrupt raised by a host-driven callback that nothing consumed
+        // belongs to the caller, not to the new loop.
+        raise_pending_exit()?;
+        let app = self.inner.clone();
+        let ready_error = Arc::new(Mutex::new(None::<PyErr>));
+        let ready_error_for_run = Arc::clone(&ready_error);
+        let poller = Arc::new(Mutex::new(None::<SignalPoller>));
+        let poller_for_run = Arc::clone(&poller);
+
+        let result = py.detach(move || {
+            app.run_with_handle(move |handle| {
+                set_active_loop(Some(handle.clone()));
+                *recover_lock(&poller_for_run) = Some(start_signal_poller(handle.clone()));
+                let Some(on_ready) = on_ready else {
+                    return;
+                };
+                Python::attach(|py| {
+                    let call_result = Py::new(
+                        py,
+                        PyUiHandle {
+                            inner: handle.clone(),
+                        },
+                    )
+                    .and_then(|ui| on_ready.call1(py, (ui,)).map(|_| ()));
+                    if let Err(error) = call_result {
+                        *recover_lock(&ready_error_for_run) = Some(error);
+                        handle.request_exit();
+                    }
+                });
+            })
+        });
+
+        recover_lock(&poller).take();
+        set_active_loop(None);
+        raise_pending_exit()?;
+        if let Some(error) = recover_lock(&ready_error).take() {
+            return Err(error);
+        }
+        result.map_err(py_runtime_error)
+    }
+}
+
 #[pymethods]
 impl PyApp {
     #[new]
@@ -2837,11 +2890,11 @@ impl PyApp {
             BindingMessageAction::new(move |payload| {
                 Python::attach(|py| {
                     let payload = binding_value_to_py(py, payload)
-                        .map_err(|error| ForeignCallbackFailure::new(error.to_string()))?;
+                        .map_err(|error| foreign_py_error(py, error))?;
                     callback
                         .call1(py, (payload,))
                         .map(|_| ())
-                        .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+                        .map_err(|error| foreign_py_error(py, error))
                 })
             }),
         );
@@ -2953,32 +3006,11 @@ impl PyApp {
     }
 
     pub fn run(&self, py: Python<'_>) -> PyResult<()> {
-        let app = self.inner.clone();
-        py.detach(move || app.run()).map_err(py_runtime_error)
+        self.run_loop(py, None)
     }
 
     pub fn run_with_handle(&self, py: Python<'_>, callback: Py<PyAny>) -> PyResult<()> {
-        let app = self.inner.clone();
-        let callback_error = Arc::new(Mutex::new(None::<String>));
-        let callback_error_for_run = Arc::clone(&callback_error);
-
-        let result = py.detach(move || {
-            app.run_with_handle(move |handle| {
-                Python::attach(|py| {
-                    let call_result = Py::new(py, PyUiHandle { inner: handle })
-                        .and_then(|handle| callback.call1(py, (handle,)).map(|_| ()));
-                    if let Err(error) = call_result {
-                        *recover_lock(&callback_error_for_run) = Some(error.to_string());
-                    }
-                });
-            })
-        });
-
-        result.map_err(py_runtime_error)?;
-        if let Some(error) = recover_lock(&callback_error).take() {
-            return Err(PyRuntimeError::new_err(error));
-        }
-        Ok(())
+        self.run_loop(py, Some(callback))
     }
 
     pub fn window_count(&self) -> usize {
@@ -3044,10 +3076,18 @@ pub struct PyUiHandle {
 
 #[pymethods]
 impl PyUiHandle {
+    /// Ask the running desktop event loop to exit; `App.run` then returns.
+    /// Returns `False` when no event loop is running. Safe from any thread.
+    pub fn request_exit(&self) -> bool {
+        self.inner.request_exit()
+    }
+
     pub fn post(&self, callback: Py<PyAny>) {
         self.inner.post(move || {
             Python::attach(|py| {
-                let _ = callback.call0(py);
+                if let Err(error) = callback.call0(py) {
+                    report_callback_error(py, error);
+                }
             });
         });
     }
@@ -3405,33 +3445,27 @@ impl PyRunningApp {
     }
 
     pub fn drain(&self) -> PyResult<usize> {
-        self.inner
-            .borrow_mut()
-            .drain_ui_tasks()
-            .map_err(py_runtime_error)
+        drive(self.inner.borrow_mut().drain_ui_tasks())
     }
 
     /// Advance host-driven timers and animations to an absolute frame time in seconds.
-    pub fn tick(&self, frame_time: f64) {
+    pub fn tick(&self, frame_time: f64) -> PyResult<()> {
         self.inner.borrow_mut().tick(frame_time);
+        raise_pending_exit()
     }
 
-    pub fn drain_ready_events(&self) -> usize {
-        self.inner.borrow_mut().drain_ready_event_count()
+    pub fn drain_ready_events(&self) -> PyResult<usize> {
+        let count = self.inner.borrow_mut().drain_ready_event_count();
+        raise_pending_exit()?;
+        Ok(count)
     }
 
     pub fn request_redraw_all(&self) -> PyResult<()> {
-        self.inner
-            .borrow_mut()
-            .request_redraw_all()
-            .map_err(py_runtime_error)
+        drive(self.inner.borrow_mut().request_redraw_all())
     }
 
     pub fn wake_window(&self, window: PyRef<'_, PyWindowHandle>) -> PyResult<()> {
-        self.inner
-            .borrow_mut()
-            .wake_window(window.inner)
-            .map_err(py_runtime_error)
+        drive(self.inner.borrow_mut().wake_window(window.inner))
     }
 
     pub fn handle_event_for(
@@ -3439,10 +3473,11 @@ impl PyRunningApp {
         window: PyRef<'_, PyWindowHandle>,
         event: PyRef<'_, PyEvent>,
     ) -> PyResult<()> {
-        self.inner
-            .borrow_mut()
-            .handle_event(window.inner, event.binding_event())
-            .map_err(py_runtime_error)
+        drive(
+            self.inner
+                .borrow_mut()
+                .handle_event(window.inner, event.binding_event()),
+        )
     }
 
     pub fn set_render_options(
@@ -3477,19 +3512,21 @@ impl PyRunningApp {
 
     #[pyo3(signature = (index=0))]
     pub fn render(&self, index: usize) -> PyResult<PyRenderSnapshot> {
-        self.inner
-            .borrow_mut()
-            .render_window_at(index)
-            .map(PyRenderSnapshot::from)
-            .map_err(py_runtime_error)
+        drive(
+            self.inner
+                .borrow_mut()
+                .render_window_at(index)
+                .map(PyRenderSnapshot::from),
+        )
     }
 
     pub fn render_window(&self, window: PyRef<'_, PyWindowHandle>) -> PyResult<PyRenderSnapshot> {
-        self.inner
-            .borrow_mut()
-            .render_window(window.inner)
-            .map(PyRenderSnapshot::from)
-            .map_err(py_runtime_error)
+        drive(
+            self.inner
+                .borrow_mut()
+                .render_window(window.inner)
+                .map(PyRenderSnapshot::from),
+        )
     }
 
     #[pyo3(signature = (index=0))]
@@ -3508,26 +3545,21 @@ impl PyRunningApp {
 
     #[pyo3(signature = (event, index=0))]
     pub fn handle_event(&self, event: PyRef<'_, PyEvent>, index: usize) -> PyResult<()> {
-        self.inner
-            .borrow_mut()
-            .handle_event_at(index, event.binding_event())
-            .map_err(py_runtime_error)
+        drive(
+            self.inner
+                .borrow_mut()
+                .handle_event_at(index, event.binding_event()),
+        )
     }
 
     #[pyo3(signature = (node, index=0))]
     pub fn hover(&self, node: PyRef<'_, PySemanticNode>, index: usize) -> PyResult<()> {
-        self.inner
-            .borrow_mut()
-            .hover_node_at(index, &node.inner)
-            .map_err(py_runtime_error)
+        drive(self.inner.borrow_mut().hover_node_at(index, &node.inner))
     }
 
     #[pyo3(signature = (node, index=0))]
     pub fn click(&self, node: PyRef<'_, PySemanticNode>, index: usize) -> PyResult<()> {
-        self.inner
-            .borrow_mut()
-            .click_node_at(index, &node.inner)
-            .map_err(py_runtime_error)
+        drive(self.inner.borrow_mut().click_node_at(index, &node.inner))
     }
 
     #[pyo3(signature = (node, key, index=0))]
@@ -3537,10 +3569,11 @@ impl PyRunningApp {
         key: String,
         index: usize,
     ) -> PyResult<()> {
-        self.inner
-            .borrow_mut()
-            .press_node_at(index, &node.inner, key)
-            .map_err(py_runtime_error)
+        drive(
+            self.inner
+                .borrow_mut()
+                .press_node_at(index, &node.inner, key),
+        )
     }
 
     #[pyo3(signature = (node, text, index=0))]
@@ -3550,10 +3583,11 @@ impl PyRunningApp {
         text: String,
         index: usize,
     ) -> PyResult<()> {
-        self.inner
-            .borrow_mut()
-            .fill_node_at(index, &node.inner, text)
-            .map_err(py_runtime_error)
+        drive(
+            self.inner
+                .borrow_mut()
+                .fill_node_at(index, &node.inner, text),
+        )
     }
 
     pub fn window_count(&self) -> usize {
@@ -3844,20 +3878,24 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
             let callbacks = recover_lock(&self.callbacks);
             let object = callbacks.bind(py);
             let py_event = Py::new(py, PyEvent::from_binding(BindingEvent::from(event)))
-                .map_err(foreign_py_error)?;
+                .map_err(|error| foreign_py_error(py, error))?;
             let binding_context = PyEventContext::new(BindingEventContext::from_foreign(ctx));
             let result = if object
                 .hasattr("event_with_context")
-                .map_err(foreign_py_error)?
+                .map_err(|error| foreign_py_error(py, error))?
             {
-                let py_context = Py::new(py, binding_context.clone()).map_err(foreign_py_error)?;
+                let py_context = Py::new(py, binding_context.clone())
+                    .map_err(|error| foreign_py_error(py, error))?;
                 object
                     .call_method1("event_with_context", (py_event, py_context))
-                    .map_err(foreign_py_error)?
-            } else if object.hasattr("event").map_err(foreign_py_error)? {
+                    .map_err(|error| foreign_py_error(py, error))?
+            } else if object
+                .hasattr("event")
+                .map_err(|error| foreign_py_error(py, error))?
+            {
                 object
                     .call_method1("event", (py_event,))
-                    .map_err(foreign_py_error)?
+                    .map_err(|error| foreign_py_error(py, error))?
             } else {
                 return Ok(());
             };
@@ -3890,7 +3928,7 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
             let object = callbacks.bind(py);
             if object
                 .hasattr("measure_with_children")
-                .map_err(foreign_py_error)?
+                .map_err(|error| foreign_py_error(py, error))?
             {
                 let sizes = child_sizes
                     .iter()
@@ -3902,10 +3940,13 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
                         "measure_with_children",
                         (PyConstraints::from(constraints), sizes),
                     )
-                    .map_err(foreign_py_error)?;
-                return extract_size(&value).map_err(foreign_py_error);
+                    .map_err(|error| foreign_py_error(py, error))?;
+                return extract_size(&value).map_err(|error| foreign_py_error(py, error));
             }
-            if !object.hasattr("measure").map_err(foreign_py_error)? {
+            if !object
+                .hasattr("measure")
+                .map_err(|error| foreign_py_error(py, error))?
+            {
                 let natural = child_sizes.iter().fold(Size::ZERO, |size, child| {
                     Size::new(size.width.max(child.width), size.height + child.height)
                 });
@@ -3913,8 +3954,8 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
             }
             let value = object
                 .call_method1("measure", (PyConstraints::from(constraints),))
-                .map_err(foreign_py_error)?;
-            extract_size(&value).map_err(foreign_py_error)
+                .map_err(|error| foreign_py_error(py, error))?;
+            extract_size(&value).map_err(|error| foreign_py_error(py, error))
         })
     }
 
@@ -3925,27 +3966,29 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
         bounds: Rect,
     ) -> ForeignCallbackResult<()> {
         let child_sizes = recover_lock(&self.child_sizes).clone();
-        let custom_bounds = Python::attach(|py| -> PyResult<Option<Vec<PyRect>>> {
+        let custom_bounds = Python::attach(|py| {
             let callbacks = recover_lock(&self.callbacks);
             let object = callbacks.bind(py);
-            if !object.hasattr("arrange")? {
-                return Ok(None);
-            }
-            let sizes = child_sizes
-                .iter()
-                .copied()
-                .map(PySize::from)
-                .collect::<Vec<_>>();
-            object
-                .call_method1("arrange", (PyRect::from(bounds), sizes))?
-                .extract::<Vec<PyRect>>()
-                .map(Some)
-        })
-        .map_err(foreign_py_error)?;
+            let custom_bounds = || -> PyResult<Option<Vec<PyRect>>> {
+                if !object.hasattr("arrange")? {
+                    return Ok(None);
+                }
+                let sizes = child_sizes
+                    .iter()
+                    .copied()
+                    .map(PySize::from)
+                    .collect::<Vec<_>>();
+                object
+                    .call_method1("arrange", (PyRect::from(bounds), sizes))?
+                    .extract::<Vec<PyRect>>()
+                    .map(Some)
+            };
+            custom_bounds().map_err(|error| foreign_py_error(py, error))
+        })?;
 
         if let Some(custom_bounds) = custom_bounds {
             if custom_bounds.len() != ctx.child_count() {
-                return Err(ForeignCallbackFailure::new(format!(
+                return Err(foreign_contract_error(format!(
                     "arrange returned {} child bounds for {} children",
                     custom_bounds.len(),
                     ctx.child_count()
@@ -3974,24 +4017,30 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
         Python::attach(|py| {
             let callbacks = recover_lock(&self.callbacks);
             let object = callbacks.bind(py);
-            if !object.hasattr("paint").map_err(foreign_py_error)? {
+            if !object
+                .hasattr("paint")
+                .map_err(|error| foreign_py_error(py, error))?
+            {
                 for index in 0..ctx.child_count() {
                     ctx.paint_child(index);
                 }
                 return Ok(());
             }
             let paint = PyPaint::new(ctx.bounds());
-            let py_paint = Py::new(py, paint.clone()).map_err(foreign_py_error)?;
+            let py_paint =
+                Py::new(py, paint.clone()).map_err(|error| foreign_py_error(py, error))?;
             object
                 .call_method1("paint", (py_paint.clone_ref(py),))
-                .map_err(foreign_py_error)?;
-            let mut commands = paint.finish().map_err(ForeignCallbackFailure::from)?;
+                .map_err(|error| foreign_py_error(py, error))?;
+            let mut commands = paint
+                .finish()
+                .map_err(|error| foreign_py_error(py, py_value_error(error)))?;
             resolve_binding_image_slots(&mut commands, |slot| ctx.widget_image_handle(slot));
             for pending in paint.take_images() {
                 ctx.register_image(ctx.widget_image_handle(pending.slot), pending.image);
             }
             ctx.apply_all(commands)
-                .map_err(ForeignCallbackFailure::from)?;
+                .map_err(|error| foreign_py_error(py, py_value_error(error)))?;
             for index in 0..ctx.child_count() {
                 ctx.paint_child(index);
             }
@@ -4008,17 +4057,21 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
             let callbacks = recover_lock(&self.callbacks);
             let object = callbacks.bind(py);
             let mut included_children = vec![false; ctx.child_count()];
-            if object.hasattr("semantics").map_err(foreign_py_error)? {
+            if object
+                .hasattr("semantics")
+                .map_err(|error| foreign_py_error(py, error))?
+            {
                 let semantics = PySemantics::new(
                     ctx.widget_id(),
                     ctx.bounds(),
                     ctx.is_focused(),
                     ctx.child_count(),
                 );
-                let py_semantics = Py::new(py, semantics.clone()).map_err(foreign_py_error)?;
+                let py_semantics =
+                    Py::new(py, semantics.clone()).map_err(|error| foreign_py_error(py, error))?;
                 object
                     .call_method1("semantics", (py_semantics,))
-                    .map_err(foreign_py_error)?;
+                    .map_err(|error| foreign_py_error(py, error))?;
                 for command in semantics.take_commands() {
                     match command {
                         PySemanticsCommand::Node(node) => ctx.push(node),
@@ -4031,12 +4084,15 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
                     }
                 }
             } else {
-                let name = if object.hasattr("name").map_err(foreign_py_error)? {
+                let name = if object
+                    .hasattr("name")
+                    .map_err(|error| foreign_py_error(py, error))?
+                {
                     Some(
                         object
                             .getattr("name")
                             .and_then(|value| value.extract::<String>())
-                            .map_err(foreign_py_error)?,
+                            .map_err(|error| foreign_py_error(py, error))?,
                     )
                 } else {
                     None
@@ -4079,7 +4135,9 @@ impl PyUiTaskQueue {
     pub fn post(&self, callback: Py<PyAny>) {
         self.inner.post(move || {
             Python::attach(|py| {
-                let _ = callback.call0(py);
+                if let Err(error) = callback.call0(py) {
+                    report_callback_error(py, error);
+                }
             });
         });
     }
@@ -4352,6 +4410,15 @@ pub fn render_widget(
     widget: PyRef<'_, PyWidget>,
     event: Option<PyRef<'_, PyEvent>>,
 ) -> PyResult<PyRenderSnapshot> {
+    let snapshot = render_widget_once(widget, event);
+    raise_pending_exit()?;
+    snapshot
+}
+
+fn render_widget_once(
+    widget: PyRef<'_, PyWidget>,
+    event: Option<PyRef<'_, PyEvent>>,
+) -> PyResult<PyRenderSnapshot> {
     if let Ok(binding) = widget.binding_widget() {
         let app = BindingApp::new().with_window(BindingWindow::new("Python widget", binding));
         if let Some(event) = event {
@@ -4494,6 +4561,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRenderSnapshot>()?;
     register_generated_python(m)?;
     m.add_function(wrap_pyfunction!(render_widget, m)?)?;
+    m.add_function(wrap_pyfunction!(callback_errors::set_exception_handler, m)?)?;
     Ok(())
 }
 
@@ -4503,6 +4571,10 @@ fn binding_value_from_py(value: &Bound<'_, PyAny>) -> PyResult<BindingValue> {
     }
     if let Ok(value) = value.extract::<String>() {
         return Ok(BindingValue::String(value));
+    }
+    // `int` before `float`: extracting `f64` would also accept integers.
+    if value.is_instance_of::<pyo3::types::PyInt>() {
+        return value.extract::<i64>().map(BindingValue::Integer);
     }
     if let Ok(value) = value.extract::<f64>() {
         return Ok(BindingValue::Number(value));
@@ -4516,6 +4588,7 @@ fn binding_value_to_py(py: Python<'_>, value: BindingValue) -> PyResult<Py<PyAny
     match value {
         BindingValue::String(value) => Ok(value.into_pyobject(py)?.into_any().unbind()),
         BindingValue::Number(value) => Ok(value.into_pyobject(py)?.into_any().unbind()),
+        BindingValue::Integer(value) => Ok(value.into_pyobject(py)?.into_any().unbind()),
         BindingValue::Bool(value) => Ok(value.into_pyobject(py)?.to_owned().into_any().unbind()),
     }
 }
@@ -5071,12 +5144,29 @@ fn py_external_texture_error(error: ExternalTextureValidationError) -> PyErr {
     PyValueError::new_err(error.to_string())
 }
 
+/// Finish a host-driven runtime call: a `KeyboardInterrupt` or `SystemExit`
+/// raised by a callback during the call takes precedence over its result.
+fn drive<T>(result: Result<T, String>) -> PyResult<T> {
+    raise_pending_exit()?;
+    result.map_err(py_runtime_error)
+}
+
 fn py_runtime_error(error: impl ToString) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
 
-fn foreign_py_error(error: PyErr) -> ForeignCallbackFailure {
-    ForeignCallbackFailure::new(error.to_string())
+/// Report a callback exception and convert it for the language-neutral core,
+/// which records it and falls back to a default value.
+fn foreign_py_error(py: Python<'_>, error: PyErr) -> ForeignCallbackFailure {
+    let message = error.to_string();
+    report_callback_error(py, error);
+    ForeignCallbackFailure::new(message)
+}
+
+/// Report a callback that broke the widget contract, such as returning the
+/// wrong number of child bounds, as a `ValueError`.
+fn foreign_contract_error(message: String) -> ForeignCallbackFailure {
+    Python::attach(|py| foreign_py_error(py, PyValueError::new_err(message)))
 }
 
 fn recover_lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -6888,6 +6978,7 @@ assert not hasattr(sui, 'VirtualScrollView')
 assert isinstance(sui.__version__, str)
 
 source = sui.State(2)
+assert type(source.get()) is int
 doubled = source.select(lambda value: value * 2)
 seen = []
 subscription = source.watch(seen.append)
@@ -7045,6 +7136,174 @@ except RuntimeError as error:
 ",
                 c"run_feature.py",
                 c"run_feature",
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn python_state_bound_overlays_tabs_and_labels_stay_live() -> PyResult<()> {
+        Python::attach(|py| {
+            install_sui_module(py)?;
+            PyModule::from_code(
+                py,
+                c"
+import sinomo_ui as sui
+
+def names(snapshot, role=None):
+    return [node.name for node in snapshot.find(role=role) if node.name]
+
+dialog_open = sui.State(False)
+dismissed = []
+tab = sui.State(0)
+tab_changes = []
+popover_open = sui.State(False)
+label = sui.State('Save')
+
+app = sui.App()
+app.window(sui.Window('Live').root(sui.column([
+    sui.button(label),
+    sui.checkbox(label),
+    sui.tabs(
+        'Sections',
+        ['Design', 'Inspect'],
+        selected=tab,
+        panels=[sui.label('Design body'), sui.label('Inspect body')],
+        on_change=lambda index, name: tab_changes.append((index, name)),
+    ),
+    sui.popover('Details', sui.button('More'), sui.label('Popover body'), open=popover_open),
+    sui.dialog(
+        'Confirm',
+        sui.label('Dialog body'),
+        open=dialog_open,
+        description='Apply the change?',
+        actions=[sui.button('Apply')],
+        on_dismiss=lambda: dismissed.append(True),
+    ),
+])))
+running = app.start()
+
+snapshot = running.render()
+assert not snapshot.find(role='dialog')
+assert snapshot.find(text='Design body')
+assert not snapshot.find(text='Popover body')
+
+# State changes after construction reach the widgets.
+popover_open.set(True)
+tab.set(1)
+label.set('Saved')
+running.drain()
+snapshot = running.render()
+assert snapshot.find(text='Popover body'), 'popover should open from state'
+assert snapshot.find(text='Inspect body'), 'tabs should follow selected state'
+assert snapshot.find(role='tabs')[0].value == 'Inspect'
+assert names(snapshot, 'button').count('Saved') == 1, names(snapshot, 'button')
+assert names(snapshot, 'checkbox') == ['Saved'], names(snapshot, 'checkbox')
+
+# Picking a tab writes the state back as an int and reports the change.
+running.press(snapshot.find(role='tabs')[0], 'ArrowLeft')
+running.drain()
+assert tab.get() == 0 and type(tab.get()) is int, tab.get()
+assert tab_changes == [(0, 'Design')], tab_changes
+
+# The dialog opens from state, and dismissing it clears the state and
+# calls on_dismiss.
+popover_open.set(False)
+dialog_open.set(True)
+running.drain()
+snapshot = running.render()
+dialog = snapshot.find(role='dialog')
+assert dialog, 'dialog should open from state'
+assert 'Apply' in names(snapshot, 'button')
+running.press(dialog[0], 'Escape')
+running.drain()
+assert dialog_open.get() is False
+assert dismissed == [True]
+assert not running.render().find(role='dialog')
+
+try:
+    sui.tabs('Bad', ['One', 'Two'], panels=[sui.label('Only one')])
+except ValueError as error:
+    assert 'one panel per tab' in str(error)
+else:
+    raise AssertionError('mismatched tab panels accepted')
+",
+                c"state_bound.py",
+                c"state_bound",
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn python_callback_exceptions_reach_the_handler_and_exits_propagate() -> PyResult<()> {
+        Python::attach(|py| {
+            install_sui_module(py)?;
+            PyModule::from_code(
+                py,
+                c"
+import sinomo_ui as sui
+
+# The handler is process-wide and other tests may raise concurrently, so
+# only exceptions tagged by this test are checked.
+seen = []
+def handler(error):
+    if 'phase1-probe' in str(error):
+        seen.append(error)
+
+previous = sui.set_exception_handler(handler)
+try:
+    try:
+        sui.set_exception_handler(42)
+    except TypeError:
+        pass
+    else:
+        raise AssertionError('non-callable handler accepted')
+
+    def fail():
+        raise ValueError('phase1-probe press')
+
+    def interrupt():
+        raise KeyboardInterrupt
+
+    app = sui.App()
+    app.window(sui.Window('Errors').root(sui.column([
+        sui.button('Fail', on_press=fail),
+        sui.button('Stop', on_press=interrupt),
+    ])))
+    running = app.start()
+    snapshot = running.render()
+
+    running.click(snapshot.get_one(role='button', name='Fail'))
+    assert len(seen) == 1 and isinstance(seen[0], ValueError), seen
+    assert seen[0].__traceback__ is not None
+
+    def failing_task():
+        raise RuntimeError('phase1-probe posted')
+    running.ui_handle().post(failing_task)
+    running.drain()
+    assert isinstance(seen[-1], RuntimeError), seen
+
+    state = sui.State('a')
+    def failing_watch(value):
+        raise LookupError('phase1-probe watch')
+    subscription = state.watch(failing_watch)
+    state.set('b')
+    assert isinstance(seen[-1], LookupError), seen
+    subscription.unsubscribe()
+
+    try:
+        running.click(snapshot.get_one(role='button', name='Stop'))
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError('KeyboardInterrupt was swallowed')
+    assert not running.ui_handle().request_exit()
+finally:
+    assert sui.set_exception_handler(previous) is handler
+",
+                c"callback_errors.py",
+                c"callback_errors",
             )?;
             Ok(())
         })

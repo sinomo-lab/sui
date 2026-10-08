@@ -17,6 +17,34 @@ Versioning, with the usual expectation that the API may change during the
   always refer to classes.
 - Built wheels against the stable CPython ABI (`abi3`) for Python 3.10 and
   newer, so one wheel per platform covers every supported interpreter.
+- Reported exceptions raised in callbacks with their full traceback through
+  `sys.excepthook`, or a handler installed with `set_exception_handler`.
+  Previously most were discarded silently.
+- Made Ctrl+C stop `App.run()` with `KeyboardInterrupt`. A callback raising
+  `KeyboardInterrupt` or `SystemExit` now stops the app, and `run()` or the
+  driving `RunningApp` method re-raises it. Added `UiHandle.request_exit()`.
+- Kept `int` values as `int` in `State`; selection widgets write their index
+  back as an `int`.
+- Made `EventContext.request_paint()` callable without a rectangle, as
+  documented; it previously failed and the error was hidden.
+
+### Python and JavaScript
+
+- Made state-bound `dialog` and `popover` open states follow later changes,
+  and write user dismissal back. `dialog` gained `description`, `modal`,
+  `dismiss_on_scrim`, `max_width`, `actions`, and `on_dismiss`; `popover`
+  gained `on_open_change`.
+- Gave `tabs` content panels, an `on_change` callback, and a selection that
+  follows its bound state.
+- Made state-bound labels of buttons, checkboxes, switches, and radio buttons
+  update in place.
+
+### Rust
+
+- Added `UiHandle::request_exit` and `CommandSender::request_exit` to end the
+  platform event loop from application code on any thread.
+- Added `Tabs::selected_when`, and `label_when` to `Button`, `Checkbox`,
+  `Switch`, and `RadioButton`.
 
 ## [0.4.1] - 2026-10-04
 

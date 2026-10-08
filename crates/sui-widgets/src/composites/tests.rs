@@ -9498,3 +9498,124 @@ fn inline_dialog_lays_out_at_its_content_size() {
     );
     assert!(after.y() >= dialog.max_y());
 }
+
+#[test]
+fn tabs_follow_selected_when_until_selected_replaces_it() {
+    let current = std::rc::Rc::new(std::cell::Cell::new(1));
+    let reader = std::rc::Rc::clone(&current);
+    let mut tabs = Tabs::new("Live tabs")
+        .tab("Design", crate::Label::new("Design"))
+        .tab("Inspect", crate::Label::new("Inspect"))
+        .tab("Export", crate::Label::new("Export"))
+        .selected_when(move || Some(reader.get()));
+    assert_eq!(tabs.selected_index(), Some(1));
+
+    current.set(2);
+    tabs.sync_selected_reader();
+    assert_eq!(tabs.selected_index(), Some(2));
+
+    // An out-of-range index selects the last tab.
+    current.set(9);
+    tabs.sync_selected_reader();
+    assert_eq!(tabs.selected_index(), Some(2));
+
+    let mut tabs = tabs.selected(0);
+    current.set(1);
+    tabs.sync_selected_reader();
+    assert_eq!(tabs.selected_index(), Some(0));
+}
+
+#[test]
+fn popover_open_when_reveals_content_after_external_change() {
+    let open = std::rc::Rc::new(std::cell::Cell::new(false));
+    let reader = std::rc::Rc::clone(&open);
+    let (mut runtime, window_id) = build_runtime(
+        Popover::new(
+            "Details",
+            crate::Button::new("More"),
+            crate::Label::new("Popover body"),
+        )
+        .open_when(move || reader.get()),
+    );
+    assert!(!popover_body_is_laid_out(
+        &runtime.render(window_id).unwrap()
+    ));
+
+    open.set(true);
+    runtime
+        .handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(640.0, 480.0))),
+        )
+        .unwrap();
+    assert!(popover_body_is_laid_out(
+        &runtime.render(window_id).unwrap()
+    ));
+}
+
+/// The content must be laid out, not only present in the tree.
+fn popover_body_is_laid_out(output: &RenderOutput) -> bool {
+    output
+        .semantics
+        .iter()
+        .any(|node| node.name.as_deref() == Some("Popover body") && node.bounds.height() > 0.0)
+}
+
+#[test]
+fn popover_open_from_reveals_content_after_external_change() {
+    let open = Signal::named("popover_body_open", false);
+    let (mut runtime, window_id) = build_runtime(
+        Popover::new(
+            "Details",
+            crate::Button::new("More"),
+            crate::Label::new("Popover body"),
+        )
+        .open_from(open.clone()),
+    );
+    runtime
+        .handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(640.0, 480.0))),
+        )
+        .unwrap();
+    assert!(!popover_body_is_laid_out(
+        &runtime.render(window_id).unwrap()
+    ));
+
+    assert!(open.set(true));
+    assert!(popover_body_is_laid_out(
+        &runtime.render(window_id).unwrap()
+    ));
+}
+
+#[test]
+fn popover_open_when_reveals_content_on_a_scoped_relayout() {
+    let open = std::rc::Rc::new(std::cell::Cell::new(false));
+    let reader = std::rc::Rc::clone(&open);
+    let trigger_text = Signal::named("popover_trigger_text", String::from("More"));
+    let (mut runtime, window_id) = build_runtime(
+        Popover::new(
+            "Details",
+            crate::Label::new("More").text_from(trigger_text.clone()),
+            crate::Label::new("Popover body"),
+        )
+        .open_when(move || reader.get()),
+    );
+    runtime
+        .handle_event(
+            window_id,
+            Event::Window(WindowEvent::Resized(Size::new(640.0, 480.0))),
+        )
+        .unwrap();
+    assert!(!popover_body_is_laid_out(
+        &runtime.render(window_id).unwrap()
+    ));
+
+    // Only the trigger is invalidated; the popover re-reads its open state
+    // while re-measuring as the trigger's ancestor.
+    open.set(true);
+    assert!(trigger_text.set(String::from("More options")));
+    assert!(popover_body_is_laid_out(
+        &runtime.render(window_id).unwrap()
+    ));
+}

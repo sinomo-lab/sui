@@ -341,6 +341,84 @@ pub(crate) fn typescript_exports(source: &str) -> BTreeSet<(String, String)> {
     exports
 }
 
+/// Index the parameters of PyO3 bindings that do not accept `None`, keyed by
+/// Python name: `function` for `#[pyfunction]`s and `Class.method` (or
+/// `Class.__new__`) for `#[pymethods]`. A parameter accepts `None` only when
+/// its Rust type is `Option<_>`, whatever its default in `#[pyo3(signature)]`.
+pub(crate) fn python_non_nullable_parameters(
+    source: &str,
+) -> Result<BTreeMap<String, BTreeSet<String>>, String> {
+    fn non_nullable(signature: &syn::Signature) -> BTreeSet<String> {
+        signature
+            .inputs
+            .iter()
+            .filter_map(|input| {
+                let syn::FnArg::Typed(input) = input else {
+                    return None;
+                };
+                let syn::Pat::Ident(name) = input.pat.as_ref() else {
+                    return None;
+                };
+                let optional = matches!(
+                    input.ty.as_ref(),
+                    syn::Type::Path(ty)
+                        if ty.path.segments.last().is_some_and(|part| part.ident == "Option")
+                );
+                (!optional).then(|| name.ident.to_string())
+            })
+            .collect()
+    }
+
+    let parsed = syn::parse_file(source).map_err(|e| e.to_string())?;
+    let classes = parsed
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Struct(value) => attribute_name(&value.attrs, "pyclass", "name")
+                .map(|export| (value.ident.to_string(), export)),
+            _ => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut result = BTreeMap::new();
+    for item in &parsed.items {
+        match item {
+            Item::Fn(value) => {
+                if let Some(name) = attribute_name(&value.attrs, "pyfunction", "name") {
+                    result.insert(name, non_nullable(&value.sig));
+                }
+            }
+            Item::Impl(value)
+                if value.trait_.is_none()
+                    && value
+                        .attrs
+                        .iter()
+                        .any(|attr| attr.path().is_ident("pymethods")) =>
+            {
+                let syn::Type::Path(owner) = value.self_ty.as_ref() else {
+                    continue;
+                };
+                let owner = owner.path.segments.last().unwrap().ident.to_string();
+                let Some(owner) = classes.get(&owner) else {
+                    continue;
+                };
+                for item in &value.items {
+                    let syn::ImplItem::Fn(method) = item else {
+                        continue;
+                    };
+                    let name = if method.attrs.iter().any(|attr| attr.path().is_ident("new")) {
+                        "__new__".to_string()
+                    } else {
+                        method.sig.ident.to_string()
+                    };
+                    result.insert(format!("{owner}.{name}"), non_nullable(&method.sig));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(result)
+}
+
 fn attribute_name(attrs: &[syn::Attribute], attribute: &str, key: &str) -> Option<String> {
     for attr in attrs.iter().filter(|attr| attr.path().is_ident(attribute)) {
         let entries = attr

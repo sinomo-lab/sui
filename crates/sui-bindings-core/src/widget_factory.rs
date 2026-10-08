@@ -27,7 +27,7 @@ use crate::values::{
     BindingSegmentedControlItem, BindingStatusBarSegment, BindingTableColumn, BindingTableRow,
     BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem,
 };
-use crate::widget_descriptor::{BindingWidget, BindingWidgetKind};
+use crate::widget_descriptor::{BindingDialogOptions, BindingWidget, BindingWidgetKind};
 use std::sync::Arc;
 use sui::Alignment;
 use sui::AspectRatioFit;
@@ -305,7 +305,37 @@ impl BindingWidget {
             name: name.into(),
             tabs: tabs.into_iter().map(Into::into).collect(),
             selected,
+            panels: Vec::new(),
+            action: None,
         })
+    }
+
+    /// Tabs with one content panel per label. A state-bound `selected`
+    /// follows the state and is updated when the user picks a tab. Fails
+    /// when `panels` is neither empty nor one per tab.
+    pub fn tabs_with_panels(
+        name: impl Into<BindingText>,
+        tabs: impl IntoIterator<Item = impl Into<String>>,
+        selected: Option<BindingNumber>,
+        panels: impl IntoIterator<Item = BindingWidget>,
+        action: Option<BindingSelectAction>,
+    ) -> Result<Self, String> {
+        let tabs = tabs.into_iter().map(Into::into).collect::<Vec<String>>();
+        let panels = panels.into_iter().collect::<Vec<_>>();
+        if !panels.is_empty() && panels.len() != tabs.len() {
+            return Err(format!(
+                "tabs has {} labels but {} panels; pass one panel per tab",
+                tabs.len(),
+                panels.len()
+            ));
+        }
+        Ok(Self::from_kind(BindingWidgetKind::Tabs {
+            name: name.into(),
+            tabs,
+            selected,
+            panels,
+            action,
+        }))
     }
 
     pub fn dialog(
@@ -313,10 +343,22 @@ impl BindingWidget {
         content: BindingWidget,
         shown: impl Into<BindingBool>,
     ) -> Self {
+        Self::dialog_with_options(title, content, shown, BindingDialogOptions::default())
+    }
+
+    /// A dialog whose `shown` state follows a bound state and is set to
+    /// `false` when the user dismisses it.
+    pub fn dialog_with_options(
+        title: impl Into<BindingText>,
+        content: BindingWidget,
+        shown: impl Into<BindingBool>,
+        options: BindingDialogOptions,
+    ) -> Self {
         Self::from_kind(BindingWidgetKind::Dialog {
             title: title.into(),
             content,
             shown: shown.into(),
+            options,
         })
     }
 
@@ -1632,13 +1674,26 @@ impl BindingWidget {
         name: impl Into<String>,
         trigger: BindingWidget,
         content: BindingWidget,
-        open: bool,
+        open: impl Into<BindingBool>,
+    ) -> Self {
+        Self::popover_with_open_change(name, trigger, content, open, None)
+    }
+
+    /// A popover whose open state follows a bound state. The state and
+    /// `action` are updated when the user opens or dismisses the popover.
+    pub fn popover_with_open_change(
+        name: impl Into<String>,
+        trigger: BindingWidget,
+        content: BindingWidget,
+        open: impl Into<BindingBool>,
+        action: Option<BindingBoolAction>,
     ) -> Self {
         Self::from_kind(BindingWidgetKind::Popover {
             name: name.into(),
             trigger,
             content,
-            open,
+            open: open.into(),
+            action,
         })
     }
 

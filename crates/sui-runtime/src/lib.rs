@@ -184,6 +184,12 @@ impl Runtime {
         self.command_sender.has_pending()
     }
 
+    /// Whether application code asked the platform loop to exit through
+    /// [`CommandSender::request_exit`].
+    pub fn exit_requested(&self) -> bool {
+        self.command_sender.exit_requested()
+    }
+
     /// Drain observable changes into targeted widget invalidations without
     /// delivering an application-level external wake event.
     ///
@@ -4876,7 +4882,12 @@ impl WindowState {
     }
 
     fn current_dpi_info(&self) -> DpiInfo {
-        let viewport = self.viewport.or(self.viewport_hint).unwrap_or(Size::ZERO);
+        // The hint is the window's size, which the next layout pass lays the
+        // root out to. Between a resize and that pass `viewport` still holds
+        // the previous size, and the pass itself must already see the new one:
+        // overlays bounded by the viewport would otherwise measure against the
+        // stale size and keep it until something else re-measured them.
+        let viewport = self.viewport_hint.or(self.viewport).unwrap_or(Size::ZERO);
         self.dpi_info_for_viewport(viewport)
     }
 

@@ -612,6 +612,8 @@ end
 descriptor ConstraintCase
   core_descriptor BindingConstraintCase
   python class
+  # Python takes the constraints as keyword-only arguments.
+  python_stub manual
   js class
   api class
     constructor(child: Widget, minWidth?: number, maxWidth?: number, minHeight?: number, maxHeight?: number, minAspectRatio?: number, maxAspectRatio?: number, orientation?: "any" | "portrait" | "landscape");
@@ -1032,7 +1034,7 @@ widget Tabs
   core_constructor tabs
   python function py_tabs
   js function js_tabs
-  api function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean): Widget;
+  api function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, panels?: Widget[], onChange?: (index: int, label: string) => void): Widget;
   docs Tabs
 end
 
@@ -1041,7 +1043,7 @@ widget Dialog
   core_constructor dialog
   python function py_dialog
   js function js_dialog
-  api function Dialog(title: State | BindingValue, content: Widget, open?: State | boolean | number): Widget;
+  api function Dialog(title: State | BindingValue, content: Widget, open?: State | boolean | number, description?: string, modal?: boolean, dismissOnScrim?: boolean, maxWidth?: number, actions?: Widget[], onDismiss?: () => void): Widget;
   docs Dialog
 end
 
@@ -1177,7 +1179,7 @@ widget Popover
   core_constructor popover
   python function py_popover
   js function js_popover
-  api function Popover(name: string, trigger: Widget, content: Widget, open?: boolean): Widget;
+  api function Popover(name: string, trigger: Widget, content: Widget, open?: State | boolean | number, onOpenChange?: (open: boolean) => void): Widget;
   docs Popover
 end
 
@@ -1325,7 +1327,7 @@ widget FixedPaneSplit
   core_constructor fixed_pane_split
   python function py_fixed_pane_split
   js function js_fixed_pane_split
-  api function FixedPaneSplit(first: Widget, divider: Widget, second: Widget, axis?: Axis, fixedPane?: "first" | "second", fixedExtent?: number, dividerExtent?: number, fallbackFlexibleExtent?: number): Widget;
+  api function FixedPaneSplit(first: Widget, divider: Widget, second: Widget, axis?: Axis, fixedPane? as fixed: "first" | "second", fixedExtent?: number, dividerExtent?: number, fallbackFlexibleExtent?: number): Widget;
   docs FixedPaneSplit
   compat
 end

@@ -1431,6 +1431,7 @@ pub struct Button {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    label_reader: Option<Box<dyn Fn() -> String>>,
     semantic_name: Option<String>,
     semantic_description: Option<String>,
     appearance: ButtonAppearance,
@@ -1470,6 +1471,7 @@ impl Button {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            label_reader: None,
             semantic_name: None,
             semantic_description: None,
             appearance: ButtonAppearance::Tonal,
@@ -1952,11 +1954,33 @@ impl Button {
     }
 }
 
+impl Button {
+    /// Read the label each time the button lays out or handles an event.
+    pub fn label_when<F>(mut self, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.label = reader();
+        self.label_reader = Some(Box::new(reader));
+        self
+    }
+
+    fn sync_label_reader(&mut self) {
+        if let Some(reader) = &self.label_reader {
+            let label = reader();
+            if label != self.label {
+                self.label = label;
+            }
+        }
+    }
+}
+
 impl Widget for Button {
     fn supports_output_reuse(&self) -> bool {
         self.theme_reader.is_none() && !self.enabled.is_live()
     }
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_label_reader();
         let enabled = self.is_enabled();
         let theme = &self.theme;
         let reader = &self.theme_reader;
@@ -1972,6 +1996,7 @@ impl Widget for Button {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_label_reader();
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let min_size = self.resolved_min_size();
@@ -2107,6 +2132,7 @@ pub struct Checkbox {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    label_reader: Option<Box<dyn Fn() -> String>>,
     enabled: Binding<bool>,
     semantic_name: Option<String>,
     checked: bool,
@@ -2232,6 +2258,7 @@ impl Checkbox {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            label_reader: None,
             enabled: Binding::new(true),
             semantic_name: None,
             checked: false,
@@ -2530,8 +2557,30 @@ impl Checkbox {
     }
 }
 
+impl Checkbox {
+    /// Read the label each time the checkbox lays out or handles an event.
+    pub fn label_when<F>(mut self, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.label = reader();
+        self.label_reader = Some(Box::new(reader));
+        self
+    }
+
+    fn sync_label_reader(&mut self) {
+        if let Some(reader) = &self.label_reader {
+            let label = reader();
+            if label != self.label {
+                self.label = label;
+            }
+        }
+    }
+}
+
 impl Widget for Checkbox {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_label_reader();
         if self.sync_checked() {
             ctx.request_paint();
             ctx.request_semantics();
@@ -2639,6 +2688,7 @@ impl Widget for Checkbox {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_label_reader();
         let theme = self.resolved_theme();
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
@@ -2770,6 +2820,7 @@ pub struct Switch {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    label_reader: Option<Box<dyn Fn() -> String>>,
     enabled: Binding<bool>,
     semantic_name: Option<String>,
     checked: bool,
@@ -2809,6 +2860,7 @@ impl Switch {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            label_reader: None,
             enabled: Binding::new(true),
             semantic_name: None,
             checked: false,
@@ -3211,8 +3263,30 @@ impl Switch {
     }
 }
 
+impl Switch {
+    /// Read the label each time the switch lays out or handles an event.
+    pub fn label_when<F>(mut self, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.label = reader();
+        self.label_reader = Some(Box::new(reader));
+        self
+    }
+
+    fn sync_label_reader(&mut self) {
+        if let Some(reader) = &self.label_reader {
+            let label = reader();
+            if label != self.label {
+                self.label = label;
+            }
+        }
+    }
+}
+
 impl Widget for Switch {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_label_reader();
         if self.sync_checked() {
             ctx.request_paint();
             ctx.request_semantics();
@@ -3320,6 +3394,7 @@ impl Widget for Switch {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_label_reader();
         let theme = self.resolved_theme();
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
@@ -3510,6 +3585,7 @@ pub struct RadioButton {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
     label: String,
+    label_reader: Option<Box<dyn Fn() -> String>>,
     semantic_name: Option<String>,
     enabled: Binding<bool>,
     checked: bool,
@@ -3539,6 +3615,7 @@ impl RadioButton {
             theme: Box::new(DefaultTheme::default()),
             theme_reader: None,
             label: label.into(),
+            label_reader: None,
             semantic_name: None,
             enabled: Binding::new(true),
             checked: false,
@@ -3864,8 +3941,30 @@ impl RadioButton {
     }
 }
 
+impl RadioButton {
+    /// Read the label each time the radio button lays out or handles an event.
+    pub fn label_when<F>(mut self, reader: F) -> Self
+    where
+        F: Fn() -> String + 'static,
+    {
+        self.label = reader();
+        self.label_reader = Some(Box::new(reader));
+        self
+    }
+
+    fn sync_label_reader(&mut self) {
+        if let Some(reader) = &self.label_reader {
+            let label = reader();
+            if label != self.label {
+                self.label = label;
+            }
+        }
+    }
+}
+
 impl Widget for RadioButton {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_label_reader();
         if self.sync_checked() {
             ctx.request_paint();
             ctx.request_semantics();
@@ -3960,6 +4059,7 @@ impl Widget for RadioButton {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.sync_label_reader();
         let text_style = self.resolved_text_style();
         let padding = self.resolved_padding();
         let indicator_size = self.resolved_indicator_size();
