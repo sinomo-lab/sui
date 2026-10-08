@@ -21,17 +21,20 @@ use crate::interop::{
 use crate::layout::{
     BindingConstraintCase, BindingMasterDetailState, BindingResponsiveSidebarState,
 };
+use crate::scrolling::BindingScrollController;
 use crate::state::BindingState;
 use crate::values::{
     BindingBool, BindingColorPaletteSwatch, BindingLayerListItem, BindingMenuItem, BindingNumber,
     BindingSegmentedControlItem, BindingStatusBarSegment, BindingTableColumn, BindingTableRow,
     BindingText, BindingTextSpan, BindingToolPaletteItem, BindingTreeItem,
 };
+use crate::widget_descriptor::BindingWidgetBuilder;
 use crate::widget_descriptor::{
     BindingButtonOptions, BindingDialogOptions, BindingFlexOptions, BindingTextFieldOptions,
     BindingWidget, BindingWidgetKind,
 };
 use std::sync::Arc;
+use std::sync::Mutex;
 use sui::Alignment;
 use sui::AspectRatioFit;
 use sui::Axis;
@@ -1076,11 +1079,22 @@ impl BindingWidget {
         padding: Option<Insets>,
         spacing: Option<f32>,
     ) -> Self {
+        Self::virtual_scroll_view_with_controller(children, name, padding, spacing, None)
+    }
+
+    pub fn virtual_scroll_view_with_controller(
+        children: impl IntoIterator<Item = BindingWidget>,
+        name: Option<String>,
+        padding: Option<Insets>,
+        spacing: Option<f32>,
+        controller: Option<BindingScrollController>,
+    ) -> Self {
         Self::from_kind(BindingWidgetKind::VirtualScrollView {
             children: children.into_iter().collect(),
             name,
             padding,
             spacing,
+            controller,
         })
     }
 
@@ -1833,7 +1847,21 @@ impl BindingWidget {
         axes: BindingScrollAxes,
         name: Option<String>,
     ) -> Self {
-        Self::from_kind(BindingWidgetKind::ScrollView { child, axes, name })
+        Self::scroll_view_with_controller(child, axes, name, None)
+    }
+
+    pub fn scroll_view_with_controller(
+        child: BindingWidget,
+        axes: BindingScrollAxes,
+        name: Option<String>,
+        controller: Option<BindingScrollController>,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::ScrollView {
+            child,
+            axes,
+            name,
+            controller,
+        })
     }
 
     pub fn column(children: impl IntoIterator<Item = BindingWidget>, gap: f32) -> Self {
@@ -1873,6 +1901,19 @@ impl BindingWidget {
         Self::from_kind(BindingWidgetKind::Spacer)
     }
 
+    /// A subtree that `build` creates, and creates again on the UI thread
+    /// whenever one of `states` changes.
+    pub fn rebuild_on_change(
+        states: impl IntoIterator<Item = BindingState>,
+        build: BindingWidgetBuilder,
+    ) -> Self {
+        Self::from_kind(BindingWidgetKind::RebuildOnChange {
+            states: states.into_iter().collect(),
+            build,
+            ui_handle: Arc::new(Mutex::new(None)),
+        })
+    }
+
     pub fn foreign(callbacks: impl ForeignWidgetCallbacks) -> Self {
         Self::foreign_arc(Arc::new(callbacks))
     }
@@ -1895,7 +1936,15 @@ impl BindingWidget {
         Self {
             inner: Arc::new(kind),
             enabled: None,
+            semantic_name: None,
         }
+    }
+
+    /// Give a control an accessible name that differs from its visible
+    /// text. Widgets without a derived name ignore it.
+    pub fn with_semantic_name(mut self, name: impl Into<String>) -> Self {
+        self.semantic_name = Some(name.into());
+        self
     }
 
     /// Enable or disable an interactive control. A state-bound value

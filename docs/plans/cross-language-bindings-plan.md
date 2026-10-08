@@ -76,7 +76,7 @@ here so documentation coverage remains auditable:
   `TableColumn`, `TableRow`, `TreeItem`, `LayerListItem`, `MenuItem`,
   `ToolPaletteItem`, `ColorPaletteSwatch`, `BrushPreviewSpec`, and
   `FloatingStackWindow`, `RichDocument`, `RichDocumentUpdate`, `ConstraintCase`,
-  `ResponsiveSidebarState`, `MasterDetailState`, `NotificationCenter`,
+  `ResponsiveSidebarState`, `MasterDetailState`, `ScrollController`, `NotificationCenter`,
   `VirtualListItem`, `VirtualListModel`, `CanvasViewport`, `CanvasStroke`,
   `CanvasShape`, `PixelCanvasState`, `PixelCanvasExport`, `DragScope`,
   `FloatingView`, `FloatingViewSnapshot`, and `FloatingWorkspaceState`, plus the
@@ -104,7 +104,7 @@ here so documentation coverage remains auditable:
   `ConstraintView`, `ResponsiveSidebar`, `MasterDetail`, `SizedBox`, `Stack`,
   `SemanticRegion`, `FormRow`, `FieldGroup`,
   `FormSection`, `PanelSection`, `Dock`, `FixedPaneSplit`,
-  `MeasuredBottomDock`, `SplitView`, `SwitchView`, `TrailingSlotRow`,
+  `MeasuredBottomDock`, `SplitView`, `SwitchView`, `RebuildOnChange`, `TrailingSlotRow`,
   `VirtualScrollView`, and `VirtualList`.
 - Interop: `ExternalSurface`.
 
@@ -121,7 +121,8 @@ binding, a manual portable wrapper, or a documented host-language equivalent.
 `TextSurface` is represented by `TextArea`, while `VirtualTable` is currently
 represented by `Table`; arbitrary foreign row renderers and true virtual-table
 parity remain unfinished.
-`RebuildOnChange` maps to retained `SwitchView`, `RebuildOnConstraints` maps to
+`RebuildOnChange` is bound directly and rebuilds a subtree from a host-language
+callback when watched states change. `RebuildOnConstraints` maps to
 `ConstraintView`, and standalone `ScrollBar` behavior is owned by `ScrollView`
 in the host-language APIs.
 

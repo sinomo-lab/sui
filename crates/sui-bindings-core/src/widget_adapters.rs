@@ -1,4 +1,5 @@
 use crate::interop::ExternalTextureDescriptor;
+use crate::scrolling::BindingScrollController;
 use crate::tasks::UiTaskQueue;
 use crate::theme::BindingTheme;
 use crate::values::{BindingBool, BindingNumber, BindingText};
@@ -22,6 +23,7 @@ use sui::ProgressBar;
 use sui::RadioButton;
 use sui::Rect;
 use sui::RegisteredImage;
+use sui::ScrollState;
 use sui::SemanticsCtx;
 use sui::SemanticsNode;
 use sui::SemanticsRole;
@@ -942,6 +944,115 @@ impl Widget for BindingUiTaskRootWidget {
 
     fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
         self.inner.arrange(ctx, bounds);
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.inner.paint(ctx);
+    }
+
+    fn semantics(&self, ctx: &mut SemanticsCtx) {
+        self.inner.semantics(ctx);
+    }
+
+    fn accepts_focus(&self) -> bool {
+        self.inner.accepts_focus()
+    }
+
+    fn focus_changed(&mut self, ctx: &mut EventCtx, focused: bool) {
+        self.inner.focus_changed(ctx, focused);
+    }
+
+    fn visit_children(&self, visitor: &mut dyn WidgetPodVisitor) {
+        self.inner.visit_children(visitor);
+    }
+
+    fn visit_children_mut(&mut self, visitor: &mut dyn WidgetPodMutVisitor) {
+        self.inner.visit_children_mut(visitor);
+    }
+}
+
+/// A scroll view driven by a [`BindingScrollController`]: pending requests
+/// are applied before layout and events, and metrics are published after
+/// arrange.
+pub(crate) struct BindingScrollControlledWidget {
+    pub(crate) inner: BindingRuntimeWidget,
+    pub(crate) state: ScrollState,
+    pub(crate) controller: BindingScrollController,
+}
+
+impl Widget for BindingScrollControlledWidget {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.controller.apply_pending(&self.state);
+        self.inner.event(ctx, event);
+    }
+
+    fn command(&mut self, ctx: &mut EventCtx, command: &sui::Command<'_>) {
+        self.inner.command(ctx, command);
+    }
+
+    fn diagnostics(&self, ctx: &mut sui::WidgetDiagnosticsCtx) {
+        self.inner.diagnostics(ctx);
+    }
+
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.controller.apply_pending(&self.state);
+        self.inner.measure_size(ctx, constraints)
+    }
+
+    fn measure_axis(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        constraints: Constraints,
+        axis: sui::Axis,
+    ) -> f32 {
+        self.inner.measure_axis(ctx, constraints, axis)
+    }
+
+    fn intrinsic_size(
+        &mut self,
+        ctx: &mut MeasureCtx,
+        axis: sui::Axis,
+        available_cross: f32,
+    ) -> sui::IntrinsicSize {
+        self.inner.intrinsic_size(ctx, axis, available_cross)
+    }
+
+    fn layer_options(&self) -> sui::LayerOptions {
+        self.inner.layer_options()
+    }
+
+    fn layer_properties(&self) -> sui::LayerProperties {
+        self.inner.layer_properties()
+    }
+
+    fn layer_properties_at(&self, frame_time: f64) -> sui::LayerProperties {
+        self.inner.layer_properties_at(frame_time)
+    }
+
+    fn stack_host_options(&self) -> Option<sui::StackHostOptions> {
+        self.inner.stack_host_options()
+    }
+
+    fn stack_surface_options(&self) -> Option<sui::StackSurfaceOptions> {
+        self.inner.stack_surface_options()
+    }
+
+    fn overlay_options(&self) -> Option<sui::OverlayOptions> {
+        self.inner.overlay_options()
+    }
+
+    fn debug_name(&self) -> &'static str {
+        self.inner.debug_name()
+    }
+
+    fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        self.controller.apply_pending(&self.state);
+        self.inner.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.inner.arrange(ctx, bounds);
+        self.controller.publish(&self.state);
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {

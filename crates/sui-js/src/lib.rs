@@ -36,15 +36,15 @@ use sui_bindings_core::{
     BindingPointerEventKind, BindingPointerKind, BindingRawMouseMotionEvent,
     BindingReactiveInvalidationTrace, BindingRenderOptions, BindingRenderSnapshot,
     BindingReorderAction, BindingResponsiveSidebarState, BindingRichDocument,
-    BindingRichDocumentUpdate, BindingRuntime, BindingScrollAxes, BindingScrollDelta,
-    BindingSegmentedControlItem, BindingSelectAction, BindingSemanticNode, BindingShader,
-    BindingSpring, BindingState, BindingStateSubscription, BindingStatusBarSegment,
+    BindingRichDocumentUpdate, BindingRuntime, BindingScrollAxes, BindingScrollController,
+    BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction, BindingSemanticNode,
+    BindingShader, BindingSpring, BindingState, BindingStateSubscription, BindingStatusBarSegment,
     BindingStringAction, BindingStringsAction, BindingTableColumn, BindingTableRow, BindingText,
     BindingTextFieldOptions, BindingTextSpan, BindingTheme, BindingToolPaletteItem,
     BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue, BindingVirtualListItem,
-    BindingVirtualListModel, BindingWidget, BindingWidgetRebuildTrace, BindingWidgetTiming,
-    BindingWindow, BindingWindowEvent, BindingWindowId, ExternalBackendHandle, ExternalSync,
-    ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
+    BindingVirtualListModel, BindingWidget, BindingWidgetBuilder, BindingWidgetRebuildTrace,
+    BindingWidgetTiming, BindingWindow, BindingWindowEvent, BindingWindowId, ExternalBackendHandle,
+    ExternalSync, ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
     ForeignArrangeCtx, ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx,
     ForeignMeasureCtx, ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
@@ -2598,6 +2598,16 @@ impl JsWidget {
         Self {
             kind: JsWidgetKind::Binding(widget),
         }
+    }
+
+    /// Apply a factory's `semanticName` argument.
+    fn with_semantic_name(self, name: Option<String>) -> Result<Self> {
+        let Some(name) = name else {
+            return Ok(self);
+        };
+        Ok(Self::from_binding(
+            self.binding_widget()?.with_semantic_name(name),
+        ))
     }
 
     /// Apply a factory's `enabled` argument: a boolean or a `State`.

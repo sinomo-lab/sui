@@ -901,6 +901,56 @@ impl PyConstraintCase {
     }
 }
 
+/// Scrolls a `scroll_view` or `virtual_scroll_view` from Python. Requests are
+/// applied on the UI thread at the view's next layout; the offset and
+/// extents reflect the latest layout.
+#[pyclass(name = "ScrollController", module = "sinomo_ui", frozen, skip_from_py_object)]
+#[derive(Debug, Clone, Default)]
+pub struct PyScrollController {
+    inner: BindingScrollController,
+}
+
+#[pymethods]
+impl PyScrollController {
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            inner: BindingScrollController::new(),
+        }
+    }
+
+    #[getter]
+    pub fn offset(&self) -> PyPoint {
+        let offset = self.inner.offset();
+        sui_crate::Point::new(offset.x, offset.y).into()
+    }
+
+    #[getter]
+    pub fn max_offset(&self) -> PyPoint {
+        let offset = self.inner.max_offset();
+        sui_crate::Point::new(offset.x, offset.y).into()
+    }
+
+    #[getter]
+    pub fn viewport_size(&self) -> PySize {
+        self.inner.viewport_size().into()
+    }
+
+    #[getter]
+    pub fn content_size(&self) -> PySize {
+        self.inner.content_size().into()
+    }
+
+    #[pyo3(signature = (x=None, y=None))]
+    pub fn scroll_to(&self, x: Option<f32>, y: Option<f32>) {
+        self.inner.scroll_to(x, y);
+    }
+
+    pub fn scroll_to_item(&self, index: usize) {
+        self.inner.scroll_to_item(index);
+    }
+}
+
 #[pyclass(name = "ResponsiveSidebarState", module = "sinomo_ui", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyResponsiveSidebarState {
@@ -1500,10 +1550,13 @@ fn optional_uniform_insets(value: Option<f32>) -> Option<sui_crate::Insets> {
 }
 
 #[pyfunction(name = "label")]
-pub fn py_label(value: &Bound<'_, PyAny>) -> PyResult<PyWidget> {
-    Ok(PyWidget::from_binding(BindingWidget::label(
-        binding_text_from_py(value)?,
-    )))
+#[pyo3(signature = (value, semantic_name=None))]
+pub fn py_label(
+    value: &Bound<'_, PyAny>,
+    semantic_name: Option<String>,
+) -> PyResult<PyWidget> {
+    PyWidget::from_binding(BindingWidget::label(binding_text_from_py(value)?))
+        .with_semantic_name(semantic_name)
 }
 
 #[pyfunction(name = "button")]
@@ -1531,7 +1584,6 @@ pub fn py_button(
         tone: tone.map(py_semantic_tone).transpose()?,
         icon: icon.map(py_icon_glyph).transpose()?,
         min_width,
-        semantic_name,
         description,
     };
     let action = on_press.map(|callback| {
@@ -1549,7 +1601,8 @@ pub fn py_button(
         action,
         options,
     ))
-    .with_enabled(enabled)
+    .with_enabled(enabled)?
+    .with_semantic_name(semantic_name)
 }
 
 #[pyfunction(name = "icon")]
@@ -1643,12 +1696,13 @@ pub fn py_link(
 }
 
 #[pyfunction(name = "checkbox")]
-#[pyo3(signature = (label, checked=None, on_change=None, enabled=None))]
+#[pyo3(signature = (label, checked=None, on_change=None, enabled=None, semantic_name=None))]
 pub fn py_checkbox(
     label: &Bound<'_, PyAny>,
     checked: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
     enabled: Option<&Bound<'_, PyAny>>,
+    semantic_name: Option<String>,
 ) -> PyResult<PyWidget> {
     let checked = checked
         .map(binding_bool_from_py)
@@ -1669,16 +1723,18 @@ pub fn py_checkbox(
         checked,
         action,
     ))
-    .with_enabled(enabled)
+    .with_enabled(enabled)?
+    .with_semantic_name(semantic_name)
 }
 
 #[pyfunction(name = "switch")]
-#[pyo3(signature = (label, checked=None, on_change=None, enabled=None))]
+#[pyo3(signature = (label, checked=None, on_change=None, enabled=None, semantic_name=None))]
 pub fn py_switch(
     label: &Bound<'_, PyAny>,
     checked: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
     enabled: Option<&Bound<'_, PyAny>>,
+    semantic_name: Option<String>,
 ) -> PyResult<PyWidget> {
     let checked = checked
         .map(binding_bool_from_py)
@@ -1699,16 +1755,18 @@ pub fn py_switch(
         checked,
         action,
     ))
-    .with_enabled(enabled)
+    .with_enabled(enabled)?
+    .with_semantic_name(semantic_name)
 }
 
 #[pyfunction(name = "radio_button")]
-#[pyo3(signature = (label, checked=None, on_change=None, enabled=None))]
+#[pyo3(signature = (label, checked=None, on_change=None, enabled=None, semantic_name=None))]
 pub fn py_radio_button(
     label: &Bound<'_, PyAny>,
     checked: Option<&Bound<'_, PyAny>>,
     on_change: Option<Py<PyAny>>,
     enabled: Option<&Bound<'_, PyAny>>,
+    semantic_name: Option<String>,
 ) -> PyResult<PyWidget> {
     let checked = checked
         .map(binding_bool_from_py)
@@ -1730,7 +1788,8 @@ pub fn py_radio_button(
         checked,
         action,
     ))
-    .with_enabled(enabled)
+    .with_enabled(enabled)?
+    .with_semantic_name(semantic_name)
 }
 
 #[pyfunction(name = "radio_group")]
@@ -2623,19 +2682,23 @@ pub fn py_dock_workspace(
 }
 
 #[pyfunction(name = "virtual_scroll_view")]
-#[pyo3(signature = (children, name=None, padding=None, gap=0.0))]
+#[pyo3(signature = (children, name=None, padding=None, gap=0.0, controller=None))]
 pub fn py_virtual_scroll_view(
     children: &Bound<'_, PyAny>,
     name: Option<String>,
     padding: Option<f32>,
     gap: f32,
+    controller: Option<PyRef<'_, PyScrollController>>,
 ) -> PyResult<PyWidget> {
-    Ok(PyWidget::from_binding(BindingWidget::virtual_scroll_view(
-        extract_binding_widgets(children)?,
-        name,
-        optional_uniform_insets(padding),
-        Some(gap),
-    )))
+    Ok(PyWidget::from_binding(
+        BindingWidget::virtual_scroll_view_with_controller(
+            extract_binding_widgets(children)?,
+            name,
+            optional_uniform_insets(padding),
+            Some(gap),
+            controller.map(|controller| controller.inner.clone()),
+        ),
+    ))
 }
 
 #[pyfunction(name = "reorderable_list")]
@@ -3075,6 +3138,25 @@ pub fn py_flex_item(
     Ok(PyWidget::from_binding(BindingWidget::flex_item(
         child.binding_widget()?,
         item.to_flex_item(),
+    )))
+}
+
+#[pyfunction(name = "rebuild_on_change")]
+pub fn py_rebuild_on_change(
+    states: Vec<PyRef<'_, PyState>>,
+    build: Py<PyAny>,
+) -> PyResult<PyWidget> {
+    let builder = BindingWidgetBuilder::new(move || {
+        Python::attach(|py| {
+            build
+                .call0(py)
+                .and_then(|widget| widget.bind(py).extract::<PyRef<'_, PyWidget>>()?.binding_widget())
+                .map_err(|error| foreign_py_error(py, error))
+        })
+    });
+    Ok(PyWidget::from_binding(BindingWidget::rebuild_on_change(
+        states.iter().map(|state| state.inner.clone()),
+        builder,
     )))
 }
 
@@ -3602,16 +3684,18 @@ pub fn py_drop_target(
 }
 
 #[pyfunction(name = "scroll_view")]
-#[pyo3(signature = (child, axes="vertical", name=None))]
+#[pyo3(signature = (child, axes="vertical", name=None, controller=None))]
 pub fn py_scroll_view(
     child: PyRef<'_, PyWidget>,
     axes: &str,
     name: Option<String>,
+    controller: Option<PyRef<'_, PyScrollController>>,
 ) -> PyResult<PyWidget> {
-    Ok(PyWidget::from_binding(BindingWidget::scroll_view(
+    Ok(PyWidget::from_binding(BindingWidget::scroll_view_with_controller(
         child.binding_widget()?,
         py_scroll_axes(axes)?,
         name,
+        controller.map(|controller| controller.inner.clone()),
     )))
 }
 
@@ -4417,6 +4501,7 @@ pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_column, m)?)?;
     m.add_function(wrap_pyfunction!(py_row, m)?)?;
     m.add_function(wrap_pyfunction!(py_flex_item, m)?)?;
+    m.add_function(wrap_pyfunction!(py_rebuild_on_change, m)?)?;
     m.add_function(wrap_pyfunction!(py_spacer, m)?)?;
     m.add_function(wrap_pyfunction!(py_grid, m)?)?;
     m.add_function(wrap_pyfunction!(py_aspect_ratio, m)?)?;
@@ -4426,6 +4511,7 @@ pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_adaptive_view, m)?)?;
     m.add_class::<PyConstraintCase>()?;
     m.add_function(wrap_pyfunction!(py_constraint_view, m)?)?;
+    m.add_class::<PyScrollController>()?;
     m.add_class::<PyResponsiveSidebarState>()?;
     m.add_function(wrap_pyfunction!(py_responsive_sidebar, m)?)?;
     m.add_class::<PyMasterDetailState>()?;

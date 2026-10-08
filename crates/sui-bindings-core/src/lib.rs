@@ -21,6 +21,7 @@ mod layout;
 mod messages;
 mod paint;
 mod runtime;
+mod scrolling;
 mod shader;
 mod state;
 mod support;
@@ -168,6 +169,7 @@ pub use paint::PaintValidationError;
 pub use paint::PaintValidationErrorKind;
 pub use paint::PaintValidationResult;
 pub use runtime::BindingRuntime;
+pub use scrolling::BindingScrollController;
 pub use shader::BindingShader;
 pub use state::BindingState;
 pub use state::BindingStateSubscription;
@@ -210,6 +212,7 @@ pub use widget_descriptor::BindingFlexItemOptions;
 pub use widget_descriptor::BindingFlexOptions;
 pub use widget_descriptor::BindingTextFieldOptions;
 pub use widget_descriptor::BindingWidget;
+pub use widget_descriptor::BindingWidgetBuilder;
 
 #[cfg(test)]
 use sui::Axis;

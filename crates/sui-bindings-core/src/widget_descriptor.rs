@@ -9,6 +9,7 @@ use crate::docking::{
 };
 use crate::documents::BindingRichDocument;
 use crate::drag::BindingDragScope;
+use crate::errors::ForeignCallbackResult;
 use crate::errors::ForeignErrorSink;
 use crate::foreign_widget::ForeignWidgetCallbacks;
 use crate::graphics::{
@@ -20,6 +21,9 @@ use crate::interop::{ExternalTextureDescriptor, RendererInteropTier};
 use crate::layout::{
     BindingConstraintCase, BindingMasterDetailState, BindingResponsiveSidebarState,
 };
+use crate::scrolling::BindingScrollController;
+use crate::state::BindingState;
+use crate::tasks::BindingUiHandle;
 use crate::theme::BindingTheme;
 use crate::values::{
     BindingBool, BindingColorPaletteSwatch, BindingLayerListItem, BindingMenuItem, BindingNumber,
@@ -28,6 +32,7 @@ use crate::values::{
 };
 use std::fmt;
 use std::sync::Arc;
+use std::sync::Mutex;
 use sui::Alignment;
 use sui::AspectRatioFit;
 use sui::Axis;
@@ -52,6 +57,33 @@ use sui::SurfaceElevation;
 use sui::SurfaceRole;
 use sui::TooltipPlacement;
 
+/// Builds a widget subtree from a foreign callback on the UI thread.
+#[derive(Clone)]
+pub struct BindingWidgetBuilder {
+    callback: Arc<dyn Fn() -> ForeignCallbackResult<BindingWidget> + Send + Sync + 'static>,
+}
+
+impl BindingWidgetBuilder {
+    pub fn new(
+        callback: impl Fn() -> ForeignCallbackResult<BindingWidget> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub fn build(&self) -> ForeignCallbackResult<BindingWidget> {
+        (self.callback)()
+    }
+}
+
+impl fmt::Debug for BindingWidgetBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingWidgetBuilder")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Optional button presentation and semantics. `None` keeps
 /// `sui::Button`'s default: a neutral tonal button with no icon.
 #[derive(Debug, Clone, Default)]
@@ -60,8 +92,6 @@ pub struct BindingButtonOptions {
     pub tone: Option<SemanticTone>,
     pub icon: Option<IconGlyph>,
     pub min_width: Option<f32>,
-    /// Accessible name when it should differ from the visible label.
-    pub semantic_name: Option<String>,
     pub description: Option<String>,
 }
 
@@ -161,6 +191,9 @@ pub struct BindingWidget {
     /// Whether an interactive control accepts input; `None` keeps the
     /// control's default. Applied by controls that support disabling.
     pub(crate) enabled: Option<BindingBool>,
+    /// Accessible name overriding the one a control derives from its
+    /// visible text. Applied by controls that support it.
+    pub(crate) semantic_name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -681,6 +714,10 @@ impl fmt::Debug for BindingWidget {
                 .field("child", child)
                 .finish(),
             BindingWidgetKind::Spacer => f.debug_tuple("BindingWidget::Spacer").finish(),
+            BindingWidgetKind::RebuildOnChange { states, .. } => f
+                .debug_struct("BindingWidget::RebuildOnChange")
+                .field("states", &states.len())
+                .finish_non_exhaustive(),
             BindingWidgetKind::Foreign { children, .. } => f
                 .debug_struct("BindingWidget::Foreign")
                 .field("children", children)
@@ -1091,6 +1128,7 @@ pub(crate) enum BindingWidgetKind {
         name: Option<String>,
         padding: Option<Insets>,
         spacing: Option<f32>,
+        controller: Option<BindingScrollController>,
     },
     FloatingStack {
         windows: Vec<BindingFloatingStackWindow>,
@@ -1413,6 +1451,7 @@ pub(crate) enum BindingWidgetKind {
         child: BindingWidget,
         axes: BindingScrollAxes,
         name: Option<String>,
+        controller: Option<BindingScrollController>,
     },
     Flex {
         axis: Axis,
@@ -1428,6 +1467,15 @@ pub(crate) enum BindingWidgetKind {
     },
     /// Flexible empty space in a flex container.
     Spacer,
+    /// A subtree rebuilt by a foreign callback whenever a watched state
+    /// changes.
+    RebuildOnChange {
+        states: Vec<BindingState>,
+        build: BindingWidgetBuilder,
+        /// The UI handle bound to this widget, used to bind each rebuilt
+        /// subtree's states.
+        ui_handle: Arc<Mutex<Option<BindingUiHandle>>>,
+    },
     Foreign {
         callbacks: Arc<dyn ForeignWidgetCallbacks>,
         children: Vec<BindingWidget>,

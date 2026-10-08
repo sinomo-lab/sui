@@ -71,7 +71,7 @@ rust-widget ProgressBar bound ProgressBar
 rust-widget PropertyRow bound PropertyRow
 rust-widget RadioButton bound RadioButton
 rust-widget RadioGroup bound RadioGroup
-rust-widget RebuildOnChange equivalent SwitchView
+rust-widget RebuildOnChange bound RebuildOnChange
 rust-widget RebuildOnConstraints equivalent ConstraintView
 rust-widget ReorderableList manual-wrapper ReorderableList
 rust-widget ResponsiveSidebar manual-wrapper ResponsiveSidebar
@@ -171,7 +171,7 @@ widget Label
   core_constructor label
   python function py_label
   js function js_label
-  api function Label(value: State | BindingValue): Widget;
+  api function Label(value: State | BindingValue, semanticName?: string): Widget;
   docs Label
   compat
 end
@@ -221,7 +221,7 @@ widget Checkbox
   core_constructor checkbox
   python function py_checkbox
   js function js_checkbox
-  api function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
+  api function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number, semanticName?: string): Widget;
   docs Checkbox
   compat
 end
@@ -231,7 +231,7 @@ widget Switch
   core_constructor switch
   python function py_switch
   js function js_switch
-  api function Switch(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
+  api function Switch(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number, semanticName?: string): Widget;
   docs Switch
   compat
 end
@@ -241,7 +241,7 @@ widget RadioButton
   core_constructor radio_button
   python function py_radio_button
   js function js_radio_button
-  api function RadioButton(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
+  api function RadioButton(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number, semanticName?: string): Widget;
   docs RadioButton
   compat
 end
@@ -557,6 +557,15 @@ layout FlexItem
   docs FlexItem
 end
 
+widget RebuildOnChange
+  core_kind RebuildOnChange
+  core_constructor rebuild_on_change
+  python function py_rebuild_on_change
+  js function js_rebuild_on_change
+  api function RebuildOnChange(states: State[], build: () => Widget): Widget;
+  docs RebuildOnChange
+end
+
 layout Spacer
   core_constructor spacer
   python function py_spacer
@@ -645,6 +654,22 @@ widget ConstraintView
   api function ConstraintView(cases: ConstraintCase[], fallback: Widget): Widget;
   docs ConstraintView
   compat
+end
+
+descriptor ScrollController
+  core_descriptor BindingScrollController
+  python class
+  js class
+  api class
+    constructor();
+    readonly offset: Point;
+    readonly maxOffset: Point;
+    readonly viewportSize: Size;
+    readonly contentSize: Size;
+    scrollTo(x?: number, y?: number): void;
+    scrollToItem(index: int): void;
+  endapi
+  docs ScrollController
 end
 
 descriptor ResponsiveSidebarState
@@ -934,7 +959,7 @@ widget ScrollView
   core_constructor scroll_view
   python function py_scroll_view
   js function js_scroll_view
-  api function ScrollView(child: Widget, axes?: ScrollAxes, name?: string): Widget;
+  api function ScrollView(child: Widget, axes?: ScrollAxes, name?: string, controller?: ScrollController): Widget;
   docs ScrollView
   compat
 end
@@ -1614,7 +1639,7 @@ widget VirtualScrollView
   core_constructor virtual_scroll_view
   python function py_virtual_scroll_view
   js function js_virtual_scroll_view
-  api function VirtualScrollView(children: Widget[], name?: string, padding?: number, gap?: number): Widget;
+  api function VirtualScrollView(children: Widget[], name?: string, padding?: number, gap?: number, controller?: ScrollController): Widget;
   docs VirtualScrollView
   compat
 end

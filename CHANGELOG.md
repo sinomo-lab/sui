@@ -45,6 +45,11 @@ Versioning, with the usual expectation that the API may change during the
   `align_self`, plus `spacer`.
 - Gave `button` `appearance`, `tone`, `icon`, `min_width`, `semantic_name`,
   and `description`.
+- Added `ScrollController` to scroll a `scroll_view` or `virtual_scroll_view`
+  from code and read its offset and extents.
+- Added `rebuild_on_change(states, build)` to rebuild a subtree whenever a
+  watched state changes, and `semantic_name` on `label`, `checkbox`, `switch`,
+  and `radio_button`.
 - Gave `text_input`, `text_area`, and `password_input` `read_only`,
   `on_submit`, and `on_focus_change`. Semantic snapshots no longer report
   read-only fields as editable.

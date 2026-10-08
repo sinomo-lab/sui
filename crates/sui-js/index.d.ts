@@ -998,9 +998,13 @@ export class TableRow {
   constructor(cells: string[]);
 }
 
-export function Label(value: State | BindingValue): Widget;
+export function Label(value: State | BindingValue, semanticName?: string): Widget;
 
-export function label(value: State | BindingValue): Widget;
+export interface LabelOptions {
+  semanticName?: string;
+}
+
+export function label(value: State | BindingValue, options?: LabelOptions): Widget;
 
 export function Button(label: State | BindingValue, onPress?: () => void, enabled?: State | boolean | number, appearance?: "filled" | "tonal" | "outline" | "ghost", tone?: SemanticTone | string, icon?: IconGlyph | string, minWidth?: number, semanticName?: string, description?: string): Widget;
 
@@ -1050,32 +1054,35 @@ export interface LinkOptions {
 
 export function link(label: State | BindingValue, url: State | BindingValue, options?: LinkOptions): Widget;
 
-export function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
+export function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number, semanticName?: string): Widget;
 
 export interface CheckboxOptions {
   checked?: State | boolean | number;
   onChange?: (checked: boolean) => void;
   enabled?: State | boolean | number;
+  semanticName?: string;
 }
 
 export function checkbox(label: State | BindingValue, options?: CheckboxOptions): Widget;
 
-export function Switch(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
+export function Switch(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number, semanticName?: string): Widget;
 
 export interface SwitchOptions {
   checked?: State | boolean | number;
   onChange?: (checked: boolean) => void;
   enabled?: State | boolean | number;
+  semanticName?: string;
 }
 
 export function switchControl(label: State | BindingValue, options?: SwitchOptions): Widget;
 
-export function RadioButton(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number): Widget;
+export function RadioButton(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number, semanticName?: string): Widget;
 
 export interface RadioButtonOptions {
   checked?: State | boolean | number;
   onChange?: (checked: boolean) => void;
   enabled?: State | boolean | number;
+  semanticName?: string;
 }
 
 export function radioButton(label: State | BindingValue, options?: RadioButtonOptions): Widget;
@@ -1424,6 +1431,10 @@ export interface FlexItemOptions {
 
 export function flexItem(child: Widget, options?: FlexItemOptions): Widget;
 
+export function RebuildOnChange(states: State[], build: () => Widget): Widget;
+
+export function rebuildOnChange(states: State[], build: () => Widget): Widget;
+
 export function Spacer(): Widget;
 
 export function spacer(): Widget;
@@ -1498,6 +1509,16 @@ export class ConstraintCase {
 export function ConstraintView(cases: ConstraintCase[], fallback: Widget): Widget;
 
 export function constraintView(cases: ConstraintCase[], fallback: Widget): Widget;
+
+export class ScrollController {
+  constructor();
+  readonly offset: Point;
+  readonly maxOffset: Point;
+  readonly viewportSize: Size;
+  readonly contentSize: Size;
+  scrollTo(x?: number, y?: number): void;
+  scrollToItem(index: number): void;
+}
 
 export class ResponsiveSidebarState {
   constructor(expanded?: boolean, overlayOpen?: boolean);
@@ -1721,11 +1742,12 @@ export interface VirtualListOptions {
 
 export function virtualList(name: string, model: VirtualListModel, options?: VirtualListOptions): Widget;
 
-export function ScrollView(child: Widget, axes?: ScrollAxes, name?: string): Widget;
+export function ScrollView(child: Widget, axes?: ScrollAxes, name?: string, controller?: ScrollController): Widget;
 
 export interface ScrollViewOptions {
   axes?: ScrollAxes;
   name?: string;
+  controller?: ScrollController;
 }
 
 export function scrollView(child: Widget, options?: ScrollViewOptions): Widget;
@@ -2373,12 +2395,13 @@ export interface FloatingStackOptions {
 
 export function floatingStack(windows: FloatingStackWindow[], options?: FloatingStackOptions): Widget;
 
-export function VirtualScrollView(children: Widget[], name?: string, padding?: number, gap?: number): Widget;
+export function VirtualScrollView(children: Widget[], name?: string, padding?: number, gap?: number, controller?: ScrollController): Widget;
 
 export interface VirtualScrollViewOptions {
   name?: string;
   padding?: number;
   gap?: number;
+  controller?: ScrollController;
 }
 
 export function virtualScrollView(children: Widget[], options?: VirtualScrollViewOptions): Widget;

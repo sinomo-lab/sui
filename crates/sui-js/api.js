@@ -5,8 +5,8 @@
 
 function decorateApi(native) {
   const factories = {
-    label(value) {
-      return native.Label(value);
+    label(value, options = {}) {
+      return native.Label(value, options.semanticName);
     },
     button(label, options = {}) {
       return native.Button(label, options.onPress, options.enabled, options.appearance, options.tone, options.icon, options.minWidth, options.semanticName, options.description);
@@ -21,13 +21,13 @@ function decorateApi(native) {
       return native.Link(label, url, options.semanticName, options.enabled, options.onOpen);
     },
     checkbox(label, options = {}) {
-      return native.Checkbox(label, options.checked, options.onChange, options.enabled);
+      return native.Checkbox(label, options.checked, options.onChange, options.enabled, options.semanticName);
     },
     switchControl(label, options = {}) {
-      return native.Switch(label, options.checked, options.onChange, options.enabled);
+      return native.Switch(label, options.checked, options.onChange, options.enabled, options.semanticName);
     },
     radioButton(label, options = {}) {
-      return native.RadioButton(label, options.checked, options.onChange, options.enabled);
+      return native.RadioButton(label, options.checked, options.onChange, options.enabled, options.semanticName);
     },
     radioGroup(name, options, config = {}) {
       return native.RadioGroup(name, options, config.selected, config.onChange, config.enabled);
@@ -116,6 +116,9 @@ function decorateApi(native) {
     flexItem(child, options = {}) {
       return native.FlexItem(child, options.grow, options.shrink, options.basis, options.minWidth, options.minHeight, options.maxWidth, options.maxHeight, options.alignSelf);
     },
+    rebuildOnChange(states, build) {
+      return native.RebuildOnChange(states, build);
+    },
     spacer() {
       return native.Spacer();
     },
@@ -174,7 +177,7 @@ function decorateApi(native) {
       return native.VirtualList(name, model, options.estimatedRowHeight, options.gap, options.padding, options.rowPadding, options.overscanViewports, options.cacheCapacity, options.selectable, options.transparent, options.stickToEnd, options.overlayScrollBars, options.onChange, options.onNearStart, options.onNearEnd);
     },
     scrollView(child, options = {}) {
-      return native.ScrollView(child, options.axes, options.name);
+      return native.ScrollView(child, options.axes, options.name, options.controller);
     },
     externalSurface(texture, options = {}) {
       return native.ExternalSurface(texture, options.desiredSize, options.name);
@@ -327,7 +330,7 @@ function decorateApi(native) {
       return native.FloatingStack(windows, options.name);
     },
     virtualScrollView(children, options = {}) {
-      return native.VirtualScrollView(children, options.name, options.padding, options.gap);
+      return native.VirtualScrollView(children, options.name, options.padding, options.gap, options.controller);
     },
     reorderableList(name, children, options = {}) {
       return native.ReorderableList(name, children, options.gap, options.dragThreshold, options.previewLabel, options.onReorder);

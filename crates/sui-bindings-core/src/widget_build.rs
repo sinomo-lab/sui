@@ -1,15 +1,18 @@
 use crate::drag::binding_drag_payload_text;
 use crate::errors::{
-    ForeignCallbackError, ForeignCallbackPhase, ForeignWidgetId, enabled_widget,
+    ForeignCallbackError, ForeignCallbackPhase, ForeignWidgetId, enabled_widget, named_widget,
     text_field_options, themed_widget,
 };
 use crate::foreign_widget::ForeignWidget;
 use crate::graphics::BindingScrollAxes;
+use crate::scrolling::BindingScrollController;
+use crate::support::recover_lock;
 use crate::values::{
     BindingBool, BindingColorPaletteSwatch, BindingLayerListItem, BindingMenuItem, BindingNumber,
     BindingTableColumn, BindingTableRow, BindingText, BindingTextSpan, BindingToolPaletteItem,
     BindingTreeItem, binding_number_to_index,
 };
+use crate::widget_adapters::BindingScrollControlledWidget;
 use crate::widget_adapters::{
     BindingBusyIndicatorWidget, BindingCheckboxWidget, BindingCommandPaletteWidget,
     BindingDateTimeInputWidget, BindingExternalSurfaceWidget, BindingPasswordInputWidget,
@@ -19,6 +22,7 @@ use crate::widget_adapters::{
 };
 use crate::widget_descriptor::{BindingBuildContext, BindingWidget, BindingWidgetKind};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use sui::ActionCard;
 use sui::AdaptiveBreakpoints;
 use sui::AdaptiveClass;
@@ -91,12 +95,14 @@ use sui::PresetStrip;
 use sui::PropertyRow;
 use sui::RadioButton;
 use sui::RadioGroup;
+use sui::RebuildOnChange;
 use sui::ReorderableList;
 use sui::ResponsiveSidebar;
 use sui::ResponsiveSidebarMode;
 use sui::RichDocumentView;
 use sui::RichText;
 use sui::SafeArea;
+use sui::ScrollState;
 use sui::ScrollView;
 use sui::SectionLabel;
 use sui::SegmentedControl;
@@ -133,7 +139,24 @@ use sui::VirtualList;
 use sui::VirtualListChrome;
 use sui::VirtualListSelectionMode;
 use sui::VirtualScrollView;
+use sui::WidgetPod;
 use sui::containers::Padding as PaddingWidget;
+
+/// Attach a scroll controller to a built scroll view, if there is one.
+fn scroll_controlled(
+    view: BindingRuntimeWidget,
+    state: ScrollState,
+    controller: &Option<BindingScrollController>,
+) -> BindingRuntimeWidget {
+    match controller {
+        Some(controller) => BindingRuntimeWidget::new(BindingScrollControlledWidget {
+            inner: view,
+            state,
+            controller: controller.clone(),
+        }),
+        None => view,
+    }
+}
 
 /// A reader for a state-bound label; static labels need none.
 fn live_label(label: &BindingText) -> Option<impl Fn() -> String + 'static> {
@@ -155,6 +178,7 @@ impl BindingWidget {
                 if let Some(theme) = errors.theme.clone() {
                     label = label.text_style_when(move || theme.snapshot().body_text_style());
                 }
+                let label = named_widget!(label, self.semantic_name.as_ref());
                 BindingRuntimeWidget::new(label)
             }
             BindingWidgetKind::Button {
@@ -174,9 +198,6 @@ impl BindingWidget {
                 }
                 if let Some(min_width) = options.min_width {
                     button = button.min_width(min_width);
-                }
-                if let Some(name) = &options.semantic_name {
-                    button = button.semantic_name(name.clone());
                 }
                 if let Some(description) = &options.description {
                     button = button.description(description.clone());
@@ -198,6 +219,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let button = named_widget!(button, self.semantic_name.as_ref());
                 let button = enabled_widget!(button, self.enabled.as_ref());
                 BindingRuntimeWidget::new(themed_widget!(button, errors))
             }
@@ -330,6 +352,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let checkbox = named_widget!(checkbox, self.semantic_name.as_ref());
                 let checkbox = enabled_widget!(checkbox, self.enabled.as_ref());
                 BindingRuntimeWidget::new(BindingCheckboxWidget {
                     inner: themed_widget!(checkbox, errors),
@@ -360,6 +383,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let switch = named_widget!(switch, self.semantic_name.as_ref());
                 let switch = enabled_widget!(switch, self.enabled.as_ref());
                 BindingRuntimeWidget::new(BindingSwitchWidget {
                     inner: themed_widget!(switch, errors),
@@ -394,6 +418,7 @@ impl BindingWidget {
                         }
                     });
                 }
+                let radio = named_widget!(radio, self.semantic_name.as_ref());
                 let radio = enabled_widget!(radio, self.enabled.as_ref());
                 BindingRuntimeWidget::new(BindingRadioButtonWidget {
                     inner: themed_widget!(radio, errors),
@@ -1950,8 +1975,10 @@ impl BindingWidget {
                 name,
                 padding,
                 spacing,
+                controller,
             } => {
-                let mut view = VirtualScrollView::new();
+                let state = ScrollState::new();
+                let mut view = VirtualScrollView::new().state(state.clone());
                 if let Some(name) = name {
                     view = view.name(name.clone());
                 }
@@ -1964,7 +1991,7 @@ impl BindingWidget {
                 for child in children {
                     view = view.with_child(child.into_runtime_widget(errors.clone()));
                 }
-                BindingRuntimeWidget::new(view)
+                scroll_controlled(BindingRuntimeWidget::new(view), state, controller)
             }
             BindingWidgetKind::FloatingStack { windows, name } => {
                 let mut stack = FloatingStack::new();
@@ -3086,17 +3113,28 @@ impl BindingWidget {
                 }
                 BindingRuntimeWidget::new(themed_widget!(tab_bar, errors))
             }
-            BindingWidgetKind::ScrollView { child, axes, name } => {
+            BindingWidgetKind::ScrollView {
+                child,
+                axes,
+                name,
+                controller,
+            } => {
                 let child = child.into_runtime_widget(errors.clone());
+                let state = ScrollState::new();
                 let mut scroll_view = match axes {
                     BindingScrollAxes::Vertical => ScrollView::vertical(child),
                     BindingScrollAxes::Horizontal => ScrollView::horizontal(child),
                     BindingScrollAxes::Both => ScrollView::both(child),
-                };
+                }
+                .state(state.clone());
                 if let Some(name) = name {
                     scroll_view = scroll_view.name(name.clone());
                 }
-                BindingRuntimeWidget::new(themed_widget!(scroll_view, errors))
+                scroll_controlled(
+                    BindingRuntimeWidget::new(themed_widget!(scroll_view, errors)),
+                    state,
+                    controller,
+                )
             }
             BindingWidgetKind::Flex {
                 axis,
@@ -3127,6 +3165,51 @@ impl BindingWidget {
             }
             BindingWidgetKind::FlexItem { child, .. } => child.into_runtime_widget(errors),
             BindingWidgetKind::Spacer => BindingRuntimeWidget::new(SizedBox::new()),
+            BindingWidgetKind::RebuildOnChange {
+                states,
+                build,
+                ui_handle,
+            } => {
+                // Any watched change bumps the version, which RebuildOnChange
+                // compares on its next layout.
+                let version = Arc::new(AtomicU64::new(0));
+                let subscriptions = states
+                    .iter()
+                    .map(|state| {
+                        let version = Arc::clone(&version);
+                        state.observe(move |_| {
+                            version.fetch_add(1, Ordering::Relaxed);
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let build = build.clone();
+                let ui_handle = Arc::clone(ui_handle);
+                let errors = errors.clone();
+                BindingRuntimeWidget::new(RebuildOnChange::key_when(
+                    move || version.load(Ordering::Relaxed),
+                    move |_| {
+                        // The observers live as long as the widget's builder.
+                        let _ = &subscriptions;
+                        let child = match build.build() {
+                            Ok(widget) => {
+                                if let Some(handle) = recover_lock(&ui_handle).clone() {
+                                    widget.bind_ui_handle(&handle);
+                                }
+                                widget.into_runtime_widget(errors.clone())
+                            }
+                            Err(error) => {
+                                errors.push(ForeignCallbackError::new(
+                                    ForeignWidgetId::new(0),
+                                    ForeignCallbackPhase::Measure,
+                                    error.message,
+                                ));
+                                BindingRuntimeWidget::new(SizedBox::new())
+                            }
+                        };
+                        WidgetPod::new(child)
+                    },
+                ))
+            }
             BindingWidgetKind::Foreign {
                 callbacks,
                 children,

@@ -1,3 +1,4 @@
+use crate::support::recover_lock;
 use crate::tasks::BindingUiHandle;
 use crate::widget_descriptor::{BindingWidget, BindingWidgetKind};
 
@@ -283,8 +284,19 @@ impl BindingWidget {
                 body.bind_ui_handle(handle);
                 trailing.bind_ui_handle(handle);
             }
-            BindingWidgetKind::VirtualScrollView { children, .. }
-            | BindingWidgetKind::ReorderableList { children, .. } => {
+            BindingWidgetKind::VirtualScrollView {
+                children,
+                controller,
+                ..
+            } => {
+                if let Some(controller) = controller {
+                    controller.bind_ui_handle(handle);
+                }
+                for child in children {
+                    child.bind_ui_handle(handle);
+                }
+            }
+            BindingWidgetKind::ReorderableList { children, .. } => {
                 for child in children {
                     child.bind_ui_handle(handle);
                 }
@@ -431,9 +443,24 @@ impl BindingWidget {
                     selected.bind_ui_handle(handle);
                 }
             }
-            BindingWidgetKind::ScrollView { child, .. } => child.bind_ui_handle(handle),
+            BindingWidgetKind::ScrollView {
+                child, controller, ..
+            } => {
+                if let Some(controller) = controller {
+                    controller.bind_ui_handle(handle);
+                }
+                child.bind_ui_handle(handle);
+            }
             BindingWidgetKind::FlexItem { child, .. } => child.bind_ui_handle(handle),
             BindingWidgetKind::Spacer => {}
+            BindingWidgetKind::RebuildOnChange {
+                states, ui_handle, ..
+            } => {
+                for state in states {
+                    state.bind_ui_handle(handle.clone());
+                }
+                *recover_lock(ui_handle) = Some(handle.clone());
+            }
             BindingWidgetKind::Flex { children, .. } => {
                 for child in children {
                     child.bind_ui_handle(handle);

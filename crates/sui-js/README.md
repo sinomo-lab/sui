@@ -105,7 +105,10 @@ applications.
 Interactive controls accept `enabled`, a boolean or a `State`. `column(...)`
 and `row(...)` take `justify`, `alignItems`, and `wrap`; wrap a direct child in
 `flexItem(child, { grow: 1 })` to size it along the main axis, and use
-`spacer()` to fill the remaining space.
+`spacer()` to fill the remaining space. `rebuildOnChange(states, build)`
+rebuilds a subtree on the UI thread whenever one of `states` changes. Pass a
+`ScrollController` as `controller` to `scrollView` or `virtualScrollView` to
+scroll from code with `scrollTo` and `scrollToItem`.
 
 The portable media surface includes both `colorPicker(...)` and the compact,
 mode-selectable `simpleColorPicker(...)` (`hsl`, `hsv`, `rgb`, or `oklch`).

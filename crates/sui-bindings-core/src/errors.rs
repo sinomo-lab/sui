@@ -219,6 +219,19 @@ macro_rules! text_field_options {
     }};
 }
 
+/// Apply a binding's `semantic_name` option to a control with a
+/// `semantic_name` builder.
+macro_rules! named_widget {
+    ($widget:expr, $name:expr) => {{
+        let widget = $widget;
+        match $name {
+            Some(name) => widget.semantic_name(name.clone()),
+            None => widget,
+        }
+    }};
+}
+
 pub(crate) use enabled_widget;
+pub(crate) use named_widget;
 pub(crate) use text_field_options;
 pub(crate) use themed_widget;

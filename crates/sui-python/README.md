@@ -272,6 +272,33 @@ Widget and custom-paint callbacks run synchronously on the UI thread. Keep them
 short; perform blocking I/O or long computation elsewhere, then publish the
 result through `State` or `UiHandle`.
 
+A `ScrollController` scrolls a `scroll_view` or `virtual_scroll_view` from
+code. `scroll_to(x=..., y=...)` and `scroll_to_item(index)` are thread-safe
+requests applied at the view's next layout; `offset`, `max_offset`,
+`viewport_size`, and `content_size` report the latest layout:
+
+```python
+scroll = sui.ScrollController()
+log = sui.scroll_view(sui.column(lines), controller=scroll)
+scroll.scroll_to(y=scroll.max_offset.y)
+```
+
+Use `rebuild_on_change(states, build)` when the structure of a subtree depends
+on state, such as a list whose length changes. `build()` runs on the UI thread
+when the widget is created and again whenever one of `states` changes; its
+widgets replace the previous subtree:
+
+```python
+items = sui.State(3)
+listing = sui.rebuild_on_change(
+    [items],
+    lambda: sui.column([sui.label(f"Item {i}") for i in range(items.get())]),
+)
+```
+
+Widgets that only change their content, such as a label's text, do not need a
+rebuild; pass the `State` to the widget instead.
+
 `state.select(callable)` creates a retained derived state, and
 `state.watch(callable)` returns an explicit `StateSubscription`. Selectors
 suppress unchanged values; subscriptions can be released with `unsubscribe()`.

@@ -533,6 +533,18 @@ ts_kind = "function"
 docs = ["FlexItem"]
 
 [[item]]
+name = "RebuildOnChange"
+kind = "widget"
+core_kind = "RebuildOnChange"
+core_constructor = "rebuild_on_change"
+python_kind = "function"
+python_rust = "py_rebuild_on_change"
+js_kind = "function"
+js_rust = "js_rebuild_on_change"
+ts_kind = "function"
+docs = ["RebuildOnChange"]
+
+[[item]]
 name = "Spacer"
 kind = "layout"
 core_constructor = "spacer"
@@ -642,6 +654,15 @@ js_rust = "js_constraint_view"
 ts_kind = "function"
 docs = ["ConstraintView"]
 compat = true
+
+[[item]]
+name = "ScrollController"
+kind = "descriptor"
+core_descriptor = "BindingScrollController"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["ScrollController"]
 
 [[item]]
 name = "ResponsiveSidebarState"
@@ -2019,8 +2040,8 @@ bindings = ["RadioGroup"]
 
 [[rust_widget]]
 name = "RebuildOnChange"
-classification = "equivalent"
-bindings = ["SwitchView"]
+classification = "bound"
+bindings = ["RebuildOnChange"]
 
 [[rust_widget]]
 name = "RebuildOnConstraints"

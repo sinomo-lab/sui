@@ -1001,6 +1001,58 @@ impl JsConstraintCase {
     }
 }
 
+/// Scrolls a `scrollView` or `virtualScrollView` from JavaScript. Requests
+/// are applied on the UI thread at the view's next layout; the offset and
+/// extents reflect the latest layout.
+#[napi(js_name = "ScrollController")]
+#[derive(Clone, Default)]
+pub struct JsScrollController {
+    inner: BindingScrollController,
+}
+
+#[napi]
+impl JsScrollController {
+    #[napi(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: BindingScrollController::new(),
+        }
+    }
+
+    #[napi(getter)]
+    pub fn offset(&self) -> JsPoint {
+        let offset = self.inner.offset();
+        sui_crate::Point::new(offset.x, offset.y).into()
+    }
+
+    #[napi(getter)]
+    pub fn max_offset(&self) -> JsPoint {
+        let offset = self.inner.max_offset();
+        sui_crate::Point::new(offset.x, offset.y).into()
+    }
+
+    #[napi(getter)]
+    pub fn viewport_size(&self) -> JsSize {
+        self.inner.viewport_size().into()
+    }
+
+    #[napi(getter)]
+    pub fn content_size(&self) -> JsSize {
+        self.inner.content_size().into()
+    }
+
+    #[napi]
+    pub fn scroll_to(&self, x: Option<f64>, y: Option<f64>) {
+        self.inner
+            .scroll_to(x.map(|value| value as f32), y.map(|value| value as f32));
+    }
+
+    #[napi]
+    pub fn scroll_to_item(&self, index: u32) {
+        self.inner.scroll_to_item(index as usize);
+    }
+}
+
 #[napi(js_name = "ResponsiveSidebarState")]
 #[derive(Debug, Clone)]
 pub struct JsResponsiveSidebarState {
@@ -1688,10 +1740,14 @@ fn optional_uniform_insets(value: Option<f64>) -> Option<sui_crate::Insets> {
 }
 
 #[napi(js_name = "Label")]
-pub fn js_label(value: JsBindingTextArg) -> Result<JsWidget> {
-    Ok(JsWidget::from_binding(BindingWidget::label(
+pub fn js_label(
+    value: JsBindingTextArg,
+    semantic_name: Option<String>,
+) -> Result<JsWidget> {
+    JsWidget::from_binding(BindingWidget::label(
         binding_text_from_js(value),
-    )))
+    ))
+    .with_semantic_name(semantic_name)
 }
 
 #[napi(js_name = "Button")]
@@ -1718,7 +1774,6 @@ pub fn js_button(
         tone: tone.as_deref().map(semantic_tone_from_js).transpose()?,
         icon: icon.as_deref().map(icon_glyph_from_js).transpose()?,
         min_width: min_width.map(|value| value as f32),
-        semantic_name,
         description,
     };
     let action = on_press
@@ -1741,7 +1796,8 @@ pub fn js_button(
         action,
         options,
     ))
-    .with_enabled(enabled)
+    .with_enabled(enabled)?
+    .with_semantic_name(semantic_name)
 }
 
 #[napi(js_name = "Icon")]
@@ -1844,6 +1900,7 @@ pub fn js_checkbox(
     checked: Option<JsBindingBoolArg>,
     on_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
     enabled: Option<JsBindingBoolArg>,
+    semantic_name: Option<String>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -1867,7 +1924,8 @@ pub fn js_checkbox(
             .unwrap_or(BindingBool::Static(false)),
         action,
     ))
-    .with_enabled(enabled)
+    .with_enabled(enabled)?
+    .with_semantic_name(semantic_name)
 }
 
 #[napi(js_name = "Switch")]
@@ -1877,6 +1935,7 @@ pub fn js_switch(
     checked: Option<JsBindingBoolArg>,
     on_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
     enabled: Option<JsBindingBoolArg>,
+    semantic_name: Option<String>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -1899,7 +1958,8 @@ pub fn js_switch(
             .unwrap_or(BindingBool::Static(false)),
         action,
     ))
-    .with_enabled(enabled)
+    .with_enabled(enabled)?
+    .with_semantic_name(semantic_name)
 }
 
 #[napi(js_name = "RadioButton")]
@@ -1909,6 +1969,7 @@ pub fn js_radio_button(
     checked: Option<JsBindingBoolArg>,
     on_change: Option<Function<'_, FnArgs<(bool,)>, ()>>,
     enabled: Option<JsBindingBoolArg>,
+    semantic_name: Option<String>,
 ) -> Result<JsWidget> {
     let action = on_change
         .map(|callback| {
@@ -1933,7 +1994,8 @@ pub fn js_radio_button(
             .unwrap_or(BindingBool::Static(false)),
         action,
     ))
-    .with_enabled(enabled)
+    .with_enabled(enabled)?
+    .with_semantic_name(semantic_name)
 }
 
 #[napi(js_name = "RadioGroup")]
@@ -2696,6 +2758,33 @@ pub fn js_flex_item(
     )))
 }
 
+#[napi(js_name = "RebuildOnChange")]
+pub fn js_rebuild_on_change(
+    env: Env,
+    states: Vec<ClassInstance<'_, JsState>>,
+    // The stored reference cannot borrow the call's environment, so the
+    // result is read as an untyped value and converted immediately.
+    build: Function<'_, (), Unknown<'static>>,
+) -> Result<JsWidget> {
+    let env = JsEnvHandle::from_env(env);
+    let build = build.create_ref()?;
+    let builder = BindingWidgetBuilder::new(move || {
+        let env = env.to_env();
+        let widget = build
+            .borrow_back(&env)
+            .and_then(|build| build.call(()))
+            .and_then(|value| {
+                let widget = unsafe { <&JsWidget>::from_napi_value(env.raw(), value.raw())? };
+                widget.binding_widget()
+            });
+        widget.map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+    });
+    Ok(JsWidget::from_binding(BindingWidget::rebuild_on_change(
+        states.iter().map(|state| state.inner.clone()),
+        builder,
+    )))
+}
+
 #[napi(js_name = "Spacer")]
 pub fn js_spacer() -> JsWidget {
     JsWidget::from_binding(BindingWidget::spacer())
@@ -3128,11 +3217,13 @@ pub fn js_scroll_view(
     child: ClassInstance<'_, JsWidget>,
     axes: Option<String>,
     name: Option<String>,
+    controller: Option<&JsScrollController>,
 ) -> Result<JsWidget> {
-    Ok(JsWidget::from_binding(BindingWidget::scroll_view(
+    Ok(JsWidget::from_binding(BindingWidget::scroll_view_with_controller(
         child.binding_widget()?,
         scroll_axes_from_js(axes.as_deref().unwrap_or("vertical"))?,
         name,
+        controller.map(|controller| controller.inner.clone()),
     )))
 }
 
@@ -4460,13 +4551,17 @@ pub fn js_virtual_scroll_view(
     name: Option<String>,
     padding: Option<f64>,
     gap: Option<f64>,
+    controller: Option<&JsScrollController>,
 ) -> Result<JsWidget> {
-    Ok(JsWidget::from_binding(BindingWidget::virtual_scroll_view(
-        extract_binding_widgets(&children)?,
-        name,
-        optional_uniform_insets(padding),
-        gap.map(|value| value as f32),
-    )))
+    Ok(JsWidget::from_binding(
+        BindingWidget::virtual_scroll_view_with_controller(
+            extract_binding_widgets(&children)?,
+            name,
+            optional_uniform_insets(padding),
+            gap.map(|value| value as f32),
+            controller.map(|controller| controller.inner.clone()),
+        ),
+    ))
 }
 
 #[napi(js_name = "ReorderableList")]
