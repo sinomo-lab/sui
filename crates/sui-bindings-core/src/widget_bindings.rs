@@ -460,6 +460,12 @@ impl BindingWidget {
             }
             BindingWidgetKind::FlexItem { child, .. } => child.bind_ui_handle(handle),
             BindingWidgetKind::Spacer => {}
+            BindingWidgetKind::FocusScope { child, controller } => {
+                if let Some(controller) = controller {
+                    controller.bind_ui_handle(handle);
+                }
+                child.bind_ui_handle(handle);
+            }
             BindingWidgetKind::RebuildOnChange {
                 states, ui_handle, ..
             } => {

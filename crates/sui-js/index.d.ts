@@ -739,7 +739,32 @@ export class WindowHandle {
   readonly id: string;
 }
 
+export interface FileDialogFilter {
+  name: string;
+  extensions: string[];
+}
+
+export interface FileDialogOptions {
+  mode?: "open" | "open-multiple" | "save" | "folder" | "folders";
+  title?: string;
+  filters?: FileDialogFilter[];
+  directory?: string;
+  name?: string;
+}
+
+export function clipboardText(): string | null;
+export function setClipboardText(text: string): void;
+
+export class Timer {
+  cancel(): void;
+  readonly active: boolean;
+}
+
 export class UiHandle {
+  callLater(delayMs: number, callback: () => void): Timer;
+  callEvery(intervalMs: number, callback: () => void): Timer;
+  showFileDialog(options: FileDialogOptions | undefined, onResult: (paths: string[] | null) => void): void;
+  requestExit(): boolean;
   post(callback: () => void): void;
   emit(name: string, payload: BindingValue): boolean;
   readonly pendingCount: number;
@@ -1452,6 +1477,14 @@ export interface GridCellOptions {
 
 export function gridCell(child: Widget, row: number, column: number, options?: GridCellOptions): Widget;
 
+export function FocusScope(child: Widget, controller?: FocusController): Widget;
+
+export interface FocusScopeOptions {
+  controller?: FocusController;
+}
+
+export function focusScope(child: Widget, options?: FocusScopeOptions): Widget;
+
 export function Spacer(): Widget;
 
 export function spacer(): Widget;
@@ -1527,6 +1560,11 @@ export class ConstraintCase {
 export function ConstraintView(cases: ConstraintCase[], fallback: Widget): Widget;
 
 export function constraintView(cases: ConstraintCase[], fallback: Widget): Widget;
+
+export class FocusController {
+  constructor();
+  focus(): void;
+}
 
 export class ScrollController {
   constructor();

@@ -76,7 +76,7 @@ here so documentation coverage remains auditable:
   `TableColumn`, `TableRow`, `ListItem`, `TreeItem`, `LayerListItem`, `MenuItem`,
   `ToolPaletteItem`, `ColorPaletteSwatch`, `BrushPreviewSpec`, and
   `FloatingStackWindow`, `RichDocument`, `RichDocumentUpdate`, `ConstraintCase`,
-  `ResponsiveSidebarState`, `MasterDetailState`, `ScrollController`, `NotificationCenter`,
+  `ResponsiveSidebarState`, `MasterDetailState`, `ScrollController`, `FocusController`, `NotificationCenter`,
   `VirtualListItem`, `VirtualListModel`, `VirtualTableColumn`,
   `VirtualTableRow`, `TableModel`, `CanvasViewport`, `CanvasStroke`,
   `CanvasShape`, `PixelCanvasState`, `PixelCanvasExport`, `DragScope`,
@@ -100,7 +100,7 @@ here so documentation coverage remains auditable:
   `DragDropHost`, `Draggable`, `DropTarget`,
   `DockWorkspace`, `FloatingWorkspace`, `FloatingStack`, and
   `ReorderableList`.
-- Layout and forms: `Column`, `Row`, `FlexItem`, `Spacer`, `GridCell`, `Padding`, `Align`, `Background`,
+- Layout and forms: `Column`, `Row`, `FlexItem`, `Spacer`, `GridCell`, `FocusScope`, `Padding`, `Align`, `Background`,
   `Grid`, `AspectRatio`, `SafeArea`, `LayoutTransition`, `Presence`, `AdaptiveView`,
   `ConstraintView`, `ResponsiveSidebar`, `MasterDetail`, `SizedBox`, `Stack`,
   `SemanticRegion`, `FormRow`, `FieldGroup`,

@@ -385,6 +385,7 @@ impl BindingApp {
         let ui_tasks = UiTaskQueue::new();
         let ui_handle = ui_tasks.handle().with_message_bus(self.messages.clone());
         let mut runtime = Runtime::new();
+        runtime.set_clipboard_backend(crate::services::SharedClipboardBackend);
         let mut window_ids = Vec::with_capacity(self.windows.len());
 
         self.register_font_resources(&mut runtime)?;
@@ -518,6 +519,7 @@ impl BindingApp {
             .get(index)
             .ok_or_else(|| format!("window index {index} is out of range"))?;
         let mut runtime = Runtime::new();
+        runtime.set_clipboard_backend(crate::services::SharedClipboardBackend);
         self.register_font_resources(&mut runtime)?;
         self.register_image_resources(&mut runtime)?;
         let builder =

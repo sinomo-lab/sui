@@ -7804,3 +7804,49 @@ fn selected_filled_icon_button_keeps_its_icon_readable() {
         "icon strokes {icon_colors:?} must differ from the fill {fills:?}"
     );
 }
+
+#[test]
+fn focus_scope_request_focus_takes_focus_from_outside_the_scope() -> Result<()> {
+    use sui_runtime::{FocusScope, FocusScopeState};
+
+    let scope = FocusScopeState::new();
+    let (mut runtime, window_id) = build_runtime(
+        crate::Flex::new(sui_layout::Axis::Vertical)
+            .with_child(Button::new("Outside"))
+            .with_child(FocusScope::new(Button::new("Inside")).state(scope.clone())),
+    );
+    let output = runtime.render(window_id)?;
+    let id_of = |name: &str| {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some(name))
+            .map(|node| node.id)
+            .unwrap()
+    };
+    let (outside, inside) = (id_of("Outside"), id_of("Inside"));
+    assert!(runtime.handle_semantics_action(window_id, outside, SemanticsActionRequest::Focus)?);
+
+    // Each settle is a later frame, as on a platform host whose clock moves.
+    let mut frame_time = 0.0;
+    let mut settle = |runtime: &mut sui_runtime::Runtime| -> Result<()> {
+        frame_time += 16.0;
+        runtime.tick(frame_time);
+        runtime.process_reactive_updates();
+        let _ = runtime.render(window_id)?;
+        for (ready_window, event) in runtime.drain_ready_events() {
+            runtime.handle_event(ready_window, event)?;
+        }
+        Ok(())
+    };
+
+    // A restore leaves focus the person put elsewhere alone.
+    scope.request_restore();
+    settle(&mut runtime)?;
+    assert_eq!(runtime.focused_widget(window_id)?, Some(outside));
+
+    scope.request_focus();
+    settle(&mut runtime)?;
+    assert_eq!(runtime.focused_widget(window_id)?, Some(inside));
+    Ok(())
+}

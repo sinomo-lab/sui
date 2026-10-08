@@ -1031,6 +1031,28 @@ impl JsConstraintCase {
     }
 }
 
+/// Moves keyboard focus into a `focusScope` from JavaScript.
+#[napi(js_name = "FocusController")]
+#[derive(Clone, Default)]
+pub struct JsFocusController {
+    inner: BindingFocusController,
+}
+
+#[napi]
+impl JsFocusController {
+    #[napi(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Focus the scope's last focused descendant, or its first focusable
+    /// one, at the next frame.
+    #[napi]
+    pub fn focus(&self) {
+        self.inner.focus();
+    }
+}
+
 /// Scrolls a `scrollView` or `virtualScrollView` from JavaScript. Requests
 /// are applied on the UI thread at the view's next layout; the offset and
 /// extents reflect the latest layout.
@@ -3004,6 +3026,17 @@ pub fn js_rebuild_on_change(
     Ok(JsWidget::from_binding(BindingWidget::rebuild_on_change(
         states.iter().map(|state| state.inner.clone()),
         builder,
+    )))
+}
+
+#[napi(js_name = "FocusScope")]
+pub fn js_focus_scope(
+    child: &JsWidget,
+    controller: Option<&JsFocusController>,
+) -> Result<JsWidget> {
+    Ok(JsWidget::from_binding(BindingWidget::focus_scope(
+        child.binding_widget()?,
+        controller.map(|controller| controller.inner.clone()),
     )))
 }
 

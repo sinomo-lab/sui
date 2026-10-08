@@ -574,6 +574,14 @@ layout GridCell
   docs GridCell
 end
 
+layout FocusScope
+  core_constructor focus_scope
+  python function py_focus_scope
+  js function js_focus_scope
+  api function FocusScope(child: Widget, controller?: FocusController): Widget;
+  docs FocusScope
+end
+
 layout Spacer
   core_constructor spacer
   python function py_spacer
@@ -662,6 +670,17 @@ widget ConstraintView
   api function ConstraintView(cases: ConstraintCase[], fallback: Widget): Widget;
   docs ConstraintView
   compat
+end
+
+descriptor FocusController
+  core_descriptor BindingFocusController
+  python class
+  js class
+  api class
+    constructor();
+    focus(): void;
+  endapi
+  docs FocusController
 end
 
 descriptor ScrollController

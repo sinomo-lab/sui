@@ -941,6 +941,27 @@ impl PyConstraintCase {
     }
 }
 
+/// Moves keyboard focus into a `focus_scope` from Python, from any thread.
+#[pyclass(name = "FocusController", module = "sinomo_ui", frozen, skip_from_py_object)]
+#[derive(Debug, Clone, Default)]
+pub struct PyFocusController {
+    inner: BindingFocusController,
+}
+
+#[pymethods]
+impl PyFocusController {
+    #[new]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Focus the scope's last focused descendant, or its first focusable
+    /// one, at the next frame.
+    pub fn focus(&self) {
+        self.inner.focus();
+    }
+}
+
 /// Scrolls a `scroll_view` or `virtual_scroll_view` from Python. Requests are
 /// applied on the UI thread at the view's next layout; the offset and
 /// extents reflect the latest layout.
@@ -3382,6 +3403,18 @@ pub fn py_rebuild_on_change(
     )))
 }
 
+#[pyfunction(name = "focus_scope")]
+#[pyo3(signature = (child, controller=None))]
+pub fn py_focus_scope(
+    child: PyRef<'_, PyWidget>,
+    controller: Option<PyRef<'_, PyFocusController>>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::focus_scope(
+        child.binding_widget()?,
+        controller.map(|controller| controller.inner.clone()),
+    )))
+}
+
 #[pyfunction(name = "spacer")]
 pub fn py_spacer() -> PyWidget {
     PyWidget::from_binding(BindingWidget::spacer())
@@ -4827,6 +4860,7 @@ pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_flex_item, m)?)?;
     m.add_function(wrap_pyfunction!(py_rebuild_on_change, m)?)?;
     m.add_function(wrap_pyfunction!(py_grid_cell, m)?)?;
+    m.add_function(wrap_pyfunction!(py_focus_scope, m)?)?;
     m.add_function(wrap_pyfunction!(py_spacer, m)?)?;
     m.add_function(wrap_pyfunction!(py_grid, m)?)?;
     m.add_function(wrap_pyfunction!(py_aspect_ratio, m)?)?;
@@ -4836,6 +4870,7 @@ pub fn register_generated_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_adaptive_view, m)?)?;
     m.add_class::<PyConstraintCase>()?;
     m.add_function(wrap_pyfunction!(py_constraint_view, m)?)?;
+    m.add_class::<PyFocusController>()?;
     m.add_class::<PyScrollController>()?;
     m.add_class::<PyResponsiveSidebarState>()?;
     m.add_function(wrap_pyfunction!(py_responsive_sidebar, m)?)?;

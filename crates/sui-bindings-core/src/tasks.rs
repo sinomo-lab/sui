@@ -5,8 +5,11 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Clone, Default)]
 pub struct UiTaskQueue {
@@ -194,5 +197,97 @@ impl fmt::Debug for BindingUiHandle {
         f.debug_struct("BindingUiHandle")
             .field("pending_count", &self.pending_count())
             .finish()
+    }
+}
+
+/// A pending or repeating callback scheduled through
+/// [`BindingUiHandle::call_later`] or [`BindingUiHandle::call_every`].
+#[derive(Clone, Debug, Default)]
+pub struct BindingTimer {
+    stopped: Arc<AtomicBool>,
+}
+
+impl BindingTimer {
+    /// Stop the timer. A callback already posted to the UI thread still
+    /// runs.
+    pub fn cancel(&self) {
+        self.stopped.store(true, Ordering::Release);
+    }
+
+    /// Whether the timer can still fire.
+    pub fn is_active(&self) -> bool {
+        !self.stopped.load(Ordering::Acquire)
+    }
+}
+
+impl BindingUiHandle {
+    /// Run `task` on the UI thread once `delay` has passed.
+    pub fn call_later(
+        &self,
+        delay: Duration,
+        task: impl FnOnce() + Send + 'static,
+    ) -> BindingTimer {
+        let timer = BindingTimer::default();
+        let stopped = Arc::clone(&timer.stopped);
+        let queue = Arc::downgrade(&self.inner);
+        thread::spawn(move || {
+            thread::sleep(delay);
+            // Stop once the app that owns the queue is gone.
+            let Some(inner) = queue.upgrade() else {
+                return;
+            };
+            if !stopped.swap(true, Ordering::AcqRel) {
+                BindingUiHandle {
+                    inner,
+                    messages: None,
+                }
+                .post(task);
+            }
+        });
+        timer
+    }
+
+    /// Run `task` on the UI thread every `interval` until the timer is
+    /// cancelled or its app is gone. A run that is still waiting for the UI
+    /// thread is not queued again.
+    pub fn call_every(
+        &self,
+        interval: Duration,
+        task: impl Fn() + Send + Sync + 'static,
+    ) -> BindingTimer {
+        let timer = BindingTimer::default();
+        let stopped = Arc::clone(&timer.stopped);
+        let queue = Arc::downgrade(&self.inner);
+        let task = Arc::new(task);
+        let in_flight = Arc::new(AtomicBool::new(false));
+        thread::spawn(move || {
+            loop {
+                thread::sleep(interval);
+                if stopped.load(Ordering::Acquire) {
+                    return;
+                }
+                let Some(inner) = queue.upgrade() else {
+                    stopped.store(true, Ordering::Release);
+                    return;
+                };
+                if in_flight.swap(true, Ordering::AcqRel) {
+                    continue;
+                }
+                let task = Arc::clone(&task);
+                let in_flight = Arc::clone(&in_flight);
+                let stopped = Arc::clone(&stopped);
+                BindingUiHandle {
+                    inner,
+                    messages: None,
+                }
+                .post(move || {
+                    if !stopped.load(Ordering::Acquire) {
+                        task();
+                    }
+                    in_flight.store(false, Ordering::Release);
+                });
+            }
+        });
+        timer
     }
 }

@@ -93,6 +93,11 @@ pub use sui_layout::{
 };
 #[cfg(all(target_os = "android", feature = "mobile"))]
 pub use sui_platform::AndroidApp;
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+pub use sui_platform::OsClipboardBackend;
 #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 pub use sui_platform::{
     DesktopExtension, DesktopExtensionContext, DesktopPlatform, DesktopWindow, FileDialogFilter,

@@ -122,6 +122,9 @@ function decorateApi(native) {
     gridCell(child, row, column, options = {}) {
       return native.GridCell(child, row, column, options.rowSpan, options.columnSpan, options.horizontal, options.vertical);
     },
+    focusScope(child, options = {}) {
+      return native.FocusScope(child, options.controller);
+    },
     spacer() {
       return native.Spacer();
     },

@@ -22,6 +22,7 @@ mod messages;
 mod paint;
 mod runtime;
 mod scrolling;
+mod services;
 mod shader;
 mod state;
 mod support;
@@ -171,11 +172,17 @@ pub use paint::PaintValidationError;
 pub use paint::PaintValidationErrorKind;
 pub use paint::PaintValidationResult;
 pub use runtime::BindingRuntime;
+pub use scrolling::BindingFocusController;
 pub use scrolling::BindingScrollController;
+pub use services::{
+    BindingFileDialogMode, BindingFileDialogRequest, BindingFileDialogResult,
+    binding_clipboard_text, binding_file_dialog_mode_from_name, binding_set_clipboard_text,
+};
 pub use shader::BindingShader;
 pub use state::BindingState;
 pub use state::BindingStateSubscription;
 pub use support::widget_invalidation;
+pub use tasks::BindingTimer;
 pub use tasks::BindingUiHandle;
 pub use tasks::UiTaskQueue;
 pub use theme::BindingTheme;

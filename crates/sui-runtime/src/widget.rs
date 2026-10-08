@@ -476,6 +476,9 @@ pub enum FocusRestorePolicy {
 struct FocusScopeStateInner {
     last_focused: Option<WidgetId>,
     restore_requested: bool,
+    /// The pending restore was asked for by application code and takes
+    /// focus even from outside the scope.
+    restore_forced: bool,
 }
 
 /// Shared retained focus history for a [`FocusScope`].
@@ -533,12 +536,23 @@ impl FocusScopeState {
         changed
     }
 
+    /// Move focus into the scope at its next frame: to the descendant chosen
+    /// by the scope's restore policy, even when focus is currently outside
+    /// the scope. Use this for application-driven focus, such as focusing a
+    /// search field; [`Self::request_restore`] leaves focus the person moved
+    /// elsewhere alone.
+    pub fn request_focus(&self) -> bool {
+        self.lock_inner().restore_forced = true;
+        self.request_restore()
+    }
+
     pub fn clear(&self) {
         let restore_was_requested = {
             let mut inner = self.lock_inner();
             let restore_was_requested = inner.restore_requested;
             inner.last_focused = None;
             inner.restore_requested = false;
+            inner.restore_forced = false;
             restore_was_requested
         };
         self.last_focused_signal.set(None);
@@ -566,8 +580,11 @@ impl FocusScopeState {
         self.lock_inner().restore_requested
     }
 
-    fn complete_restore(&self) {
-        self.lock_inner().restore_requested = false;
+    /// Finish the pending restore and report whether it was forced.
+    fn complete_restore(&self) -> bool {
+        let mut inner = self.lock_inner();
+        inner.restore_requested = false;
+        std::mem::take(&mut inner.restore_forced)
     }
 
     fn lock_inner(&self) -> std::sync::MutexGuard<'_, FocusScopeStateInner> {
@@ -654,12 +671,14 @@ impl Widget for FocusScope {
             && self.state.restore_requested()
         {
             let target = self.restore_target();
-            self.state.complete_restore();
+            let forced = self.state.complete_restore();
             // Restoring recovers focus that hiding content lost. Focus the
-            // person has since put somewhere else stays there.
-            let focused_elsewhere = ctx
-                .focused_widget_id()
-                .is_some_and(|focused| !pod_contains(self.child.child(), focused));
+            // person has since put somewhere else stays there, unless the
+            // application asked for focus explicitly.
+            let focused_elsewhere = !forced
+                && ctx
+                    .focused_widget_id()
+                    .is_some_and(|focused| !pod_contains(self.child.child(), focused));
             if !focused_elsewhere && let Some(target) = target {
                 ctx.request_focus_for(target);
                 ctx.request_paint();

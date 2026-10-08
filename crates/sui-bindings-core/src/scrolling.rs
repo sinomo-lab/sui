@@ -3,6 +3,7 @@ use crate::tasks::BindingUiHandle;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex;
+use sui::FocusScopeState;
 use sui::ScrollState;
 use sui::Size;
 use sui::Vector;
@@ -114,6 +115,44 @@ impl fmt::Debug for BindingScrollController {
         f.debug_struct("BindingScrollController")
             .field("offset", &inner.offset)
             .field("pending", &inner.pending)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A thread-safe handle that moves keyboard focus into a focus scope.
+#[derive(Clone, Default)]
+pub struct BindingFocusController {
+    state: FocusScopeState,
+    ui_handle: Arc<Mutex<Option<BindingUiHandle>>>,
+}
+
+impl BindingFocusController {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Focus the scope's last focused descendant, or its first focusable one,
+    /// at the next frame, even when focus is currently elsewhere.
+    pub fn focus(&self) {
+        self.state.request_focus();
+        // Wake the loop so the scope lays out and applies the request.
+        if let Some(handle) = recover_lock(&self.ui_handle).clone() {
+            handle.post(|| {});
+        }
+    }
+
+    pub(crate) fn state(&self) -> FocusScopeState {
+        self.state.clone()
+    }
+
+    pub(crate) fn bind_ui_handle(&self, handle: &BindingUiHandle) {
+        *recover_lock(&self.ui_handle) = Some(handle.clone());
+    }
+}
+
+impl fmt::Debug for BindingFocusController {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingFocusController")
             .finish_non_exhaustive()
     }
 }

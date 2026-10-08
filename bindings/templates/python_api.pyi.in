@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal, final
 
@@ -1095,10 +1096,28 @@ class WindowHandle:
 
 @final
 class UiHandle:
+    def call_later(self, delay: float, callback: Callable[[], object]) -> Timer: ...
+    def call_every(self, interval: float, callback: Callable[[], object]) -> Timer: ...
+    def show_file_dialog(
+        self,
+        on_result: Callable[[list[str] | None], object],
+        mode: Literal["open", "open-multiple", "save", "folder", "folders"] = ...,
+        title: str | None = ...,
+        filters: Sequence[tuple[str, Sequence[str]]] | None = ...,
+        directory: str | os.PathLike[str] | None = ...,
+        name: str | None = ...,
+    ) -> None: ...
     def request_exit(self) -> bool: ...
     def post(self, callback: Callable[[], object]) -> None: ...
     def emit(self, name: str, payload: BindingValue) -> bool: ...
     def pending_count(self) -> int: ...
+
+
+@final
+class Timer:
+    def cancel(self) -> None: ...
+    @property
+    def active(self) -> bool: ...
 
 
 @final
@@ -1468,6 +1487,8 @@ class RenderSnapshot:
 
 
 def render_widget(widget: Widget, event: Event | None = ...) -> RenderSnapshot: ...
+def clipboard_text() -> str | None: ...
+def set_clipboard_text(text: str) -> None: ...
 def set_exception_handler(
     handler: Callable[[BaseException], object] | None,
 ) -> Callable[[BaseException], object] | None: ...

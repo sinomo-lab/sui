@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal, final
 
@@ -1098,10 +1099,28 @@ class WindowHandle:
 
 @final
 class UiHandle:
+    def call_later(self, delay: float, callback: Callable[[], object]) -> Timer: ...
+    def call_every(self, interval: float, callback: Callable[[], object]) -> Timer: ...
+    def show_file_dialog(
+        self,
+        on_result: Callable[[list[str] | None], object],
+        mode: Literal["open", "open-multiple", "save", "folder", "folders"] = ...,
+        title: str | None = ...,
+        filters: Sequence[tuple[str, Sequence[str]]] | None = ...,
+        directory: str | os.PathLike[str] | None = ...,
+        name: str | None = ...,
+    ) -> None: ...
     def request_exit(self) -> bool: ...
     def post(self, callback: Callable[[], object]) -> None: ...
     def emit(self, name: str, payload: BindingValue) -> bool: ...
     def pending_count(self) -> int: ...
+
+
+@final
+class Timer:
+    def cancel(self) -> None: ...
+    @property
+    def active(self) -> bool: ...
 
 
 @final
@@ -1471,6 +1490,8 @@ class RenderSnapshot:
 
 
 def render_widget(widget: Widget, event: Event | None = ...) -> RenderSnapshot: ...
+def clipboard_text() -> str | None: ...
+def set_clipboard_text(text: str) -> None: ...
 def set_exception_handler(
     handler: Callable[[BaseException], object] | None,
 ) -> Callable[[BaseException], object] | None: ...
@@ -1577,6 +1598,8 @@ def rebuild_on_change(states: Sequence[State], build: Callable[[], Widget]) -> W
 
 def grid_cell(child: Widget, row: int, column: int, row_span: int = ..., column_span: int = ..., horizontal: Literal["start", "center", "end", "stretch"] = ..., vertical: Literal["start", "center", "end", "stretch"] = ...) -> Widget: ...
 
+def focus_scope(child: Widget, controller: FocusController | None = ...) -> Widget: ...
+
 def spacer() -> Widget: ...
 
 def grid(children: Sequence[Widget], columns: int | Sequence[float | str] | None = ..., name: str | None = ..., gap: float = ..., column_gap: float | None = ..., row_gap: float | None = ..., rows: Sequence[float | str] | None = ...) -> Widget: ...
@@ -1592,6 +1615,11 @@ def layout_transition(child: Widget, duration: float = ..., easing: Literal["lin
 def adaptive_view(compact: Widget, medium: Widget, expanded: Widget, medium_breakpoint: float = ..., expanded_breakpoint: float = ..., on_class_change: Callable[[Literal["compact", "medium", "expanded"]], None] | None = ...) -> Widget: ...
 
 def constraint_view(cases: Sequence[ConstraintCase], fallback: Widget) -> Widget: ...
+
+@final
+class FocusController:
+    def __new__(cls) -> Self: ...
+    def focus(self) -> None: ...
 
 @final
 class ScrollController:
@@ -1910,6 +1938,7 @@ __all__ = [
     "FloatingView",
     "FloatingViewSnapshot",
     "FloatingWorkspaceState",
+    "FocusController",
     "FontHandle",
     "FrameTiming",
     "ImageHandle",
@@ -1954,6 +1983,7 @@ __all__ = [
     "TableRow",
     "TextSpan",
     "Theme",
+    "Timer",
     "ToolPaletteItem",
     "Transform",
     "Transition",
@@ -1984,6 +2014,7 @@ __all__ = [
     "canvas",
     "canvas_ruler",
     "checkbox",
+    "clipboard_text",
     "color_palette",
     "color_picker",
     "color_swatch",
@@ -2010,6 +2041,7 @@ __all__ = [
     "flex_item",
     "floating_stack",
     "floating_workspace",
+    "focus_scope",
     "form_row",
     "form_section",
     "framed_field",
@@ -2056,6 +2088,7 @@ __all__ = [
     "select",
     "semantic_region",
     "separator",
+    "set_clipboard_text",
     "set_exception_handler",
     "side_sheet",
     "signal_meter",

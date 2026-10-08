@@ -21,6 +21,7 @@ use crate::interop::{ExternalTextureDescriptor, RendererInteropTier};
 use crate::layout::{
     BindingConstraintCase, BindingMasterDetailState, BindingResponsiveSidebarState,
 };
+use crate::scrolling::BindingFocusController;
 use crate::scrolling::BindingScrollController;
 use crate::state::BindingState;
 use crate::tasks::BindingUiHandle;
@@ -751,6 +752,10 @@ impl fmt::Debug for BindingWidget {
                 .field("child", child)
                 .finish(),
             BindingWidgetKind::Spacer => f.debug_tuple("BindingWidget::Spacer").finish(),
+            BindingWidgetKind::FocusScope { child, .. } => f
+                .debug_struct("BindingWidget::FocusScope")
+                .field("child", child)
+                .finish_non_exhaustive(),
             BindingWidgetKind::RebuildOnChange { states, .. } => f
                 .debug_struct("BindingWidget::RebuildOnChange")
                 .field("states", &states.len())
@@ -1519,6 +1524,11 @@ pub(crate) enum BindingWidgetKind {
     },
     /// Flexible empty space in a flex container.
     Spacer,
+    /// A subtree whose focus a controller can move into.
+    FocusScope {
+        child: BindingWidget,
+        controller: Option<BindingFocusController>,
+    },
     /// A subtree rebuilt by a foreign callback whenever a watched state
     /// changes.
     RebuildOnChange {

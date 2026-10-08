@@ -4544,6 +4544,7 @@ name = "sinomo-ui-bindings-core"
 version = "0.4.1"
 dependencies = [
  "png",
+ "pollster 1.0.1",
  "sinomo-ui",
 ]
 

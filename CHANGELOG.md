@@ -8,6 +8,9 @@ Versioning, with the usual expectation that the API may change during the
 
 ### Python
 
+- Added `sinomo_ui.aio` with `AsyncRunner`, `run_on_ui`, and `file_dialog` to
+  run asyncio coroutines beside the UI loop.
+
 - Renamed the Python distribution to `sinomo-ui` and the import package to
   `sinomo_ui`; use `import sinomo_ui as sui`. The native extension now lives
   in `sinomo_ui._native` behind a regular Python package, which also exposes
@@ -29,6 +32,14 @@ Versioning, with the usual expectation that the API may change during the
   documented; it previously failed and the error was hidden.
 
 ### Python and JavaScript
+
+- Added `UiHandle.call_later` and `call_every` timers, native file dialogs
+  through `UiHandle.show_file_dialog`, app-level `clipboard_text` and
+  `set_clipboard_text`, and `FocusController` with `focus_scope` to move
+  keyboard focus from code. JavaScript gains `UiHandle.requestExit`.
+- Made `RunningApp.drain_ready_events()` dispatch due timer and animation
+  events; it previously discarded them, so custom-widget timers and
+  animation frames never ran in host-driven tests.
 
 - Made state-bound `dialog` and `popover` open states follow later changes,
   and write user dismissal back. `dialog` gained `description`, `modal`,
@@ -74,6 +85,8 @@ Versioning, with the usual expectation that the API may change during the
   platform event loop from application code on any thread.
 - Added `Tabs::selected_when`, and `label_when` to `Button`, `Checkbox`,
   `Switch`, and `RadioButton`.
+- Added `FocusScopeState::request_focus`, which moves focus into a scope even
+  when the person put it elsewhere, and re-exported `OsClipboardBackend`.
 
 ## [0.4.1] - 2026-10-04
 

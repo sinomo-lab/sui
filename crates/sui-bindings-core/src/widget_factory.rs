@@ -21,6 +21,7 @@ use crate::interop::{
 use crate::layout::{
     BindingConstraintCase, BindingMasterDetailState, BindingResponsiveSidebarState,
 };
+use crate::scrolling::BindingFocusController;
 use crate::scrolling::BindingScrollController;
 use crate::state::BindingState;
 use crate::values::BindingListItem;
@@ -1954,6 +1955,12 @@ impl BindingWidget {
     /// row.
     pub fn flex_item(child: BindingWidget, item: FlexItem) -> Self {
         Self::from_kind(BindingWidgetKind::FlexItem { child, item })
+    }
+
+    /// A subtree that remembers its focused descendant and lets
+    /// `controller` move focus into it.
+    pub fn focus_scope(child: BindingWidget, controller: Option<BindingFocusController>) -> Self {
+        Self::from_kind(BindingWidgetKind::FocusScope { child, controller })
     }
 
     /// Flexible empty space that grows to fill a column or row.

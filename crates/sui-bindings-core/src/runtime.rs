@@ -77,8 +77,17 @@ impl BindingRuntime {
         self.runtime.tick(frame_time);
     }
 
-    pub fn drain_ready_event_count(&mut self) -> usize {
-        self.runtime.drain_ready_events().len()
+    /// Dispatch due timer, animation-frame, and wake events, as a platform
+    /// host does each frame, and return how many were dispatched.
+    pub fn drain_ready_event_count(&mut self) -> Result<usize, String> {
+        let ready = self.runtime.drain_ready_events();
+        let count = ready.len();
+        for (window_id, event) in ready {
+            self.runtime
+                .handle_event(window_id, event)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(count)
     }
 
     pub fn request_redraw_all(&mut self) -> Result<(), String> {

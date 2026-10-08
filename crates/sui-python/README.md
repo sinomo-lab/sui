@@ -357,6 +357,48 @@ table = sui.virtual_table(
 )
 ```
 
+## Timers, dialogs, clipboard, and focus
+
+A `UiHandle` (from `App.run_with_handle`, or `RunningApp.ui_handle()`)
+schedules work on the UI thread from any thread:
+
+- `ui.call_later(seconds, callback)` and `ui.call_every(seconds, callback)`
+  return a `Timer` with `cancel()` and `active`. A repeating timer stops when
+  its app is gone.
+- `ui.show_file_dialog(on_result, mode="open", title=..., filters=[("Images",
+  ["png", "jpg"])], directory=..., name=...)` shows a native dialog and calls
+  `on_result(paths)` on the UI thread, with `None` when the user cancels.
+  Modes are `"open"`, `"open-multiple"`, `"save"`, `"folder"`, and
+  `"folders"`.
+
+`sui.clipboard_text()` and `sui.set_clipboard_text(text)` use the system
+clipboard on desktops with a display, and process memory otherwise; widget
+copy and paste in the same process use the same clipboard.
+
+Wrap part of a window in `focus_scope(child, controller=FocusController())`
+and call `controller.focus()` to move keyboard focus to the scope's last
+focused control, or its first focusable one, at the next frame.
+
+### asyncio
+
+`sinomo_ui.aio.AsyncRunner(ui)` runs an asyncio event loop on a background
+thread. `runner.submit(coroutine, on_done=..., on_error=...)` runs a
+coroutine there and calls `on_done(result)` on the UI thread; an exception
+without `on_error` is reported like a callback exception. Inside a coroutine,
+`await run_on_ui(ui, function)` runs a function on the UI thread and returns
+its result, and `await file_dialog(ui, ...)` awaits a native file dialog:
+
+```python
+from sinomo_ui.aio import AsyncRunner
+
+runner = AsyncRunner(ui)
+
+async def load(path):
+    return await asyncio.to_thread(Path(path).read_text)
+
+runner.submit(load("notes.txt"), on_done=text.set)
+```
+
 ## Errors in callbacks
 
 Callbacks have no Python caller to receive their exceptions, so SUI reports

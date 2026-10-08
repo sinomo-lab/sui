@@ -936,6 +936,27 @@ impl PyConstraintCase {
     }
 }
 
+/// Moves keyboard focus into a `focus_scope` from Python, from any thread.
+#[pyclass(name = "FocusController", module = "sinomo_ui", frozen, skip_from_py_object)]
+#[derive(Debug, Clone, Default)]
+pub struct PyFocusController {
+    inner: BindingFocusController,
+}
+
+#[pymethods]
+impl PyFocusController {
+    #[new]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Focus the scope's last focused descendant, or its first focusable
+    /// one, at the next frame.
+    pub fn focus(&self) {
+        self.inner.focus();
+    }
+}
+
 /// Scrolls a `scroll_view` or `virtual_scroll_view` from Python. Requests are
 /// applied on the UI thread at the view's next layout; the offset and
 /// extents reflect the latest layout.
@@ -3374,6 +3395,18 @@ pub fn py_rebuild_on_change(
     Ok(PyWidget::from_binding(BindingWidget::rebuild_on_change(
         states.iter().map(|state| state.inner.clone()),
         builder,
+    )))
+}
+
+#[pyfunction(name = "focus_scope")]
+#[pyo3(signature = (child, controller=None))]
+pub fn py_focus_scope(
+    child: PyRef<'_, PyWidget>,
+    controller: Option<PyRef<'_, PyFocusController>>,
+) -> PyResult<PyWidget> {
+    Ok(PyWidget::from_binding(BindingWidget::focus_scope(
+        child.binding_widget()?,
+        controller.map(|controller| controller.inner.clone()),
     )))
 }
 

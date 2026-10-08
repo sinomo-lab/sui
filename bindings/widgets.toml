@@ -556,6 +556,17 @@ ts_kind = "function"
 docs = ["GridCell"]
 
 [[item]]
+name = "FocusScope"
+kind = "layout"
+core_constructor = "focus_scope"
+python_kind = "function"
+python_rust = "py_focus_scope"
+js_kind = "function"
+js_rust = "js_focus_scope"
+ts_kind = "function"
+docs = ["FocusScope"]
+
+[[item]]
 name = "Spacer"
 kind = "layout"
 core_constructor = "spacer"
@@ -665,6 +676,15 @@ js_rust = "js_constraint_view"
 ts_kind = "function"
 docs = ["ConstraintView"]
 compat = true
+
+[[item]]
+name = "FocusController"
+kind = "descriptor"
+core_descriptor = "BindingFocusController"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["FocusController"]
 
 [[item]]
 name = "ScrollController"

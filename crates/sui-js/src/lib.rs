@@ -26,40 +26,40 @@ use sui_bindings_core::{
     BindingColorPaletteSwatch, BindingColorSelectAction, BindingCommandDispatchTrace,
     BindingConstraintCase, BindingCustomEvent, BindingDialogOptions, BindingDockFloatingGroup,
     BindingDockLayout, BindingDockNode, BindingDockPanel, BindingDockState, BindingDragScope,
-    BindingEvent, BindingEventContext, BindingEventRouteTrace, BindingFlexItemOptions,
-    BindingFlexOptions, BindingFloatingStackWindow, BindingFloatingView,
-    BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFontHandle,
-    BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle, BindingImeEvent,
-    BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState, BindingKeyboardEvent,
-    BindingLabelOptions, BindingLayerListItem, BindingListItem, BindingMasterDetailState,
-    BindingMenuItem, BindingMessageAction, BindingModifiers, BindingNotificationCenter,
-    BindingNumber, BindingNumberAction, BindingPixelCanvasExport, BindingPixelCanvasState,
-    BindingPointerButton, BindingPointerEvent, BindingPointerEventKind, BindingPointerKind,
-    BindingRawMouseMotionEvent, BindingReactiveInvalidationTrace, BindingRenderOptions,
-    BindingRenderSnapshot, BindingReorderAction, BindingResponsiveSidebarState,
-    BindingRichDocument, BindingRichDocumentUpdate, BindingRuntime, BindingScrollAxes,
-    BindingScrollController, BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction,
-    BindingSemanticNode, BindingShader, BindingSpring, BindingState, BindingStateSubscription,
-    BindingStatusBarSegment, BindingStringAction, BindingStringsAction, BindingTableColumn,
-    BindingTableRow, BindingText, BindingTextFieldOptions, BindingTextSpan, BindingTheme,
-    BindingToolPaletteItem, BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue,
-    BindingVirtualListItem, BindingVirtualListModel, BindingWidget, BindingWidgetBuilder,
-    BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow, BindingWindowEvent,
-    BindingWindowId, ExternalBackendHandle, ExternalSync, ExternalTextureDescriptor,
-    ExternalTextureFormat, ExternalTextureValidationError, ForeignArrangeCtx,
-    ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
-    ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
+    BindingEvent, BindingEventContext, BindingEventRouteTrace, BindingFileDialogRequest,
+    BindingFlexItemOptions, BindingFlexOptions, BindingFloatingStackWindow, BindingFloatingView,
+    BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFocusController,
+    BindingFontHandle, BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle,
+    BindingImeEvent, BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState,
+    BindingKeyboardEvent, BindingLabelOptions, BindingLayerListItem, BindingListItem,
+    BindingMasterDetailState, BindingMenuItem, BindingMessageAction, BindingModifiers,
+    BindingNotificationCenter, BindingNumber, BindingNumberAction, BindingPixelCanvasExport,
+    BindingPixelCanvasState, BindingPointerButton, BindingPointerEvent, BindingPointerEventKind,
+    BindingPointerKind, BindingRawMouseMotionEvent, BindingReactiveInvalidationTrace,
+    BindingRenderOptions, BindingRenderSnapshot, BindingReorderAction,
+    BindingResponsiveSidebarState, BindingRichDocument, BindingRichDocumentUpdate, BindingRuntime,
+    BindingScrollAxes, BindingScrollController, BindingScrollDelta, BindingSegmentedControlItem,
+    BindingSelectAction, BindingSemanticNode, BindingShader, BindingSpring, BindingState,
+    BindingStateSubscription, BindingStatusBarSegment, BindingStringAction, BindingStringsAction,
+    BindingTableColumn, BindingTableRow, BindingText, BindingTextFieldOptions, BindingTextSpan,
+    BindingTheme, BindingTimer, BindingToolPaletteItem, BindingTransition, BindingTreeItem,
+    BindingUiHandle, BindingValue, BindingVirtualListItem, BindingVirtualListModel, BindingWidget,
+    BindingWidgetBuilder, BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow,
+    BindingWindowEvent, BindingWindowId, ExternalBackendHandle, ExternalSync,
+    ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
+    ForeignArrangeCtx, ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx,
+    ForeignMeasureCtx, ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
     RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_alignment_from_name,
     binding_aspect_ratio_fit_from_name, binding_button_appearance_from_name,
-    binding_easing_from_name, binding_flex_justify_from_name, binding_grid_track_from_name,
-    binding_icon_glyph_from_name, binding_safe_area_edges_from_name,
-    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
-    binding_semantics_descriptions, binding_semantics_disabled,
+    binding_clipboard_text, binding_easing_from_name, binding_file_dialog_mode_from_name,
+    binding_flex_justify_from_name, binding_grid_track_from_name, binding_icon_glyph_from_name,
+    binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
+    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
     binding_semantics_nodes, binding_semantics_role_from_name, binding_semantics_roles,
-    binding_semantics_selected, binding_semantics_values,
+    binding_semantics_selected, binding_semantics_values, binding_set_clipboard_text,
     binding_simple_color_picker_mode_from_name, binding_surface_border_from_name,
     binding_surface_elevation_from_name, binding_surface_role_from_name,
     binding_table_column_alignment_from_name, binding_toggle_state_from_name,
@@ -3191,8 +3191,160 @@ pub struct JsUiHandle {
     inner: BindingUiHandle,
 }
 
+/// A named group of extensions for a file dialog, such as
+/// `{ name: "Images", extensions: ["png", "jpg"] }`.
+#[napi(object)]
+pub struct JsFileDialogFilter {
+    pub name: String,
+    pub extensions: Vec<String>,
+}
+
+#[napi(object)]
+pub struct JsFileDialogOptions {
+    /// `"open"`, `"open-multiple"`, `"save"`, `"folder"`, or `"folders"`.
+    pub mode: Option<String>,
+    pub title: Option<String>,
+    pub filters: Option<Vec<JsFileDialogFilter>>,
+    pub directory: Option<String>,
+    /// Initial file name for save dialogs.
+    pub name: Option<String>,
+}
+
+/// A callback scheduled with `UiHandle.callLater` or `UiHandle.callEvery`.
+#[napi(js_name = "Timer")]
+pub struct JsTimer {
+    inner: BindingTimer,
+}
+
+#[napi]
+impl JsTimer {
+    /// Stop the timer. A callback already queued for the UI thread still runs.
+    #[napi]
+    pub fn cancel(&self) {
+        self.inner.cancel();
+    }
+
+    /// Whether the timer can still fire.
+    #[napi(getter)]
+    pub fn active(&self) -> bool {
+        self.inner.is_active()
+    }
+}
+
+fn js_timer_duration(milliseconds: f64, name: &str) -> Result<std::time::Duration> {
+    if !milliseconds.is_finite() || milliseconds < 0.0 {
+        return Err(napi_invalid_arg(format!(
+            "{name} must be a finite, non-negative number of milliseconds"
+        )));
+    }
+    Ok(std::time::Duration::from_secs_f64(milliseconds / 1000.0))
+}
+
 #[napi]
 impl JsUiHandle {
+    /// Run `callback` on the UI thread after `delayMs` milliseconds.
+    #[napi]
+    pub fn call_later(
+        &self,
+        env: Env,
+        delay_ms: f64,
+        callback: Function<'_, (), ()>,
+    ) -> Result<JsTimer> {
+        let delay = js_timer_duration(delay_ms, "delayMs")?;
+        let env = JsEnvHandle::from_env(env);
+        let callback = callback.create_ref()?;
+        Ok(JsTimer {
+            inner: self.inner.call_later(delay, move || {
+                let env = env.to_env();
+                if let Ok(callback) = callback.borrow_back(&env) {
+                    let _ = callback.call(());
+                }
+            }),
+        })
+    }
+
+    /// Run `callback` on the UI thread every `intervalMs` milliseconds until
+    /// the returned timer is cancelled.
+    #[napi]
+    pub fn call_every(
+        &self,
+        env: Env,
+        interval_ms: f64,
+        callback: Function<'_, (), ()>,
+    ) -> Result<JsTimer> {
+        let interval = js_timer_duration(interval_ms, "intervalMs")?;
+        if interval.is_zero() {
+            return Err(napi_invalid_arg("intervalMs must be greater than zero"));
+        }
+        let env = JsEnvHandle::from_env(env);
+        let callback = Arc::new(callback.create_ref()?);
+        Ok(JsTimer {
+            inner: self.inner.call_every(interval, move || {
+                let env = env.to_env();
+                if let Ok(callback) = callback.borrow_back(&env) {
+                    let _ = callback.call(());
+                }
+            }),
+        })
+    }
+
+    /// Show a native file dialog. `onResult` runs on the UI thread with the
+    /// chosen paths, or `null` when the user cancels.
+    #[napi]
+    pub fn show_file_dialog(
+        &self,
+        env: Env,
+        options: Option<JsFileDialogOptions>,
+        on_result: Function<'_, FnArgs<(Option<Vec<String>>,)>, ()>,
+    ) -> Result<()> {
+        let options = options.unwrap_or(JsFileDialogOptions {
+            mode: None,
+            title: None,
+            filters: None,
+            directory: None,
+            name: None,
+        });
+        let mode_name = options.mode.as_deref().unwrap_or("open");
+        let mode = binding_file_dialog_mode_from_name(mode_name).ok_or_else(|| {
+            napi_invalid_arg(format!(
+                "unknown file dialog mode '{mode_name}'; use 'open', 'open-multiple', 'save', \
+                 'folder', or 'folders'"
+            ))
+        })?;
+        let mut request = BindingFileDialogRequest::new(mode);
+        request.title = options.title;
+        request.filters = options
+            .filters
+            .unwrap_or_default()
+            .into_iter()
+            .map(|filter| (filter.name, filter.extensions))
+            .collect();
+        request.directory = options.directory.map(std::path::PathBuf::from);
+        request.suggested_name = options.name;
+        let env = JsEnvHandle::from_env(env);
+        let on_result = on_result.create_ref()?;
+        self.inner.show_file_dialog(request, move |result| {
+            let env = env.to_env();
+            if let Ok(on_result) = on_result.borrow_back(&env) {
+                let paths = result.ok().flatten().map(|paths| {
+                    paths
+                        .iter()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                });
+                let _ = on_result.call(FnArgs::from((paths,)));
+            }
+        });
+        Ok(())
+    }
+
+    /// Ask the running desktop event loop to exit. Returns `false` when no
+    /// event loop is running.
+    #[napi]
+    pub fn request_exit(&self) -> bool {
+        self.inner.request_exit()
+    }
+
     #[napi]
     pub fn post(&self, env: Env, callback: Function<'_, (), ()>) -> Result<()> {
         let env = JsEnvHandle::from_env(env);
@@ -3215,6 +3367,18 @@ impl JsUiHandle {
     pub fn emit(&self, name: String, payload: Either3<String, f64, bool>) -> bool {
         self.inner.emit(name, binding_value_from_js(payload))
     }
+}
+
+/// Text on the clipboard: the system clipboard on desktop hosts with a
+/// display, otherwise process memory shared with the app's widgets.
+#[napi(js_name = "clipboardText")]
+pub fn js_clipboard_text() -> Option<String> {
+    binding_clipboard_text()
+}
+
+#[napi(js_name = "setClipboardText")]
+pub fn js_set_clipboard_text(text: String) {
+    binding_set_clipboard_text(&text);
 }
 
 impl From<BindingUiHandle> for JsUiHandle {
@@ -3537,9 +3701,14 @@ impl JsRunningApp {
         recover_lock(&self.inner).tick(frame_time);
     }
 
+    /// Dispatch due timer, animation-frame, and wake events and return how
+    /// many were dispatched.
     #[napi(js_name = "drainReadyEvents")]
-    pub fn drain_ready_events(&self) -> u32 {
-        recover_lock(&self.inner).drain_ready_event_count() as u32
+    pub fn drain_ready_events(&self) -> Result<u32> {
+        recover_lock(&self.inner)
+            .drain_ready_event_count()
+            .map(|count| count as u32)
+            .map_err(napi_runtime_error)
     }
 
     #[napi(js_name = "requestRedrawAll")]

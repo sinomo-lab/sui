@@ -422,3 +422,27 @@ def test_grid_tracks_and_cells():
         sui.grid([], columns=["wide"])
     # A count still means that many equal columns.
     assert sui.grid([sui.label("a")], columns=3)
+
+
+def test_focus_controller_moves_focus_into_its_scope():
+    controller = sui.FocusController()
+    running = start(
+        sui.column(
+            [
+                sui.button("Elsewhere"),
+                sui.focus_scope(sui.text_input("Search"), controller=controller),
+            ]
+        )
+    )
+    snapshot = running.render()
+    running.click(snapshot.get_one(role="button", name="Elsewhere"))
+    assert running.render().get_one(role="button", name="Elsewhere").focused
+
+    controller.focus()
+    running.drain()
+    running.render()
+    # Focus moves at the next frame.
+    running.tick(1.0)
+    running.drain_ready_events()
+    snapshot = running.render()
+    assert snapshot.get_one(role="text_input", name="Search").focused

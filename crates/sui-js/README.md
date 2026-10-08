@@ -107,6 +107,10 @@ and `row(...)` take `justify`, `alignItems`, and `wrap`; wrap a direct child in
 `flexItem(child, { grow: 1 })` to size it along the main axis, and use
 `spacer()` to fill the remaining space. `rebuildOnChange(states, build)`
 rebuilds a subtree on the UI thread whenever one of `states` changes. Pass a
+`FocusController` and `focusScope(child, { controller })` move keyboard focus
+from code. `UiHandle` schedules UI-thread work with `callLater` and
+`callEvery`, and shows native file dialogs with `showFileDialog`;
+`clipboardText()` and `setClipboardText()` reach the clipboard. Pass a
 `ScrollController` as `controller` to `scrollView` or `virtualScrollView` to
 scroll from code with `scrollTo` and `scrollToItem`. Labels take typography
 options, `listView` accepts `ListItem` objects beside strings, and `grid`

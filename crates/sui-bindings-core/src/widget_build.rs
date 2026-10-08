@@ -67,6 +67,7 @@ use sui::Flex;
 use sui::FlexWrap;
 use sui::FloatingStack;
 use sui::FloatingWorkspace;
+use sui::FocusScope;
 use sui::FormRow;
 use sui::FormSection;
 use sui::FramedField;
@@ -3218,6 +3219,13 @@ impl BindingWidget {
             }
             BindingWidgetKind::FlexItem { child, .. } => child.into_runtime_widget(errors),
             BindingWidgetKind::Spacer => BindingRuntimeWidget::new(SizedBox::new()),
+            BindingWidgetKind::FocusScope { child, controller } => {
+                let mut scope = FocusScope::new(child.into_runtime_widget(errors.clone()));
+                if let Some(controller) = controller {
+                    scope = scope.state(controller.state());
+                }
+                BindingRuntimeWidget::new(scope)
+            }
             BindingWidgetKind::RebuildOnChange {
                 states,
                 build,

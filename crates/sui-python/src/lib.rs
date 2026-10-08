@@ -31,40 +31,40 @@ use sui_bindings_core::{
     BindingColorPaletteSwatch, BindingColorSelectAction, BindingCommandDispatchTrace,
     BindingConstraintCase, BindingCustomEvent, BindingDialogOptions, BindingDockFloatingGroup,
     BindingDockLayout, BindingDockNode, BindingDockPanel, BindingDockState, BindingDragScope,
-    BindingEvent, BindingEventContext, BindingEventRouteTrace, BindingFlexItemOptions,
-    BindingFlexOptions, BindingFloatingStackWindow, BindingFloatingView,
-    BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFontHandle,
-    BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle, BindingImeEvent,
-    BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState, BindingKeyboardEvent,
-    BindingLabelOptions, BindingLayerListItem, BindingListItem, BindingMasterDetailState,
-    BindingMenuItem, BindingMessageAction, BindingModifiers, BindingNotificationCenter,
-    BindingNumber, BindingNumberAction, BindingPixelCanvasExport, BindingPixelCanvasState,
-    BindingPointerButton, BindingPointerEvent, BindingPointerEventKind, BindingPointerKind,
-    BindingRawMouseMotionEvent, BindingReactiveInvalidationTrace, BindingRenderOptions,
-    BindingRenderSnapshot, BindingReorderAction, BindingResponsiveSidebarState,
-    BindingRichDocument, BindingRichDocumentUpdate, BindingRuntime, BindingScrollAxes,
-    BindingScrollController, BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction,
-    BindingSemanticNode, BindingShader, BindingSpring, BindingState, BindingStateSubscription,
-    BindingStatusBarSegment, BindingStringAction, BindingStringsAction, BindingTableColumn,
-    BindingTableRow, BindingText, BindingTextFieldOptions, BindingTextSpan, BindingTheme,
-    BindingToolPaletteItem, BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue,
-    BindingVirtualListItem, BindingVirtualListModel, BindingWidget, BindingWidgetBuilder,
-    BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow, BindingWindowEvent,
-    BindingWindowId, ExternalBackendHandle, ExternalSync, ExternalTextureDescriptor,
-    ExternalTextureFormat, ExternalTextureValidationError, ForeignArrangeCtx,
-    ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
-    ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
+    BindingEvent, BindingEventContext, BindingEventRouteTrace, BindingFileDialogRequest,
+    BindingFlexItemOptions, BindingFlexOptions, BindingFloatingStackWindow, BindingFloatingView,
+    BindingFloatingViewSnapshot, BindingFloatingWorkspaceState, BindingFocusController,
+    BindingFontHandle, BindingFrameTiming, BindingIdAction, BindingImageFit, BindingImageHandle,
+    BindingImeEvent, BindingInspectorSnapshot, BindingInvalidationTrace, BindingKeyState,
+    BindingKeyboardEvent, BindingLabelOptions, BindingLayerListItem, BindingListItem,
+    BindingMasterDetailState, BindingMenuItem, BindingMessageAction, BindingModifiers,
+    BindingNotificationCenter, BindingNumber, BindingNumberAction, BindingPixelCanvasExport,
+    BindingPixelCanvasState, BindingPointerButton, BindingPointerEvent, BindingPointerEventKind,
+    BindingPointerKind, BindingRawMouseMotionEvent, BindingReactiveInvalidationTrace,
+    BindingRenderOptions, BindingRenderSnapshot, BindingReorderAction,
+    BindingResponsiveSidebarState, BindingRichDocument, BindingRichDocumentUpdate, BindingRuntime,
+    BindingScrollAxes, BindingScrollController, BindingScrollDelta, BindingSegmentedControlItem,
+    BindingSelectAction, BindingSemanticNode, BindingShader, BindingSpring, BindingState,
+    BindingStateSubscription, BindingStatusBarSegment, BindingStringAction, BindingStringsAction,
+    BindingTableColumn, BindingTableRow, BindingText, BindingTextFieldOptions, BindingTextSpan,
+    BindingTheme, BindingTimer, BindingToolPaletteItem, BindingTransition, BindingTreeItem,
+    BindingUiHandle, BindingValue, BindingVirtualListItem, BindingVirtualListModel, BindingWidget,
+    BindingWidgetBuilder, BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow,
+    BindingWindowEvent, BindingWindowId, ExternalBackendHandle, ExternalSync,
+    ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
+    ForeignArrangeCtx, ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx,
+    ForeignMeasureCtx, ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
     RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_alignment_from_name,
     binding_aspect_ratio_fit_from_name, binding_button_appearance_from_name,
-    binding_easing_from_name, binding_flex_justify_from_name, binding_grid_track_from_name,
-    binding_icon_glyph_from_name, binding_safe_area_edges_from_name,
-    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
-    binding_semantics_descriptions, binding_semantics_disabled,
+    binding_clipboard_text, binding_easing_from_name, binding_file_dialog_mode_from_name,
+    binding_flex_justify_from_name, binding_grid_track_from_name, binding_icon_glyph_from_name,
+    binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
+    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
     binding_semantics_nodes, binding_semantics_role_from_name, binding_semantics_roles,
-    binding_semantics_selected, binding_semantics_values,
+    binding_semantics_selected, binding_semantics_values, binding_set_clipboard_text,
     binding_simple_color_picker_mode_from_name, binding_surface_border_from_name,
     binding_surface_elevation_from_name, binding_surface_role_from_name,
     binding_table_column_alignment_from_name, binding_toggle_state_from_name,
@@ -3094,6 +3094,39 @@ impl From<BindingWindowId> for PyWindowHandle {
     }
 }
 
+/// A callback scheduled with `UiHandle.call_later` or `UiHandle.call_every`.
+#[pyclass(name = "Timer", module = "sinomo_ui", frozen, skip_from_py_object)]
+pub struct PyTimer {
+    inner: BindingTimer,
+}
+
+#[pymethods]
+impl PyTimer {
+    /// Stop the timer. A callback already queued for the UI thread still runs.
+    pub fn cancel(&self) {
+        self.inner.cancel();
+    }
+
+    /// Whether the timer can still fire.
+    #[getter]
+    pub fn active(&self) -> bool {
+        self.inner.is_active()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Timer(active={})", self.inner.is_active())
+    }
+}
+
+fn timer_duration(seconds: f64, name: &str) -> PyResult<std::time::Duration> {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "{name} must be a finite, non-negative number of seconds"
+        )));
+    }
+    Ok(std::time::Duration::from_secs_f64(seconds))
+}
+
 #[pyclass(name = "UiHandle", module = "sinomo_ui", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyUiHandle {
@@ -3102,6 +3135,81 @@ pub struct PyUiHandle {
 
 #[pymethods]
 impl PyUiHandle {
+    /// Run `callback` on the UI thread after `delay` seconds.
+    pub fn call_later(&self, delay: f64, callback: Py<PyAny>) -> PyResult<PyTimer> {
+        let delay = timer_duration(delay, "delay")?;
+        Ok(PyTimer {
+            inner: self.inner.call_later(delay, move || {
+                Python::attach(|py| {
+                    if let Err(error) = callback.call0(py) {
+                        report_callback_error(py, error);
+                    }
+                });
+            }),
+        })
+    }
+
+    /// Run `callback` on the UI thread every `interval` seconds until the
+    /// returned timer is cancelled.
+    pub fn call_every(&self, interval: f64, callback: Py<PyAny>) -> PyResult<PyTimer> {
+        let interval = timer_duration(interval, "interval")?;
+        if interval.is_zero() {
+            return Err(PyValueError::new_err("interval must be greater than zero"));
+        }
+        Ok(PyTimer {
+            inner: self.inner.call_every(interval, move || {
+                Python::attach(|py| {
+                    if let Err(error) = callback.call0(py) {
+                        report_callback_error(py, error);
+                    }
+                });
+            }),
+        })
+    }
+
+    /// Show a native file dialog. `on_result` runs on the UI thread with a
+    /// list of chosen paths, or `None` when the user cancels. A failure to
+    /// show the dialog is reported like a callback exception.
+    #[pyo3(signature = (on_result, mode="open", title=None, filters=None, directory=None, name=None))]
+    pub fn show_file_dialog(
+        &self,
+        on_result: Py<PyAny>,
+        mode: &str,
+        title: Option<String>,
+        filters: Option<Vec<(String, Vec<String>)>>,
+        directory: Option<std::path::PathBuf>,
+        name: Option<String>,
+    ) -> PyResult<()> {
+        let mode = binding_file_dialog_mode_from_name(mode).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "unknown file dialog mode '{mode}'; use 'open', 'open-multiple', 'save', \
+                 'folder', or 'folders'"
+            ))
+        })?;
+        let mut request = BindingFileDialogRequest::new(mode);
+        request.title = title;
+        request.filters = filters.unwrap_or_default();
+        request.directory = directory;
+        request.suggested_name = name;
+        self.inner.show_file_dialog(request, move |result| {
+            Python::attach(|py| {
+                let outcome = result.map_err(PyRuntimeError::new_err).and_then(|paths| {
+                    let paths = paths.map(|paths| {
+                        paths
+                            .iter()
+                            .map(|path| path.to_string_lossy().into_owned())
+                            .collect::<Vec<_>>()
+                    });
+                    on_result.call1(py, (paths,)).map(|_| ())
+                });
+                if let Err(error) = outcome {
+                    report_callback_error(py, error);
+                }
+            });
+        });
+        Ok(())
+    }
+
     /// Ask the running desktop event loop to exit; `App.run` then returns.
     /// Returns `False` when no event loop is running. Safe from any thread.
     pub fn request_exit(&self) -> bool {
@@ -3480,10 +3588,10 @@ impl PyRunningApp {
         raise_pending_exit()
     }
 
+    /// Dispatch due timer, animation-frame, and wake events and return how
+    /// many were dispatched.
     pub fn drain_ready_events(&self) -> PyResult<usize> {
-        let count = self.inner.borrow_mut().drain_ready_event_count();
-        raise_pending_exit()?;
-        Ok(count)
+        drive(self.inner.borrow_mut().drain_ready_event_count())
     }
 
     pub fn request_redraw_all(&self) -> PyResult<()> {
@@ -4569,6 +4677,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyApp>()?;
     m.add_class::<PyWindowHandle>()?;
     m.add_class::<PyUiHandle>()?;
+    m.add_class::<PyTimer>()?;
     m.add_class::<PyRunningApp>()?;
     m.add_class::<PyFrameTiming>()?;
     m.add_class::<PyWidgetTiming>()?;
@@ -4588,7 +4697,21 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_generated_python(m)?;
     m.add_function(wrap_pyfunction!(render_widget, m)?)?;
     m.add_function(wrap_pyfunction!(callback_errors::set_exception_handler, m)?)?;
+    m.add_function(wrap_pyfunction!(clipboard_text, m)?)?;
+    m.add_function(wrap_pyfunction!(set_clipboard_text, m)?)?;
     Ok(())
+}
+
+/// Text on the clipboard: the system clipboard on desktop hosts with a
+/// display, otherwise process memory shared with the app's widgets.
+#[pyfunction]
+fn clipboard_text() -> Option<String> {
+    binding_clipboard_text()
+}
+
+#[pyfunction]
+fn set_clipboard_text(text: &str) {
+    binding_set_clipboard_text(text);
 }
 
 fn binding_value_from_py(value: &Bound<'_, PyAny>) -> PyResult<BindingValue> {
