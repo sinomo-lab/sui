@@ -21,7 +21,7 @@ release gates.
 | Native Python and Node/Electron API | Implemented alpha | Preserve lifecycle, state, resource, paint, semantics, animation, and rich-document contracts during release work. |
 | Generated APIs and widget classification | Implemented | Keep generation and coverage checks passing as public Rust APIs evolve. |
 | Exact portable widget parity | Partial | `VirtualTable` is bound directly over a thread-safe keyed `TableModel` with conformance tests. `TextSurface` uses `TextArea`; editor-surface behavior still needs dedicated contracts and tests. |
-| Native packages | Partial | Local builds, loaders, metadata, and declarations exist; supported artifact matrices, release CI, clean-install tests, and publication remain open. |
+| Native packages | Partial | Python: abi3 wheels for Windows x64, macOS arm64/x64, and Linux x64/aarch64 (`manylinux_2_28`) plus an sdist are built, tested from clean installs, and published by `.github/workflows/python.yml`. Node/Electron: artifact matrices, release CI, clean-install tests, and publication remain open. |
 | Desktop smoke coverage | Partial | Host-driven tests and examples exist; supported-platform real-window lifecycle/input/render coverage remains open. |
 | Browser JavaScript/WASM bindings | Not implemented | Define and implement the browser package and lifecycle; the Rust/WASM demo is an existing, separate surface. |
 | User shader registration | Not implemented | Built-in shader descriptors exist; custom WGSL validation, schemas, caching, and lifecycle handling remain open. |
@@ -154,17 +154,15 @@ Future work should preserve these boundaries:
 
 ### 1. Publish reproducible native packages
 
-**Status: partial.** Python has maturin configuration and type metadata;
-Node/Electron has a native loader, package metadata, TypeScript declarations,
-and local build/consumer commands. The remaining work is artifact production,
-installation validation, and release automation.
-
-Python:
-
-- select supported CPython versions and target triples;
-- build and test wheels in CI with maturin;
-- verify wheel installation in clean environments;
-- publish package metadata, type information, license files, and release notes.
+**Status: partial.** The Python package is done: `.github/workflows/python.yml`
+builds abi3 wheels (CPython 3.10 and newer) for Windows x64, macOS arm64 and
+x64, and Linux x64 and aarch64 (`manylinux_2_28`) plus an sdist, installs each
+wheel in a clean environment on Python 3.10 and 3.14 to run the test suite
+and stubtest, and publishes with PyPI trusted publishing on `v*` tags, with a
+TestPyPI rehearsal by manual dispatch. Node/Electron has a native loader,
+package metadata, TypeScript declarations, and local build/consumer commands;
+its artifact production, installation validation, and release automation
+remain open.
 
 Node/Electron:
 

@@ -33,7 +33,7 @@ Add the registry package to `Cargo.toml` and keep the shorter `sui` crate alias:
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", version = "0.4" }
+sui = { package = "sinomo-ui", version = "0.5" }
 ```
 
 The Cargo package is named `sinomo-ui`, while the dependency alias is `sui`.

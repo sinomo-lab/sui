@@ -5,24 +5,45 @@ build-backend = "maturin"
 [project]
 name = "sinomo-ui"
 dynamic = ["version"]
-description = "Python bindings for SUI."
+description = "Native, GPU-rendered desktop UI toolkit for Python, built on the Rust SUI toolkit."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+authors = [{ name = "Infinity_X", email = "Infinity_X@sinomo.net" }]
+keywords = ["ui", "gui", "widgets", "wgpu", "desktop", "accessibility"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Rust",
     "Topic :: Software Development :: User Interfaces",
+    "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/sinomo-lab/sui"
+Documentation = "https://github.com/sinomo-lab/sui/blob/main/crates/sui-python/README.md"
+Repository = "https://github.com/sinomo-lab/sui"
+Changelog = "https://github.com/sinomo-lab/sui/blob/main/CHANGELOG.md"
+Issues = "https://github.com/sinomo-lab/sui/issues"
 
 [tool.maturin]
 bindings = "pyo3"
 python-source = "python"
 module-name = "sinomo_ui._native"
 features = ["extension-module", "desktop"]
+# Local editable builds leave debug symbols beside the package sources.
+exclude = ["python/sinomo_ui/*.pdb"]
 
 [dependency-groups]
 dev = [

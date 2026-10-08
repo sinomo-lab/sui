@@ -184,22 +184,19 @@ For test APIs and artifact capture, continue with the
 
 ## Python examples
 
-The Python package is a native PyO3 extension built with Maturin. It requires
-Python 3.10 or newer, Rust 1.90 or newer, and Maturin 1.x. The package is not
-published yet, so build it from this checkout.
-
-The following workspace-root commands create an isolated environment outside
-the checkout, build the extension, and run every example:
+The Python package is published as `sinomo-ui` and needs Python 3.10 or
+newer. With it installed, run the examples from the workspace root:
 
 ```bash
-python3 -m venv /tmp/sui-python-venv
-source /tmp/sui-python-venv/bin/activate
-python -m pip install "maturin>=1.15,<2"
-(cd crates/sui-python && maturin develop)
+python -m pip install sinomo-ui
 python crates/sui-python/examples/counter.py
 python crates/sui-python/examples/custom_widget.py
 python crates/sui-python/examples/external_surface.py
 ```
+
+To run them against the checkout instead, build the extension with `uv sync`
+in `crates/sui-python`, as the [Python guide](../crates/sui-python/README.md)
+describes, and prefix each command with `uv run --project crates/sui-python`.
 
 The examples use `App.start()` and render in process, so they print snapshot
 and event information instead of opening windows:

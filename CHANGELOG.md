@@ -4,10 +4,28 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
-## [Unreleased]
+## [0.5.0] - 2026-10-08
+
+This release publishes the Python binding on PyPI as `sinomo-ui`, brings its
+API close to the Rust widgets and services, and makes callback errors,
+Ctrl+C, and state-bound widgets behave correctly in Python and JavaScript.
+
+### Breaking changes
+
+- The Python distribution is now `sinomo-ui` and the import package
+  `sinomo_ui` (previously `sui-ui` and `sui`); use `import sinomo_ui as sui`.
+- Python widget factories are `snake_case` only; the `PascalCase` aliases
+  such as `sui.Button` are gone.
+- Layout in the pass right after a window resize now uses the new viewport
+  size instead of the previous one.
 
 ### Python
 
+- Published the Python binding on PyPI as `sinomo-ui`: abi3 wheels for
+  CPython 3.10 and newer on Windows x64, macOS arm64 and x64 (macOS 11+), and
+  Linux x64 and aarch64 (glibc 2.28+), plus an sdist. A new release workflow
+  builds them, tests each wheel from a clean install, and publishes with
+  trusted publishing.
 - Added `sinomo_ui.aio` with `AsyncRunner`, `run_on_ui`, and `file_dialog` to
   run asyncio coroutines beside the UI loop.
 - Made `Point`, `Size`, `Rect`, `Color`, `Constraints`, and resource and
@@ -460,3 +478,4 @@ Initial public alpha release of the Rust workspace.
 [0.3.0]: https://github.com/sinomo-lab/sui/compare/v0.2.1...v0.3.0
 [0.4.0]: https://github.com/sinomo-lab/sui/compare/v0.3.0...v0.4.0
 [0.4.1]: https://github.com/sinomo-lab/sui/compare/v0.4.0...v0.4.1
+[0.5.0]: https://github.com/sinomo-lab/sui/compare/v0.4.1...v0.5.0

@@ -7,7 +7,7 @@ detail. Roadmaps are deliberately separated from shipped behavior.
 
 SUI is pre-1.0: the Rust crates, desktop runtime, and testing surfaces are
 available, while some platform and language-package integrations remain
-experimental or source-built. The [root README](../README.md#platform-status)
+experimental. The [root README](../README.md#platform-status)
 records the supported surface and release boundary.
 
 ## Start here
@@ -88,7 +88,8 @@ Language-specific setup and examples:
 - [Python binding guide](../crates/sui-python/README.md)
 - [Node/Electron binding guide](../crates/sui-js/README.md)
 
-Both binding packages are alpha and must currently be built from source.
+Both binding packages are alpha. The Python package is published on PyPI as
+`sinomo-ui`; the Node/Electron package must currently be built from source.
 Browser JavaScript/WASM bindings are not implemented.
 
 ## Architecture and contributors

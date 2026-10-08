@@ -66,6 +66,16 @@ def test_motion_preference_off_finishes_transitions_immediately():
         sui.set_motion_preference("slow")
 
 
+def screenshot(running):
+    """Capture PNG data, skipping where no GPU adapter is available."""
+    try:
+        return running.screenshot_png()
+    except RuntimeError as error:
+        if "failed to acquire wgpu adapter" in str(error):
+            pytest.skip("no wgpu adapter is available on this machine")
+        raise
+
+
 def png_size(data):
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
     return struct.unpack(">II", data[16:24])
@@ -73,7 +83,7 @@ def png_size(data):
 
 def test_screenshots_render_the_window(tmp_path):
     running = start(sui.button("Capture"), size=(160, 90))
-    data = running.screenshot_png()
+    data = screenshot(running)
     assert png_size(data) == (160, 90)
 
     path = tmp_path / "shots" / "window.png"
@@ -84,5 +94,5 @@ def test_screenshots_render_the_window(tmp_path):
 def test_unsized_windows_are_captured_at_their_content_size():
     app = sui.App()
     app.window(sui.Window("No size").root(sui.button("Content")))
-    width, height = png_size(app.start().screenshot_png())
+    width, height = png_size(screenshot(app.start()))
     assert 0 < width < 320 and 0 < height < 200

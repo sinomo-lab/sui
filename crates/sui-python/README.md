@@ -1,87 +1,67 @@
-# SUI Python bindings
+# sinomo-ui
 
-`sinomo-ui` is the native Python binding for SUI. Install the `sinomo-ui`
-distribution and import the `sinomo_ui` package; the examples use the short
-alias `sui`:
+`sinomo-ui` brings [SUI](https://github.com/sinomo-lab/sui/blob/main/README.md), a Rust UI toolkit rendered with
+`wgpu`, to Python. Applications build retained widget trees from ordinary
+Python objects and callbacks, and get native desktop windows,
+accessibility, rich text, virtualized collections, theming, animation, and
+deterministic headless testing.
+
+```bash
+pip install sinomo-ui
+```
 
 ```python
 import sinomo_ui as sui
+
+count = sui.State(0)
+
+app = sui.App()
+app.window(
+    sui.Window("Counter", size=sui.Size(320, 160)).root(
+        sui.column(
+            [
+                sui.label(count),
+                sui.button("Add one", on_press=lambda: count.set(count.get() + 1)),
+            ],
+            gap=8,
+            align_items="center",
+        )
+    )
+)
+app.run()
 ```
+
+The distribution is `sinomo-ui`; import the `sinomo_ui` package, which the
+examples alias as `sui`. Widget factories are `snake_case` functions such as
+`sui.label(...)`, and classes such as `sui.App` and `sui.State` are
+`PascalCase`. The package is fully typed (`py.typed`).
+
+## Platforms
+
+Wheels are published for CPython 3.10 and newer, built against the stable ABI
+(`abi3`), so one wheel per platform serves every supported Python version:
+
+| Platform | Architectures | Minimum |
+| --- | --- | --- |
+| Windows | x86-64 | Windows 10 |
+| macOS | x86-64, arm64 | macOS 11 |
+| Linux | x86-64, aarch64 | glibc 2.28 (`manylinux_2_28`) |
+
+Desktop windows need a graphics driver that `wgpu` supports (Vulkan, Metal,
+DirectX 12, or OpenGL). On Linux, SUI loads X11 or Wayland libraries at
+runtime, so a normal desktop session needs nothing extra. Host-driven use
+through `App.start()`, including tests, needs no window system. Other
+platforms can build from source; see [Building from source](#building-from-source).
+
+SUI is pre-1.0 software, and this Python API may change between minor
+releases. The [changelog](https://github.com/sinomo-lab/sui/blob/main/CHANGELOG.md) lists breaking changes.
 
 The package wraps a native `sinomo_ui._native` extension and ships typed stubs
-(`_native.pyi` and `py.typed`) generated from the same binding specification
-as the native wrappers. Wheels target the stable CPython ABI (`abi3`), so one
-wheel per platform covers Python 3.10 and newer.
-
-The binding supports retained widget trees, desktop event-loop execution,
-host-driven rendering, thread-safe state updates, custom Python widgets,
-accessibility semantics, renderer-neutral paint commands, image and font
-resources, live theme handles, renderer/HDR policy, and external-surface
-descriptors. It is an alpha, source-built
-package; prebuilt wheels are not published yet.
-
-## Prerequisites
-
-- Rust 1.90 or newer and Cargo;
-- [uv](https://docs.astral.sh/uv/), which provides Python 3.10 and the
-  development tools;
-- for `App.run()`, a desktop supported by SUI's `winit` and `wgpu` backends.
-
-## Build for development
-
-From `crates/sui-python`, create the development environment:
-
-```bash
-uv sync
-```
-
-This creates `.venv` with the pinned Python version (`.python-version`, the
-oldest supported release), installs maturin, pytest, and mypy from the locked
-`dev` group, and builds `sinomo_ui` in editable mode. After changing Rust
-code, rebuild the extension in place:
-
-```bash
-uv run maturin develop --uv
-```
-
-Add `--release` for an optimized development build. To create an installable
-wheel instead:
-
-```bash
-uv run maturin build --release
-```
-
-Maturin prints the resulting wheel path when the build completes. Wheels use
-the stable ABI, so the `cp310-abi3` wheel installs on every supported Python
-version.
-
-## Run the examples
-
-After `uv sync`, run these commands from `crates/sui-python`:
-
-```bash
-uv run python examples/counter.py
-uv run python examples/custom_widget.py
-uv run python examples/external_surface.py
-```
-
-Or run them from the workspace root:
-
-```bash
-uv run --project crates/sui-python python crates/sui-python/examples/counter.py
-uv run --project crates/sui-python python crates/sui-python/examples/custom_widget.py
-uv run --project crates/sui-python python crates/sui-python/examples/external_surface.py
-```
-
-The examples deliberately use `App.start()`. They render in process and print
-snapshot or event information; they do not open desktop windows.
-
-- [`counter.py`](examples/counter.py) covers `State`, built-in controls, a
-  posted UI task, and rerendering.
-- [`custom_widget.py`](examples/custom_widget.py) supplies Python measurement,
-  event, semantics, and paint callbacks.
-- [`external_surface.py`](examples/external_surface.py) renders a CPU-RGBA
-  texture through `ExternalSurface`.
+generated from the same binding specification as the native wrappers. It
+supports retained widget trees, desktop event-loop execution, host-driven
+rendering, thread-safe state updates, custom Python widgets, accessibility
+semantics, renderer-neutral paint commands, image and font resources, live
+theme handles, renderer and HDR policy, and external-surface descriptors.
 
 ## Open a desktop window
 
@@ -460,7 +440,7 @@ included in semantics unless the callback explicitly includes them.
 The paint surface supports styled text, paths and path clips, rounded
 rectangles, shadows, transforms, image quads, and validated built-in shaders.
 Applications can register fonts and RGBA, PNG, or SVG images from bytes or
-files. See [`examples/custom_widget.py`](examples/custom_widget.py) for a
+files. See [`examples/custom_widget.py`](https://github.com/sinomo-lab/sui/blob/main/crates/sui-python/examples/custom_widget.py) for a
 complete custom control.
 
 `ExternalSurface` accepts CPU-upload, shared-texture, and shared-render-target
@@ -470,7 +450,6 @@ implemented yet.
 
 ## Current limitations
 
-- Wheels and release automation are not published; users build from source.
 - `App.run()` can run once per process, so notebooks cannot re-run a desktop
   app in the same kernel. Use `App.start()` for repeatable host-driven runs.
 - Every public Rust widget is classified as directly bound, manually wrapped,
@@ -485,7 +464,72 @@ implemented yet.
   only the portable CPU-upload external surface is rendered end to end.
 - The API is pre-release and may change before the first stable release.
 
-## Validate binding changes
+## Building from source
+
+Building the package requires:
+
+- Rust 1.90 or newer and Cargo;
+- [uv](https://docs.astral.sh/uv/), which provides Python 3.10 and the
+  development tools;
+- for `App.run()`, a desktop supported by SUI's `winit` and `wgpu` backends.
+
+### Build for development
+
+From `crates/sui-python`, create the development environment:
+
+```bash
+uv sync
+```
+
+This creates `.venv` with the pinned Python version (`.python-version`, the
+oldest supported release), installs maturin, pytest, and mypy from the locked
+`dev` group, and builds `sinomo_ui` in editable mode. After changing Rust
+code, rebuild the extension in place:
+
+```bash
+uv run maturin develop --uv
+```
+
+Add `--release` for an optimized development build. To create an installable
+wheel instead:
+
+```bash
+uv run maturin build --release
+```
+
+Maturin prints the resulting wheel path when the build completes. Wheels use
+the stable ABI, so the `cp310-abi3` wheel installs on every supported Python
+version.
+
+### Run the examples
+
+After `uv sync`, run these commands from `crates/sui-python`:
+
+```bash
+uv run python examples/counter.py
+uv run python examples/custom_widget.py
+uv run python examples/external_surface.py
+```
+
+Or run them from the workspace root:
+
+```bash
+uv run --project crates/sui-python python crates/sui-python/examples/counter.py
+uv run --project crates/sui-python python crates/sui-python/examples/custom_widget.py
+uv run --project crates/sui-python python crates/sui-python/examples/external_surface.py
+```
+
+The examples deliberately use `App.start()`. They render in process and print
+snapshot or event information; they do not open desktop windows.
+
+- [`counter.py`](https://github.com/sinomo-lab/sui/blob/main/crates/sui-python/examples/counter.py) covers `State`, built-in controls, a
+  posted UI task, and rerendering.
+- [`custom_widget.py`](https://github.com/sinomo-lab/sui/blob/main/crates/sui-python/examples/custom_widget.py) supplies Python measurement,
+  event, semantics, and paint callbacks.
+- [`external_surface.py`](https://github.com/sinomo-lab/sui/blob/main/crates/sui-python/examples/external_surface.py) renders a CPU-RGBA
+  texture through `ExternalSurface`.
+
+### Validate binding changes
 
 Rust-side binding tests do not require an installed extension module:
 
@@ -509,8 +553,8 @@ SUI_DESKTOP_TESTS=1 uv run pytest
 
 ## More documentation
 
-- [Examples catalog](../../docs/examples.md)
-- [Rust API guide](../../docs/api/README.md)
-- [Testing guide](../../docs/testing.md)
-- [Cross-language binding roadmap](../../docs/plans/cross-language-bindings-plan.md)
-- [Documentation index](../../docs/README.md)
+- [Examples catalog](https://github.com/sinomo-lab/sui/blob/main/docs/examples.md)
+- [Rust API guide](https://github.com/sinomo-lab/sui/blob/main/docs/api/README.md)
+- [Testing guide](https://github.com/sinomo-lab/sui/blob/main/docs/testing.md)
+- [Cross-language binding roadmap](https://github.com/sinomo-lab/sui/blob/main/docs/plans/cross-language-bindings-plan.md)
+- [Documentation index](https://github.com/sinomo-lab/sui/blob/main/docs/README.md)

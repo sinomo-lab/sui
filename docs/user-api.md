@@ -11,7 +11,7 @@ application code:
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", version = "0.4" }
+sui = { package = "sinomo-ui", version = "0.5" }
 ```
 
 ```rust,no_run
@@ -113,8 +113,9 @@ call out platform or stability limits.
 
 ## Python and JavaScript
 
-Native bindings implement the same high-level ownership model but are alpha
-and not published yet:
+Native bindings implement the same high-level ownership model but are alpha.
+The Python package is published on PyPI as `sinomo-ui`; the Node/Electron
+package is not published yet:
 
 - [Python/PyO3 guide](../crates/sui-python/README.md)
 - [Node/Electron napi-rs guide](../crates/sui-js/README.md)
@@ -128,7 +129,7 @@ zero-copy external-surface composition remain roadmap items; see the
 ## Stability boundary
 
 The public Rust facade, desktop runtime, built-in widgets, and deterministic
-testing model are implemented. This is still a `0.4.1` pre-release workspace:
+testing model are implemented. This is still a `0.5.0` pre-release workspace:
 semver compatibility is not promised, language packages are local builds, and
 browser/mobile/native-HDR surfaces vary by platform. Check the
 [platform matrix](../README.md#platform-status) before choosing a deployment

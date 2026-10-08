@@ -15,7 +15,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-sui = { package = "sinomo-ui", version = "0.4" }
+sui = { package = "sinomo-ui", version = "0.5" }
 ```
 
 The left-hand name is intentional. Cargo resolves the `sinomo-ui` package, but

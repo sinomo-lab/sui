@@ -30,7 +30,7 @@ SUI requires Rust 1.90 or newer and the system libraries normally required by
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", version = "0.4" }
+sui = { package = "sinomo-ui", version = "0.5" }
 ```
 
 The package is named `sinomo-ui` because the `sui` registry namespace is
@@ -77,7 +77,7 @@ series.
 | Headless/testing | Available | Deterministic runtime, semantic interaction, rendering, and screenshots |
 | Web | Alpha | Rust/Wasm and WebGPU; used by the live widget book |
 | Android | Experimental | Native-activity host with lifecycle-aware surface management |
-| Python | Alpha | Working native binding, currently built from source |
+| Python | Alpha | `pip install sinomo-ui`; wheels for Windows, macOS, and Linux |
 | JavaScript | Alpha | Working but incomplete Node/Electron binding, currently built from source |
 
 The web path runs SUI applications through Rust/Wasm and WebGPU; it is not a
