@@ -402,10 +402,10 @@ impl JsApp {
 
     #[wasm_bindgen(js_name = fontBytes)]
     pub fn font_bytes(&self, data: Vec<u8>) -> Result<JsFontHandle> {
-        recover_lock(&self.inner)
-            .register_font_bytes(data)
-            .map(|inner| JsFontHandle { inner })
-            .map_err(runtime_error)
+        let mut app = recover_lock(&self.inner);
+        app.register_font_bytes(data)
+            .map(|inner| JsFontHandle::registered(&app, inner))
+            .map_err(invalid_arg)
     }
 
     #[wasm_bindgen(js_name = fontFile)]

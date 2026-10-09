@@ -2614,8 +2614,14 @@ fn binding_app_registers_app_level_png_resources() {
 #[test]
 fn binding_app_registers_app_level_font_resources() {
     let mut app = BindingApp::new();
-    let font = app.register_font_bytes(vec![0, 1, 2, 3]).unwrap();
+    let font = app
+        .register_font_bytes(include_bytes!(
+            "../../sui-text/assets/NotoSans-Ag-subset.woff2"
+        ))
+        .unwrap();
     assert!(font.get() > 0);
+    assert_eq!(app.font_family(font).as_deref(), Some("Noto Sans"));
+    assert!(app.register_font_bytes(vec![0, 1, 2, 3]).is_err());
     app.push_window(BindingWindow::new("Fonts", BindingWidget::label("Text")));
 
     assert_eq!(app.font_resource_count(), 1);

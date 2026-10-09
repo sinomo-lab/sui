@@ -395,7 +395,8 @@ fn main() -> Result<()> {
 
 Available registration paths include:
 
-- `font_bytes` or `register_font` for fonts.
+- `font_bytes` or `register_font` for TrueType, OpenType, WOFF, and WOFF2
+  fonts; `RegisteredFont::family_name` reads a font's family name.
 - `svg_image` and `svg_image_at_size` for intrinsic or explicitly rasterized
   SVG images.
 - `rgba_image` or `image` for decoded raster data.

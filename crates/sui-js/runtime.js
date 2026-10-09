@@ -428,6 +428,14 @@ export function createApi(native, host) {
     });
   };
 
+  App.prototype.fontUrl = async function (url, init) {
+    const response = await fetch(url, init);
+    if (!response.ok) {
+      throw new Error(`failed to fetch font '${url}': ${response.status} ${response.statusText}`);
+    }
+    return this.fontBytes(new Uint8Array(await response.arrayBuffer()));
+  };
+
   // ---- UI handle ------------------------------------------------------
 
   const nativeShowFileDialog = UiHandle.prototype.showFileDialog;

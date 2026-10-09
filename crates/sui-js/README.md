@@ -323,8 +323,10 @@ included in semantics unless the callback explicitly includes them.
 
 The paint surface supports styled text, paths and path clips, rounded
 rectangles, shadows, transforms, image quads, and validated built-in shaders.
-Applications can register fonts and RGBA, PNG, or SVG images from bytes, and
-on Node also from files. See [`examples/custom-widget.js`](examples/custom-widget.js) for a
+Applications can register RGBA, PNG, or SVG images and TrueType, OpenType,
+WOFF, or WOFF2 fonts from bytes, and on Node also from files.
+`await app.fontUrl(url)` fetches and registers a font, such as a web font the
+page also uses; a `FontHandle`'s `family` reads the font's family name. See [`examples/custom-widget.js`](examples/custom-widget.js) for a
 complete custom control.
 
 `ExternalSurface` accepts CPU-upload, shared-texture, and shared-render-target

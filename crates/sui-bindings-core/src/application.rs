@@ -376,13 +376,21 @@ impl BindingApp {
         &mut self,
         data: impl Into<Vec<u8>>,
     ) -> Result<BindingFontHandle, String> {
+        let font = RegisteredFont::try_from_bytes(data).map_err(|error| error.to_string())?;
         let handle = BindingFontHandle::app_resource(self.next_font_slot);
         self.next_font_slot = self.next_font_slot.saturating_add(1);
-        self.font_resources.push(BindingFontResource {
-            handle,
-            font: RegisteredFont::from_bytes(data),
-        });
+        self.font_resources
+            .push(BindingFontResource { handle, font });
         Ok(handle)
+    }
+
+    /// The family name of a font registered with this app, when the font
+    /// names one.
+    pub fn font_family(&self, handle: BindingFontHandle) -> Option<String> {
+        self.font_resources
+            .iter()
+            .find(|resource| resource.handle == handle)
+            .and_then(|resource| resource.font.family_name())
     }
 
     pub fn font_resource_count(&self) -> usize {

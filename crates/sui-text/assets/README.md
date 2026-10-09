@@ -32,6 +32,11 @@ The existing generic font assets retain their original provenance:
 Keep each corresponding SIL Open Font License 1.1 file with redistributed font
 assets.
 
+`NotoSans-Ag-subset.woff` and `NotoSans-Ag-subset.woff2` are test fixtures
+for web-font decoding: `NotoSans-Regular.ttf` subset with fontTools to the
+glyphs `A` and `g`, and saved as WOFF and WOFF2. They are covered by
+`NotoSans-LICENSE`.
+
 The Arabic and Hebrew assets are the complete regular-weight TTFs from the
 upstream releases below, copied without modification or character subsetting.
 They add 337,808 bytes of font data and require no network requests. The adjacent

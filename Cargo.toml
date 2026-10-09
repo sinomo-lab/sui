@@ -93,3 +93,4 @@ ttf-parser = "0.25.1"
 wgpu = "30.0.1"
 winit = { version = "0.30.13", features = ["android-native-activity"] }
 wry = { version = "0.57.0", default-features = false }
+wuff = "0.2.9"

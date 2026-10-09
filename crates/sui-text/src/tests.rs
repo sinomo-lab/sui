@@ -237,6 +237,56 @@ fn text_system_uses_registered_font_handles() {
 }
 
 #[test]
+fn woff_and_woff2_fonts_are_decoded_and_shape_text() {
+    let system = TextSystem::new();
+    for (index, data) in [
+        &include_bytes!("../assets/NotoSans-Ag-subset.woff")[..],
+        &include_bytes!("../assets/NotoSans-Ag-subset.woff2")[..],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let font = RegisteredFont::try_from_bytes(data.to_vec()).unwrap();
+        assert_eq!(&font.bytes()[..4], &[0, 1, 0, 0], "decoded to TrueType");
+        assert_eq!(font.family_name().as_deref(), Some("Noto Sans"));
+        assert_eq!(RegisteredFont::from_bytes(data.to_vec()), font);
+
+        let handle = FontHandle::new(40 + index as u64);
+        let mut fonts = FontRegistry::new();
+        fonts.insert(handle, font);
+        let layout = system
+            .shape_text(
+                "Ag",
+                Size::new(160.0, 28.0),
+                TextStyle {
+                    font: Some(handle),
+                    ..TextStyle::new(Color::WHITE)
+                },
+                &fonts,
+            )
+            .unwrap();
+        assert_same_font_data(
+            layout.run_face(0).shared_bytes(),
+            fonts.get(handle).unwrap().shared_bytes(),
+        );
+    }
+}
+
+#[test]
+fn checked_font_data_rejects_other_data_and_broken_web_fonts() {
+    assert!(RegisteredFont::try_from_bytes(b"not a font".to_vec()).is_err());
+    let mut truncated = include_bytes!("../assets/NotoSans-Ag-subset.woff2").to_vec();
+    truncated.truncate(64);
+    assert!(RegisteredFont::try_from_bytes(truncated.clone()).is_err());
+    // The unchecked constructor keeps data it cannot decode.
+    assert_eq!(
+        RegisteredFont::from_bytes(truncated.clone()).bytes(),
+        truncated
+    );
+    assert_eq!(load_test_font().family_name().as_deref(), Some("Noto Sans"));
+}
+
+#[test]
 fn text_system_reuses_font_context_across_layout_cache_misses() {
     let system = TextSystem::new();
     let fonts = FontRegistry::new();

@@ -104,11 +104,47 @@ pub struct RegisteredFont {
 }
 
 impl RegisteredFont {
+    /// Font data: a TrueType or OpenType font or collection, or one
+    /// compressed as WOFF or WOFF2, which is decoded. Data is not checked
+    /// here; data that is not a font, or that fails to decode, fails when the
+    /// font is used. [`try_from_bytes`](Self::try_from_bytes) checks it.
     pub fn from_bytes(data: impl Into<Vec<u8>>) -> Self {
+        let data = data.into();
+        let data = match decode_web_font(&data) {
+            Some(Ok(decoded)) => decoded,
+            _ => data,
+        };
         Self {
-            data: Arc::<[u8]>::from(data.into()),
+            data: Arc::<[u8]>::from(data),
             face_index: 0,
         }
+    }
+
+    /// Like [`from_bytes`](Self::from_bytes), but fails when the data is not
+    /// a font or a WOFF or WOFF2 file does not decode.
+    pub fn try_from_bytes(data: impl Into<Vec<u8>>) -> Result<Self> {
+        let data = data.into();
+        let data = match decode_web_font(&data) {
+            Some(decoded) => decoded?,
+            None => data,
+        };
+        if ttf_parser::fonts_in_collection(&data).is_none()
+            && ttf_parser::Face::parse(&data, 0).is_err()
+        {
+            return Err(Error::new(
+                "font data is not a TrueType, OpenType, WOFF, or WOFF2 font",
+            ));
+        }
+        Ok(Self {
+            data: Arc::<[u8]>::from(data),
+            face_index: 0,
+        })
+    }
+
+    /// The font's family name, preferring its typographic family, when the
+    /// font names one.
+    pub fn family_name(&self) -> Option<String> {
+        face_family_name(&self.data, self.face_index)
     }
 
     pub const fn with_face_index(mut self, face_index: u32) -> Self {
@@ -214,17 +250,32 @@ impl ResolvedTextFace {
     /// The font's family name, preferring its typographic family, when the
     /// font names one.
     pub fn family_name(&self) -> Option<String> {
-        let face = ttf_parser::Face::parse(self.bytes(), self.face_index).ok()?;
-        let names = face.names();
-        let named = |id| {
-            names
-                .into_iter()
-                .filter(|name| name.name_id == id && name.is_unicode())
-                .find_map(|name| name.to_string())
-        };
-        named(ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
-            .or_else(|| named(ttf_parser::name_id::FAMILY))
+        face_family_name(self.bytes(), self.face_index)
     }
+}
+
+/// The family name of a face, preferring its typographic family.
+fn face_family_name(data: &[u8], face_index: u32) -> Option<String> {
+    let face = ttf_parser::Face::parse(data, face_index).ok()?;
+    let names = face.names();
+    let named = |id| {
+        names
+            .into_iter()
+            .filter(|name| name.name_id == id && name.is_unicode())
+            .find_map(|name| name.to_string())
+    };
+    named(ttf_parser::name_id::TYPOGRAPHIC_FAMILY).or_else(|| named(ttf_parser::name_id::FAMILY))
+}
+
+/// Decode WOFF or WOFF2 data to an OpenType font; `None` when the data is
+/// neither.
+fn decode_web_font(data: &[u8]) -> Option<Result<Vec<u8>>> {
+    let decoded = match data.get(..4)? {
+        b"wOFF" => wuff::decompress_woff1(data),
+        b"wOF2" => wuff::decompress_woff2(data),
+        _ => return None,
+    };
+    Some(decoded.map_err(|_| Error::new("failed to decode WOFF or WOFF2 font data")))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

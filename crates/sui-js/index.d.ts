@@ -627,6 +627,11 @@ export class Semantics {
 export class FontHandle {
   constructor(id: string);
   readonly id: string;
+  /**
+   * The registered font's family name, when the font names one; `null` for
+   * handles made from an id.
+   */
+  readonly family: string | null;
 }
 
 
@@ -792,8 +797,12 @@ export class App {
   svgFile(path: string): ImageHandle;
   svgImageAtSize(width: number, height: number, svg: Uint8Array): ImageHandle;
   svgFileAtSize(width: number, height: number, path: string): ImageHandle;
+  /** Register a TrueType, OpenType, WOFF, or WOFF2 font. */
   fontBytes(data: Uint8Array): FontHandle;
+  /** Node only: register a font file. */
   fontFile(path: string): FontHandle;
+  /** Fetch and register a font, such as a web font the page also uses. */
+  fontUrl(url: string | URL, init?: RequestInit): Promise<FontHandle>;
   readonly windowCount: number;
   readonly fontResourceCount: number;
   readonly imageResourceCount: number;

@@ -329,7 +329,8 @@ impl ResourceRegistry<'_> {
         self.application.register_font(handle, font)
     }
 
-    /// Register font bytes and allocate a stable handle.
+    /// Register a TrueType, OpenType, WOFF, or WOFF2 font and allocate a
+    /// stable handle. Fails when the data is not such a font.
     pub fn font_bytes(&mut self, data: impl Into<Vec<u8>>) -> Result<FontHandle> {
         self.application.register_font_bytes(data)
     }

@@ -47,7 +47,7 @@ impl ResourceStore {
 
     pub(crate) fn register_font_bytes(&mut self, data: impl Into<Vec<u8>>) -> Result<FontHandle> {
         let handle = FontHandle::new(self.next_font_id.max(1));
-        self.register_font(handle, RegisteredFont::from_bytes(data))?;
+        self.register_font(handle, RegisteredFont::try_from_bytes(data)?)?;
         Ok(handle)
     }
 
@@ -191,6 +191,11 @@ mod tests {
                 .is_err()
         );
         assert_eq!(runtime.font_registry().get(id).unwrap().bytes(), &[1, 2, 3]);
-        assert_eq!(runtime.register_font_bytes(vec![8, 9]).unwrap().get(), 18);
+        assert!(runtime.register_font_bytes(vec![8, 9]).is_err());
+        let font = include_bytes!("../../sui-text/assets/NotoSans-Ag-subset.woff2");
+        assert_eq!(
+            runtime.register_font_bytes(font.to_vec()).unwrap().get(),
+            18
+        );
     }
 }

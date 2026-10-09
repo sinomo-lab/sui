@@ -1989,9 +1989,20 @@ impl From<Constraints> for PyConstraints {
 }
 
 #[pyclass(name = "FontHandle", frozen, module = "sinomo_ui", skip_from_py_object)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct PyFontHandle {
     inner: BindingFontHandle,
+    family: Option<String>,
+}
+
+impl PyFontHandle {
+    /// A handle for a font just registered with `app`.
+    fn registered(app: &BindingApp, inner: BindingFontHandle) -> Self {
+        Self {
+            inner,
+            family: app.font_family(inner),
+        }
+    }
 }
 
 #[pymethods]
@@ -2008,12 +2019,20 @@ impl PyFontHandle {
     pub const fn new(raw: u64) -> Self {
         Self {
             inner: BindingFontHandle::new(raw),
+            family: None,
         }
     }
 
     #[getter]
     pub const fn id(&self) -> u64 {
         self.inner.get()
+    }
+
+    /// The registered font's family name, when the font names one; `None`
+    /// for handles made from an id.
+    #[getter]
+    pub fn family(&self) -> Option<String> {
+        self.family.clone()
     }
 
     fn __repr__(&self) -> String {
@@ -3163,7 +3182,7 @@ impl PyApp {
     pub fn font_bytes(&mut self, data: &Bound<'_, PyAny>) -> PyResult<PyFontHandle> {
         self.inner
             .register_font_bytes(data.extract::<Vec<u8>>()?)
-            .map(|inner| PyFontHandle { inner })
+            .map(|inner| PyFontHandle::registered(&self.inner, inner))
             .map_err(py_runtime_error)
     }
 
@@ -3173,7 +3192,7 @@ impl PyApp {
         })?;
         self.inner
             .register_font_bytes(data)
-            .map(|inner| PyFontHandle { inner })
+            .map(|inner| PyFontHandle::registered(&self.inner, inner))
             .map_err(py_runtime_error)
     }
 
@@ -6153,16 +6172,24 @@ assert 'Preview' in snapshot.semantics_names, snapshot.semantics_names
     fn python_app_level_font_resource_is_registered() -> PyResult<()> {
         Python::attach(|py| {
             install_sui_module(py)?;
+            install_test_font(py)?;
             PyModule::from_code(
                 py,
                 c"
 import sinomo_ui as sui
 
 app = sui.App()
-font = app.font_bytes(bytes([0, 1, 2, 3]))
+font = app.font_bytes(TEST_FONT)
 app.window(sui.Window('Font').root(sui.label('Text')))
 
 assert font.id > 0
+assert font.family == 'Noto Sans'
+try:
+    app.font_bytes(bytes([0, 1, 2, 3]))
+except RuntimeError:
+    pass
+else:
+    raise AssertionError('invalid font data was accepted')
 assert app.font_resource_count() == 1
 snapshot = app.render()
 assert snapshot.registered_font_count == 1
@@ -6178,6 +6205,7 @@ assert snapshot.registered_font_count == 1
     fn python_app_level_resources_can_be_loaded_from_files() -> PyResult<()> {
         Python::attach(|py| {
             install_sui_module(py)?;
+            install_test_font(py)?;
             PyModule::from_code(
                 py,
                 c"
@@ -6221,7 +6249,7 @@ with tempfile.TemporaryDirectory() as directory:
     with open(png_path, 'wb') as file:
         file.write(png)
     with open(font_path, 'wb') as file:
-        file.write(bytes([0, 1, 2, 3]))
+        file.write(TEST_FONT)
 
     app = sui.App()
     image = app.svg_file(svg_path)
@@ -7810,5 +7838,18 @@ finally:
             .cast_into::<PyDict>()?;
         sys_modules.set_item("sinomo_ui", module)?;
         Ok(())
+    }
+
+    /// Expose a WOFF2 subset of Noto Sans to test scripts as `TEST_FONT`.
+    /// Tests replace the `sinomo_ui` module concurrently, so the bytes live
+    /// in `builtins`.
+    fn install_test_font(py: Python<'_>) -> PyResult<()> {
+        py.import("builtins")?.setattr(
+            "TEST_FONT",
+            PyBytes::new(
+                py,
+                include_bytes!("../../sui-text/assets/NotoSans-Ag-subset.woff2"),
+            ),
+        )
     }
 }

@@ -2090,9 +2090,10 @@ impl From<Constraints> for JsConstraints {
 }
 
 #[napi(js_name = "FontHandle")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct JsFontHandle {
     inner: BindingFontHandle,
+    family: Option<String>,
 }
 
 #[napi]
@@ -2101,12 +2102,30 @@ impl JsFontHandle {
     pub fn new(id: String) -> Result<Self> {
         Ok(Self {
             inner: BindingFontHandle::new(parse_u64_string(&id, "font handle id")?),
+            family: None,
         })
     }
 
     #[napi(getter)]
     pub fn id(&self) -> String {
         self.inner.get().to_string()
+    }
+
+    /// The registered font's family name, when the font names one; `null`
+    /// for handles made from an id.
+    #[napi(getter)]
+    pub fn family(&self) -> Option<String> {
+        self.family.clone()
+    }
+}
+
+impl JsFontHandle {
+    /// A handle for a font just registered with `app`.
+    fn registered(app: &BindingApp, inner: BindingFontHandle) -> Self {
+        Self {
+            inner,
+            family: app.font_family(inner),
+        }
     }
 }
 
@@ -3109,10 +3128,10 @@ impl JsApp {
 
     #[napi(js_name = "fontBytes")]
     pub fn font_bytes(&self, data: Buffer) -> Result<JsFontHandle> {
-        recover_lock(&self.inner)
-            .register_font_bytes(data.as_ref().to_vec())
-            .map(|inner| JsFontHandle { inner })
-            .map_err(napi_runtime_error)
+        let mut app = recover_lock(&self.inner);
+        app.register_font_bytes(data.as_ref().to_vec())
+            .map(|inner| JsFontHandle::registered(&app, inner))
+            .map_err(napi_invalid_arg)
     }
 
     #[napi(js_name = "fontFile")]
@@ -3120,10 +3139,10 @@ impl JsApp {
         let data = fs::read(&path).map_err(|error| {
             napi_runtime_error(format!("failed to read font file '{path}': {error}"))
         })?;
-        recover_lock(&self.inner)
-            .register_font_bytes(data)
-            .map(|inner| JsFontHandle { inner })
-            .map_err(napi_runtime_error)
+        let mut app = recover_lock(&self.inner);
+        app.register_font_bytes(data)
+            .map(|inner| JsFontHandle::registered(&app, inner))
+            .map_err(napi_invalid_arg)
     }
 
     /// Open the app's windows without blocking. The JavaScript layer drives
@@ -5726,6 +5745,7 @@ mod tests {
         let paint = JsPaint::new(Rect::new(0.0, 0.0, 160.0, 32.0));
         let font = JsFontHandle {
             inner: BindingFontHandle::new(7),
+            family: None,
         };
 
         paint
@@ -7217,10 +7237,15 @@ mod tests {
         );
     }
 
+    /// A WOFF2 subset of Noto Sans.
+    const TEST_FONT: &[u8] = include_bytes!("../../sui-text/assets/NotoSans-Ag-subset.woff2");
+
     #[test]
     fn app_registers_font_resources() {
         let app = JsApp::new();
-        let font = app.font_bytes(Buffer::from(vec![0, 1, 2, 3])).unwrap();
+        let font = app.font_bytes(Buffer::from(TEST_FONT.to_vec())).unwrap();
+        assert_eq!(font.family().as_deref(), Some("Noto Sans"));
+        assert!(app.font_bytes(Buffer::from(vec![0, 1, 2, 3])).is_err());
         let mut window = JsWindow::new("Font".to_owned());
         let label = JsWidget::from_binding(BindingWidget::label("Text"));
         window.root(&label).unwrap();
@@ -7248,7 +7273,7 @@ mod tests {
         )
         .unwrap();
         fs::write(&png_path, &png).unwrap();
-        fs::write(&font_path, vec![0, 1, 2, 3]).unwrap();
+        fs::write(&font_path, TEST_FONT).unwrap();
 
         let app = JsApp::new();
         let image = app

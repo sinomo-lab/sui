@@ -79,6 +79,9 @@ Versioning, with the usual expectation that the API may change during the
   callbacks that return nothing, whose context requests were dropped.
 - A virtual table's `selected` state that holds a string now receives the
   selected key as a string, matching the key type of its callbacks.
+- Added `app.fontUrl(url)` to fetch and register a font, and
+  `FontHandle.family` (also in Python) to read a registered font's family
+  name. Invalid font data now fails at registration.
 - Added a `node:test` suite that runs on both the addon and the WebAssembly
   build.
 
@@ -90,6 +93,10 @@ Versioning, with the usual expectation that the API may change during the
 - Added `DesktopPlatform::start_web` and `with_web_canvas`, and
   `App::start_web_with_handle`, to run in the browser on a chosen canvas and
   learn when the app exits.
+- Fonts can be WOFF or WOFF2 as well as TrueType or OpenType, in Rust and in
+  the bindings. Added `RegisteredFont::try_from_bytes`, which checks the data,
+  and `RegisteredFont::family_name`; `font_bytes` and `register_font_bytes`
+  now fail for data that is not a font.
 
 ## [0.5.0] - 2026-10-08
 

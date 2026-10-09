@@ -506,7 +506,8 @@ impl Application {
         self.inner.register_font(handle, font)
     }
 
-    /// Register font bytes and allocate a handle.
+    /// Register a TrueType, OpenType, WOFF, or WOFF2 font and allocate a
+    /// handle. Fails when the data is not such a font.
     pub fn register_font_bytes(&mut self, data: impl Into<Vec<u8>>) -> Result<FontHandle> {
         self.inner.register_font_bytes(data)
     }

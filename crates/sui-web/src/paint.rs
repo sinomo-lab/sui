@@ -1,9 +1,10 @@
 use crate::prelude::*;
 
 #[wasm_bindgen(js_name = FontHandle)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct JsFontHandle {
     pub(crate) inner: BindingFontHandle,
+    pub(crate) family: Option<String>,
 }
 
 js_class!(JsFontHandle => "FontHandle");
@@ -14,12 +15,30 @@ impl JsFontHandle {
     pub fn new(id: String) -> Result<Self> {
         Ok(Self {
             inner: BindingFontHandle::new(parse_u64_string(&id, "font handle id")?),
+            family: None,
         })
     }
 
     #[wasm_bindgen(getter = id)]
     pub fn id(&self) -> String {
         self.inner.get().to_string()
+    }
+
+    /// The registered font's family name, when the font names one; `null`
+    /// for handles made from an id.
+    #[wasm_bindgen(getter = family)]
+    pub fn family(&self) -> JsValue {
+        self.family.clone().map_or(JsValue::NULL, JsValue::from)
+    }
+}
+
+impl JsFontHandle {
+    /// A handle for a font just registered with `app`.
+    pub(crate) fn registered(app: &BindingApp, inner: BindingFontHandle) -> Self {
+        Self {
+            inner,
+            family: app.font_family(inner),
+        }
     }
 }
 

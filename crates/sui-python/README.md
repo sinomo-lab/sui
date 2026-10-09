@@ -439,8 +439,9 @@ included in semantics unless the callback explicitly includes them.
 
 The paint surface supports styled text, paths and path clips, rounded
 rectangles, shadows, transforms, image quads, and validated built-in shaders.
-Applications can register fonts and RGBA, PNG, or SVG images from bytes or
-files. See [`examples/custom_widget.py`](https://github.com/sinomo-lab/sui/blob/main/crates/sui-python/examples/custom_widget.py) for a
+Applications can register RGBA, PNG, or SVG images and TrueType, OpenType,
+WOFF, or WOFF2 fonts from bytes or files; a `FontHandle`'s `family` reads the
+font's family name. See [`examples/custom_widget.py`](https://github.com/sinomo-lab/sui/blob/main/crates/sui-python/examples/custom_widget.py) for a
 complete custom control.
 
 `ExternalSurface` accepts CPU-upload, shared-texture, and shared-render-target
