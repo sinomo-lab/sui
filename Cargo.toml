@@ -69,7 +69,7 @@ sui-debug = { package = "sinomo-ui-debug", version = "0.5.0", path = "crates/sui
 sui-demo = { package = "sinomo-ui-demo", version = "0.5.0", path = "crates/sui-demo" }
 sui-js = { package = "sinomo-ui-js", version = "0.5.0", path = "crates/sui-js" }
 sui-layout = { package = "sinomo-ui-layout", version = "0.5.0", path = "crates/sui-layout" }
-sui-lucide = { package = "sinomo-ui-lucide", version = "1.47.1", path = "crates/sui-lucide" }
+sui-lucide = { package = "sinomo-ui-lucide", version = "1.47.2", path = "crates/sui-lucide" }
 sui-nodes = { package = "sinomo-ui-nodes", version = "0.5.0", path = "crates/sui-nodes" }
 sui-platform = { package = "sinomo-ui-platform", version = "0.5.0", path = "crates/sui-platform" }
 sui-python = { package = "sinomo-ui-python", version = "0.5.0", path = "crates/sui-python" }

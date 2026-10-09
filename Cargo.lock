@@ -4614,7 +4614,7 @@ dependencies = [
 
 [[package]]
 name = "sinomo-ui-lucide"
-version = "1.47.1"
+version = "1.47.2"
 dependencies = [
  "roxmltree 0.21.1",
  "sinomo-ui-core",

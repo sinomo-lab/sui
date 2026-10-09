@@ -10,6 +10,11 @@ This release publishes the Python binding on PyPI as `sinomo-ui`, brings its
 API close to the Rust widgets and services, and makes callback errors,
 Ctrl+C, and state-bound widgets behave correctly in Python and JavaScript.
 
+### Upgrading from 0.4
+
+- Update the SUI crates together from `0.4` to `0.5`, and `sinomo-ui-lucide` to
+  `1.47.2`, which bundles the same Lucide 1.47.0 icons for the `0.5` family.
+
 ### Breaking changes
 
 - The Python distribution is now `sinomo-ui` and the import package
