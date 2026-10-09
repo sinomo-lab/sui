@@ -99,7 +99,7 @@ impl LightMetrics {
         let mut max_luminance = 0.0_f32;
         let mut above = 0_usize;
         let mut count = 0_usize;
-        for rgba in image.pixels().chunks_exact(4) {
+        for rgba in image.pixels().as_chunks::<4>().0 {
             let [red, green, blue] = [rgba[0], rgba[1], rgba[2]].map(|channel| channel / sdr_white);
             let peak = red.max(green).max(blue);
             max_channel = max_channel.max(peak);

@@ -400,10 +400,12 @@ pub(crate) fn analytic_stroke_rect_renders_at_fractional_scale() {
 
     let changed_pixels = pixels
         .pixels()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| {
             !rgba_channels_match_with_tolerance(
-                pixel,
+                *pixel,
                 &[255, 255, 255, 255],
                 RGBA_CHANNEL_TOLERANCE,
             )
@@ -506,12 +508,16 @@ pub(crate) fn round_stroke_path_uses_analytic_antialiasing() {
     let pixels = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
     let partial_coverage = pixels
         .pixels()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| pixel[3] > 0 && pixel[3] < 255)
         .count();
     let opaque_coverage = pixels
         .pixels()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| pixel[3] == 255)
         .count();
 
@@ -1002,7 +1008,7 @@ pub(crate) fn rounded_rect_primitives_render_to_png_capture() {
         (0.13_f32.powf(1.0 / 2.2) * 255.0) as u8,
         (0.16_f32.powf(1.0 / 2.2) * 255.0) as u8,
     ];
-    let non_background = image.pixels().chunks_exact(4).any(|pixel| {
+    let non_background = image.pixels().as_chunks::<4>().0.iter().any(|pixel| {
         (pixel[0] as i32 - bg[0] as i32).abs()
             + (pixel[1] as i32 - bg[1] as i32).abs()
             + (pixel[2] as i32 - bg[2] as i32).abs()

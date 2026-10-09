@@ -27,6 +27,13 @@ mod tests {
 
         assert_eq!(image.width(), 64);
         assert_eq!(image.height(), 64);
-        assert!(image.bytes().chunks_exact(4).any(|pixel| pixel[3] > 0));
+        assert!(
+            image
+                .bytes()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[3] > 0)
+        );
     }
 }

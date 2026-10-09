@@ -475,7 +475,7 @@ fn convert_hdr_image_to_planes(
     let mut pixel_count = 0usize;
 
     for row in image.pixels.chunks_exact(image.width as usize * 4) {
-        for rgba in row.chunks_exact(4) {
+        for rgba in row.as_chunks::<4>().0 {
             let linear_rgb = [rgba[0].max(0.0), rgba[1].max(0.0), rgba[2].max(0.0)];
             let absolute_rgb = linear_rgb.map(|channel| {
                 (channel / transform.source_white_level * transform.reference_white_nits)
@@ -530,7 +530,7 @@ fn convert_sdr_image_to_planes(
     let mut alpha = Vec::with_capacity((image.width * image.height) as usize);
     let mut has_alpha = false;
 
-    for rgba in image.pixels.chunks_exact(4) {
+    for rgba in image.pixels.as_chunks::<4>().0 {
         let encoded_rgb = [
             rgba[0] as f32 / 255.0,
             rgba[1] as f32 / 255.0,

@@ -4256,8 +4256,10 @@ mod tests {
         );
 
         for (pixel_index, (actual_pixel, expected_pixel)) in actual
-            .chunks_exact(4)
-            .zip(expected.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(expected.as_chunks::<4>().0.iter())
             .enumerate()
         {
             for channel in 0..4 {
@@ -5191,7 +5193,9 @@ mod tests {
         let accent = PixelColor::from_color(DefaultTheme::default().palette.accent);
         let painted = image
             .bytes()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel_matches_color(pixel, accent));
         assert!(painted);
         Ok(())
@@ -5287,8 +5291,10 @@ mod tests {
             .expect("pixel canvas image should be registered");
         let painted = image
             .bytes()
-            .chunks_exact(4)
-            .filter(|pixel| rgba_channels_match(pixel, [255, 0, 0, 255]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| rgba_channels_match(*pixel, [255, 0, 0, 255]))
             .count();
         assert_eq!(painted, 9);
         Ok(())
@@ -5339,8 +5345,10 @@ mod tests {
         )?;
         let pixels = rendered_pixel_bytes(&runtime.render(window_id)?);
         let painted = pixels
-            .chunks_exact(4)
-            .filter(|pixel| rgba_channels_match(pixel, [255, 0, 0, 255]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| rgba_channels_match(*pixel, [255, 0, 0, 255]))
             .count();
 
         assert_eq!(painted, 5);
@@ -5384,8 +5392,10 @@ mod tests {
             .expect("pixel canvas image should be registered");
         let transparent = image
             .bytes()
-            .chunks_exact(4)
-            .filter(|pixel| alpha_matches(pixel, 0))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| alpha_matches(*pixel, 0))
             .count();
         assert_eq!(transparent, 1);
         Ok(())
@@ -5420,8 +5430,10 @@ mod tests {
             .expect("pixel canvas image should be registered");
         let red = image
             .bytes()
-            .chunks_exact(4)
-            .filter(|pixel| rgba_channels_match(pixel, [255, 0, 0, 255]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| rgba_channels_match(*pixel, [255, 0, 0, 255]))
             .count();
         assert_eq!(red, 64);
         Ok(())
@@ -5442,19 +5454,25 @@ mod tests {
         )?;
         let accent = PixelColor::from_color(DefaultTheme::default().palette.accent);
         let painted = rendered_pixel_bytes(&runtime.render(window_id)?)
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel_matches_color(pixel, accent));
         assert!(painted);
 
         runtime.handle_event(window_id, command_key("z"))?;
         let painted_after_undo = rendered_pixel_bytes(&runtime.render(window_id)?)
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| !alpha_matches(pixel, 0));
         assert!(!painted_after_undo);
 
         runtime.handle_event(window_id, command_key("y"))?;
         let painted_after_redo = rendered_pixel_bytes(&runtime.render(window_id)?)
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel_matches_color(pixel, accent));
         assert!(painted_after_redo);
         Ok(())
@@ -5483,7 +5501,9 @@ mod tests {
             Event::Window(WindowEvent::Resized(Size::new(521.0, 361.0))),
         )?;
         let painted_after_undo = rendered_pixel_bytes(&runtime.render(window_id)?)
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| !alpha_matches(pixel, 0));
         assert!(!painted_after_undo);
         assert!(state.can_redo());
@@ -5507,7 +5527,13 @@ mod tests {
             Event::Window(WindowEvent::Resized(Size::new(521.0, 361.0))),
         )?;
         let cleared = rendered_pixel_bytes(&runtime.render(window_id)?);
-        assert!(cleared.chunks_exact(4).all(|pixel| alpha_matches(pixel, 0)));
+        assert!(
+            cleared
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| alpha_matches(pixel, 0))
+        );
         assert!(state.can_undo());
 
         state.request_undo();
@@ -5518,7 +5544,9 @@ mod tests {
         let restored = rendered_pixel_bytes(&runtime.render(window_id)?);
         assert!(
             restored
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .all(|pixel| alpha_matches(pixel, 255))
         );
         assert!(state.can_redo());

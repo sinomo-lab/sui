@@ -903,7 +903,9 @@ pub(crate) fn build_cached_glyph_atlas(
         // Coverage is the alpha channel of the RGBA raster; the mask atlas stores only that.
         TextAtlasKind::Mask => rasterized
             .pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|pixel| pixel[3])
             .collect(),
         TextAtlasKind::Color => rasterized.pixels,
@@ -981,7 +983,13 @@ pub(crate) fn swash_image_to_rgba(
             }
 
             let mut pixels = vec![0; pixel_count.checked_mul(4)?];
-            for (source, pixel) in image.data.chunks_exact(4).zip(pixels.chunks_exact_mut(4)) {
+            for (source, pixel) in image
+                .data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(pixels.as_chunks_mut::<4>().0.iter_mut())
+            {
                 pixel.copy_from_slice(&convert_subpixel_texel_for_mode(
                     [source[0], source[1], source[2], source[3]],
                     text_render_mode,
@@ -1064,7 +1072,10 @@ pub(crate) fn apply_stem_darkening_to_coverage(coverage: u8, amount: f32) -> u8 
 
 pub(crate) fn mask_coverage_to_rgba(coverage: &[u8], stem_darkening_amount: f32) -> Vec<u8> {
     let mut pixels = vec![0u8; coverage.len() * 4];
-    for (value, pixel) in coverage.iter().zip(pixels.chunks_exact_mut(4)) {
+    for (value, pixel) in coverage
+        .iter()
+        .zip(pixels.as_chunks_mut::<4>().0.iter_mut())
+    {
         let value = apply_stem_darkening_to_coverage(*value, stem_darkening_amount);
         pixel[0] = 255;
         pixel[1] = 255;

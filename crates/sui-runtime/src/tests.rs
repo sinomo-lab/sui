@@ -3433,7 +3433,14 @@ fn runtime_attaches_registered_svg_images_to_render_output() {
 
     assert_eq!(image.width(), 16);
     assert_eq!(image.height(), 16);
-    assert!(image.bytes().chunks_exact(4).any(|pixel| pixel[3] > 0));
+    assert!(
+        image
+            .bytes()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[3] > 0)
+    );
 }
 
 #[test]

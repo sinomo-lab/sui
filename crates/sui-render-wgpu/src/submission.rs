@@ -554,8 +554,8 @@ pub(crate) fn prepare_frame_batches_with_analytic_slots(
                 solid_vertices.extend(source.iter().copied().map(SolidVertex::from));
             } else if matches!(draw.kind, PreparedDrawKind::AnalyticPath { .. }) {
                 draw.vertices.start = analytic_vertices.len() as u32;
-                let mut chunks = source.chunks_exact(6);
-                analytic_vertices.extend(chunks.by_ref().map(|vertices| AnalyticQuadInstance {
+                let (quads, remainder) = source.as_chunks::<6>();
+                analytic_vertices.extend(quads.iter().map(|vertices| AnalyticQuadInstance {
                     ndc_min: vertices[0].position,
                     ndc_max: vertices[5].position,
                     scene_min: vertices[0].tex_coords,
@@ -564,14 +564,14 @@ pub(crate) fn prepare_frame_batches_with_analytic_slots(
                     path_index: vertices[0].shader_params[0].round().max(0.0) as u32,
                 }));
                 assert!(
-                    chunks.remainder().is_empty(),
+                    remainder.is_empty(),
                     "analytic batches must contain complete six-vertex quads"
                 );
                 draw.vertices.len /= 6;
             } else if draw.kind.uses_extended_vertices() {
                 draw.vertices.start = extended_vertices.len() as u32;
-                let mut chunks = source.chunks_exact(6);
-                extended_vertices.extend(chunks.by_ref().map(|vertices| ExtendedQuadInstance {
+                let (quads, remainder) = source.as_chunks::<6>();
+                extended_vertices.extend(quads.iter().map(|vertices| ExtendedQuadInstance {
                     ndc_min: vertices[0].position,
                     ndc_max: vertices[5].position,
                     local_min: vertices[0].tex_coords,
@@ -583,7 +583,7 @@ pub(crate) fn prepare_frame_batches_with_analytic_slots(
                     shader_params4: vertices[0].shader_params4,
                 }));
                 assert!(
-                    chunks.remainder().is_empty(),
+                    remainder.is_empty(),
                     "extended rectangle batches must contain complete six-vertex quads"
                 );
                 draw.vertices.len /= 6;

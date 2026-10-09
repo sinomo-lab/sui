@@ -120,7 +120,9 @@ fn registry_aware_headless_app_renders_an_external_texture() -> Result<()> {
     assert!(
         screenshot
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[1] > 200 && pixel[0] < 20 && pixel[2] < 20),
         "the headless renderer must sample the uploaded green texture"
     );

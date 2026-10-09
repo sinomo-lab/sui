@@ -432,8 +432,10 @@ fn transformed_text_rasterizes_at_display_resolution() {
                 let scaled = render(zoom, dpi, true, retained);
                 let differing = scaled
                     .pixels()
-                    .chunks_exact(4)
-                    .zip(reference.pixels().chunks_exact(4))
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(reference.pixels().as_chunks::<4>().0.iter())
                     .filter(|(a, b)| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 3))
                     .count();
                 let max_delta = scaled
@@ -1872,7 +1874,9 @@ pub(crate) fn renderer_grows_atlas_pages_when_text_atlas_fills_mid_frame() {
     assert!(
         image
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[3] > RGBA_CHANNEL_TOLERANCE),
         "frame should render visible text across atlas pages"
     );
@@ -1946,7 +1950,9 @@ pub(crate) fn multi_page_atlas_is_stable_across_frames() {
     assert!(
         image
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[3] > RGBA_CHANNEL_TOLERANCE)
     );
 }
@@ -2011,7 +2017,9 @@ pub(crate) fn multi_page_atlas_evicts_without_corruption_under_pressure() {
     assert!(
         image
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[3] > RGBA_CHANNEL_TOLERANCE)
     );
 }
@@ -2409,7 +2417,7 @@ pub(crate) fn text_coverage_quality_matrix_capture() {
         let mut lumas: Vec<f32> = Vec::new();
         let mut edge_pixels = 0u64;
         let mut core_pixels = 0u64;
-        for px in image.pixels().chunks_exact(4) {
+        for px in image.pixels().as_chunks::<4>().0.iter() {
             let d = (px[0] as i32 - bg[0] as i32).abs()
                 + (px[1] as i32 - bg[1] as i32).abs()
                 + (px[2] as i32 - bg[2] as i32).abs();
@@ -2629,7 +2637,9 @@ pub(crate) fn retained_text_redraws_glyphs_revealed_by_a_wider_clip() {
     let width = image.width() as usize;
     let lit_right_of_old_clip = image
         .pixels()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .enumerate()
         .any(|(index, pixel)| index % width > 60 && pixel[0] > 128);
     assert!(

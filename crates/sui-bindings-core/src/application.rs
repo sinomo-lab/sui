@@ -608,7 +608,7 @@ pub(crate) fn png_frame_to_rgba8(
         png::ColorType::Rgba => Ok(data.to_vec()),
         png::ColorType::Rgb => {
             let mut rgba = Vec::with_capacity((data.len() / 3) * 4);
-            for chunk in data.chunks_exact(3) {
+            for chunk in data.as_chunks::<3>().0 {
                 rgba.extend_from_slice(&[chunk[0], chunk[1], chunk[2], 255]);
             }
             Ok(rgba)
@@ -622,7 +622,7 @@ pub(crate) fn png_frame_to_rgba8(
         }
         png::ColorType::GrayscaleAlpha => {
             let mut rgba = Vec::with_capacity((data.len() / 2) * 4);
-            for chunk in data.chunks_exact(2) {
+            for chunk in data.as_chunks::<2>().0 {
                 rgba.extend_from_slice(&[chunk[0], chunk[0], chunk[0], chunk[1]]);
             }
             Ok(rgba)

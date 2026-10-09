@@ -3371,7 +3371,12 @@ mod tests {
         assert_eq!(logo_image.width(), DEV_SHELL_LOGO_IMAGE_SIZE);
         assert_eq!(logo_image.height(), DEV_SHELL_LOGO_IMAGE_SIZE);
         assert!(
-            logo_image.bytes().chunks_exact(4).any(|pixel| pixel[3] > 0),
+            logo_image
+                .bytes()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[3] > 0),
             "the SVG-backed logo raster should contain visible pixels"
         );
     }
@@ -5205,8 +5210,10 @@ mod tests {
         assert!(
             snapshot
                 .rgba8()
-                .chunks_exact(4)
-                .all(|pixel| pixel == [0, 0, 0, 0]),
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| *pixel == [0, 0, 0, 0]),
             "paint demo should start with an empty transparent canvas"
         );
         assert!(
@@ -5676,7 +5683,9 @@ notes={}
         let intermediate_max_channel = max_channel;
         let intermediate_max_luminance = image
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|rgba| rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
             .fold(f32::NEG_INFINITY, f32::max);
         let (final_max_channel, final_max_luminance, final_artifact_kind) = match final_artifact {
@@ -5691,7 +5700,9 @@ notes={}
                     .fold(f32::NEG_INFINITY, f32::max);
                 let max_luminance = final_image
                     .pixels()
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|rgba| rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
                     .fold(f32::NEG_INFINITY, f32::max);
                 (max_channel, max_luminance, "hdr")
@@ -5772,7 +5783,9 @@ final_max_luminance={final_max_luminance}
 
         let max_luminance = image
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|rgba| rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722)
             .fold(f32::NEG_INFINITY, f32::max);
 
@@ -8530,8 +8543,10 @@ final_max_luminance={final_max_luminance}
         assert_eq!(left.height(), right.height(), "screenshot heights differ");
 
         left.pixels()
-            .chunks_exact(4)
-            .zip(right.pixels().chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(right.pixels().as_chunks::<4>().0.iter())
             .filter(|(left_pixel, right_pixel)| left_pixel != right_pixel)
             .count()
     }

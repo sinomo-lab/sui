@@ -64,7 +64,7 @@ impl LucideIcon {
     pub fn registered_mask_image(self) -> sui_core::Result<sui_scene::RegisteredImage> {
         let image = self.resource().registered_image()?;
         let mut pixels = Vec::with_capacity(image.bytes().len());
-        for pixel in image.bytes().chunks_exact(4) {
+        for pixel in image.bytes().as_chunks::<4>().0 {
             let alpha = pixel[3];
             if alpha == 0 {
                 pixels.extend_from_slice(&[0, 0, 0, 0]);
@@ -250,7 +250,9 @@ mod tests {
         let image = LucideIcon::Sparkles.registered_mask_image().unwrap();
         let opaque_pixel = image
             .bytes()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .find(|pixel| pixel[3] > 0)
             .expect("lucide icon should have visible pixels");
 

@@ -84,8 +84,10 @@ fn crop_diff_count(left: &Screenshot, right: &Screenshot) -> usize {
         (right.width(), right.height())
     );
     left.pixels()
-        .chunks_exact(4)
-        .zip(right.pixels().chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(right.pixels().as_chunks::<4>().0.iter())
         .filter(|(left, right)| {
             left.iter()
                 .zip(right.iter())

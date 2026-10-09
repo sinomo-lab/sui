@@ -120,7 +120,7 @@ pub(crate) fn strip_padded_readback_rows(
 
 pub(crate) fn decode_rgba16f_pixels(raw: &[u8]) -> Vec<f32> {
     let mut pixels = Vec::with_capacity(raw.len() / 2);
-    for chunk in raw.chunks_exact(2) {
+    for chunk in raw.as_chunks::<2>().0 {
         pixels.push(f16::from_bits(u16::from_le_bytes([chunk[0], chunk[1]])).to_f32());
     }
     pixels
@@ -139,7 +139,7 @@ pub(crate) fn hdr_image_to_sdr_rgba(
         1.0
     };
     let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
-    for rgba in image.pixels().chunks_exact(4) {
+    for rgba in image.pixels().as_chunks::<4>().0 {
         let normalized = linear_output_primaries_to_srgb(
             [
                 rgba[0] / reference_white,
@@ -359,7 +359,7 @@ impl InFlightCapture {
 
 fn bgra_to_rgba(bytes: &[u8]) -> Vec<u8> {
     let mut pixels = Vec::with_capacity(bytes.len());
-    for chunk in bytes.chunks_exact(4) {
+    for chunk in bytes.as_chunks::<4>().0 {
         pixels.extend_from_slice(&[chunk[2], chunk[1], chunk[0], chunk[3]]);
     }
     pixels

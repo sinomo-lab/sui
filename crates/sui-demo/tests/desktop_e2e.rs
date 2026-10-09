@@ -1204,9 +1204,11 @@ fn frame_pixel_diff_count(before: &CapturedFrame, after: &CapturedFrame) -> usiz
 
     before
         .pixels
-        .chunks_exact(4)
-        .zip(after.pixels.chunks_exact(4))
-        .filter(|(left, right)| !frame_pixels_match(left, right))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(after.pixels.as_chunks::<4>().0.iter())
+        .filter(|(left, right)| !frame_pixels_match(*left, *right))
         .count()
 }
 

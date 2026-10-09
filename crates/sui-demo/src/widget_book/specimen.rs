@@ -212,9 +212,7 @@ impl SpecimenGrid {
             .collect();
         let width = (x - Self::COLUMN_GAP).max(label_extent);
 
-        for placement in &mut self.placements {
-            *placement = None;
-        }
+        self.placements.fill(None);
         if self.has_captions {
             for (column, x) in column_x.iter().enumerate() {
                 let index = self.caption_index(0, column);
@@ -253,9 +251,7 @@ impl SpecimenGrid {
 
     /// Places every child as wrapping rows of captioned cells.
     fn layout_flow(&mut self, available_width: f32) -> Size {
-        for placement in &mut self.placements {
-            *placement = None;
-        }
+        self.placements.fill(None);
         let mut y = 0.0;
         let mut widest: f32 = 0.0;
         for row in 0..self.rows {

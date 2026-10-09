@@ -166,7 +166,9 @@ fn pixels_like(screenshot: &Screenshot, color: Color) -> usize {
         .map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8);
     screenshot
         .pixels()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| (0..3).all(|channel| pixel[channel].abs_diff(target[channel]) <= 24))
         .count()
 }

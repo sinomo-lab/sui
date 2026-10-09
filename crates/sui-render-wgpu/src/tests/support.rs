@@ -115,8 +115,10 @@ pub(crate) fn assert_rgba_images_match(
     let width = left.width();
     for (index, (left_px, right_px)) in left
         .pixels()
-        .chunks_exact(4)
-        .zip(right.pixels().chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(right.pixels().as_chunks::<4>().0.iter())
         .enumerate()
     {
         let pixel_max_channel_diff = left_px
@@ -156,10 +158,12 @@ pub(crate) fn rgba_image_diff_count(
     assert_eq!(left.height(), right.height(), "image heights differ");
 
     left.pixels()
-        .chunks_exact(4)
-        .zip(right.pixels().chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(right.pixels().as_chunks::<4>().0.iter())
         .filter(|(left_px, right_px)| {
-            !rgba_channels_match_with_tolerance(left_px, right_px, RGBA_CHANNEL_TOLERANCE)
+            !rgba_channels_match_with_tolerance(*left_px, *right_px, RGBA_CHANNEL_TOLERANCE)
         })
         .count()
 }
@@ -301,8 +305,10 @@ pub(crate) fn assert_rgba_pixels_near(actual: &[u8], expected: &[u8], tolerance:
     );
 
     for (pixel_index, (actual_pixel, expected_pixel)) in actual
-        .chunks_exact(4)
-        .zip(expected.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(expected.as_chunks::<4>().0.iter())
         .enumerate()
     {
         for channel in 0..4 {

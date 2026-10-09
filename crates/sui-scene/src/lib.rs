@@ -2062,7 +2062,14 @@ mod tests {
         assert_eq!(image.width(), 16);
         assert_eq!(image.height(), 8);
         assert_eq!(image.bytes().len(), 16 * 8 * 4);
-        assert!(image.bytes().chunks_exact(4).any(|pixel| pixel[3] > 0));
+        assert!(
+            image
+                .bytes()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[3] > 0)
+        );
     }
 
     #[test]

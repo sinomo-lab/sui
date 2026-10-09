@@ -501,8 +501,10 @@ fn lcd_shader_matches_channel_reference_on_colored_surfaces() {
         let mut maximum = 0;
         for (raw, actual) in mask
             .pixels()
-            .chunks_exact(4)
-            .zip(output.pixels().chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(output.pixels().as_chunks::<4>().0.iter())
         {
             for channel in 0..3 {
                 let alpha = crate::text_policy::lcd_text_coverage(
@@ -660,7 +662,9 @@ fn windows_render_lcd_text_for_a_cleartype_display() {
             .capture_last_frame_rgba(window)
             .unwrap()
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pixel| {
                 pixel[..3].iter().max().unwrap() - pixel[..3].iter().min().unwrap() > 24
             })

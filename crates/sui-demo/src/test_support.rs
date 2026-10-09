@@ -359,9 +359,11 @@ pub(crate) fn screenshot_diff_count(
     assert_eq!(left.height(), right.height(), "screenshot heights differ");
 
     left.pixels()
-        .chunks_exact(4)
-        .zip(right.pixels().chunks_exact(4))
-        .filter(|(left_px, right_px)| !screenshot_pixels_match(left_px, right_px))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(right.pixels().as_chunks::<4>().0.iter())
+        .filter(|(left_px, right_px)| !screenshot_pixels_match(*left_px, *right_px))
         .count()
 }
 
@@ -375,8 +377,10 @@ pub(crate) fn screenshot_diff_image(
 
     let pixels = left
         .pixels()
-        .chunks_exact(4)
-        .zip(right.pixels().chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(right.pixels().as_chunks::<4>().0.iter())
         .flat_map(|(left_px, right_px)| {
             if screenshot_pixels_match(left_px, right_px) {
                 [left_px[0], left_px[1], left_px[2], 96]

@@ -85,7 +85,7 @@ pub fn write_hdr_avif(
 
 pub fn hdr_luminance_heatmap(image: &HdrRgbaImage) -> Result<Screenshot> {
     let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
-    for rgba in image.pixels().chunks_exact(4) {
+    for rgba in image.pixels().as_chunks::<4>().0 {
         let luminance = (rgba[0] * 0.2126 + rgba[1] * 0.7152 + rgba[2] * 0.0722).max(0.0);
         let normalized = (luminance / (1.0 + luminance)).clamp(0.0, 1.0);
         let value = (normalized * 255.0).round() as u8;
@@ -101,7 +101,7 @@ pub fn hdr_headroom_heatmap(image: &HdrRgbaImage, sdr_white_level: f32) -> Resul
         1.0
     };
     let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
-    for rgba in image.pixels().chunks_exact(4) {
+    for rgba in image.pixels().as_chunks::<4>().0 {
         let headroom = (rgba[0].max(rgba[1]).max(rgba[2]) / reference_white).max(0.0);
         let normalized = (headroom / (1.0 + headroom)).clamp(0.0, 1.0);
         let red = (normalized * 255.0).round() as u8;
@@ -118,7 +118,7 @@ pub fn hdr_clip_mask(image: &HdrRgbaImage, threshold: f32) -> Result<Screenshot>
         1.0
     };
     let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
-    for rgba in image.pixels().chunks_exact(4) {
+    for rgba in image.pixels().as_chunks::<4>().0 {
         let clipped = rgba[0].max(rgba[1]).max(rgba[2]) > clip_threshold;
         if clipped {
             pixels.extend_from_slice(&[255, 64, 64, 255]);
@@ -165,7 +165,7 @@ impl Screenshot {
 
     pub(crate) fn from_hdr_linear_image(image: &HdrRgbaImage) -> Result<Self> {
         let mut pixels = Vec::with_capacity((image.width() * image.height() * 4) as usize);
-        for rgba in image.pixels().chunks_exact(4) {
+        for rgba in image.pixels().as_chunks::<4>().0 {
             pixels.extend_from_slice(&[
                 linear_to_srgb_u8(rgba[0]),
                 linear_to_srgb_u8(rgba[1]),
@@ -344,8 +344,10 @@ pub(crate) fn screenshots_match(expected: &Screenshot, actual: &Screenshot) -> b
         && expected.height == actual.height
         && expected
             .pixels
-            .chunks_exact(4)
-            .zip(actual.pixels.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(actual.pixels.as_chunks::<4>().0.iter())
             .all(|(expected, actual)| {
                 rgba_channels_match(
                     [expected[0], expected[1], expected[2], expected[3]],
