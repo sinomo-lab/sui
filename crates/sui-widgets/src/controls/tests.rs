@@ -2391,22 +2391,18 @@ fn two_state_inputs_report_changes_through_on_change_and_its_ctx_twin() -> Resul
 }
 
 #[test]
-#[allow(deprecated)]
 fn a_radio_button_reports_a_change_only_when_it_becomes_checked() -> Result<()> {
     let changes = Rc::new(RefCell::new(Vec::new()));
-    let selects = Rc::new(RefCell::new(0));
-    let (on_change, on_select) = (Rc::clone(&changes), Rc::clone(&selects));
+    let on_change = Rc::clone(&changes);
     let (mut runtime, window_id) = build_runtime(
         RadioButton::new("Automatic")
-            .on_change(move |checked| on_change.borrow_mut().push(checked))
-            .on_select(move || *on_select.borrow_mut() += 1),
+            .on_change(move |checked| on_change.borrow_mut().push(checked)),
     );
     let _ = runtime.render(window_id)?;
     click(&mut runtime, window_id, Point::new(12.0, 12.0))?;
     click(&mut runtime, window_id, Point::new(12.0, 12.0))?;
-    // Checked once; the deprecated on_select still fires on every activation.
+    // Clicking a checked radio button again is not a change.
     assert_eq!(*changes.borrow(), [true]);
-    assert_eq!(*selects.borrow(), 2);
     Ok(())
 }
 

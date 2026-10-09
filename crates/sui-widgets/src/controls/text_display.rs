@@ -54,14 +54,6 @@ impl Label {
         self
     }
 
-    #[deprecated(note = "use `Label::new(fallback).text_when(reader)`")]
-    pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
-    where
-        F: Fn() -> String + 'static,
-    {
-        Self::new(fallback).text_when(reader)
-    }
-
     pub fn text_when<F>(mut self, reader: F) -> Self
     where
         F: Fn() -> String + 'static,
@@ -183,25 +175,6 @@ impl Label {
         self
     }
 
-    /// Replace the label's style, discarding a color, font size, or line
-    /// height set before it.
-    #[deprecated(note = "use `text_style`, which keeps the label's other settings")]
-    pub fn style(mut self, style: TextStyle) -> Self {
-        self.clear_style_overrides();
-        self.text_style(style)
-    }
-
-    /// Resolve the complete style each time the label lays out, discarding a
-    /// color, font size, or line height set before it.
-    #[deprecated(note = "use `text_style_when`, which keeps the label's other settings")]
-    pub fn style_when<F>(mut self, style: F) -> Self
-    where
-        F: Fn() -> TextStyle + 'static,
-    {
-        self.clear_style_overrides();
-        self.text_style_when(style)
-    }
-
     fn current_text(&self) -> String {
         self.text_source
             .as_ref()
@@ -240,13 +213,6 @@ impl Label {
             style.color = color_reader();
         }
         style
-    }
-
-    fn clear_style_overrides(&mut self) {
-        self.font_size_override = None;
-        self.line_height_override = None;
-        self.color_override = None;
-        self.color_reader = None;
     }
 
     fn has_explicit_line_break(text: &str) -> bool {

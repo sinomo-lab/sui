@@ -4,6 +4,47 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
+## [Unreleased]
+
+### Breaking changes
+
+- Removed the APIs deprecated in 0.4, as the 0.4 upgrade notes announced.
+  Code that compiled without deprecation warnings is unaffected. Use the
+  replacements the warnings named:
+  - Types: `Modal` → `Dialog`, `Drawer` → `SideSheet`, `BusyIndicator` →
+    `Spinner`, `ComboBox` → `Select`, `SpinBox` → `NumberInput`,
+    `MultilineTextInput` → `TextArea`, `Divider` → `Separator`, `DataGrid` →
+    `Table`, `PathBar` → `Breadcrumb`, `ResizablePane` → `SplitView`, and the
+    `CanvasAppearance`, `CanvasRulerAppearance`, `PixelCanvasAppearance`, and
+    `ColorPickerAppearance` aliases → their `*Colors` types. The unused
+    `Style` struct is gone.
+  - Builder methods: `spacing` → `gap`, `line_spacing` → `cross_gap`,
+    `radius` → `corner_radius`, `disabled()` → `enabled(false)`,
+    `appearance` → `colors`, `shown` → `open`, `collapsed()` →
+    `expanded(false)`, `without_border()` → `show_border(false)`,
+    `content`/`with_content`/`with_child` → `child` or `item`,
+    `activate_with_content` → `activate_with_child`, `subtitle` → `detail`,
+    `TreeItem::children` → `items`, `Select::expanded` → `open`,
+    `Icon::label` and `Image::label` → `semantic_name`, and the checked-state
+    names `on`, `on_when`, `selected`, `on_toggle`, and
+    `on_select` → `checked`, `checked_when`, and `on_change` (and
+    `on_select_with_ctx` → `on_change_with_ctx`). `FloatingStack::theme`,
+    which had no effect, is gone.
+  - Accessors and setters: `child()` → `child_pod()`, `items`/`items_mut`/
+    `item`/`set_item` on `Flex` → their `flex_*` names, `is_on`/`is_selected`
+    → `is_checked`, `set_on`/`set_selected` → `set_checked`, `is_shown`/
+    `set_shown` → `is_open`/`set_open`, `label()` → `current_label()`,
+    `color()` → `current_color()`, `TextInput::name()` → `accessible_name()`,
+    and `state()` on workspaces → `shared_state()`.
+  - `dynamic(fallback, reader)` constructors → `new(fallback)` with
+    `text_when`, `label_when`, or `document_when`; `Label::style` and
+    `style_when` → `text_style` and `text_style_when`;
+    `RebuildOnChange::new` and `new_observable` → `key_when` and `key_from`.
+  - `register_builtin_icon_resources` is gone; built-in icons need no
+    registration.
+  - `RadioButton::on_select`, which fired on every activation, has no
+    replacement; `on_change` reports only actual changes.
+
 ## [0.5.0] - 2026-10-08
 
 This release publishes the Python binding on PyPI as `sinomo-ui`, brings its

@@ -77,11 +77,6 @@ impl ListItem {
         self
     }
 
-    #[deprecated(note = "use `detail`")]
-    pub fn subtitle(self, subtitle: impl Into<String>) -> Self {
-        self.detail(subtitle)
-    }
-
     pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
         self.semantic_name = Some(name.into());
         self
@@ -126,11 +121,6 @@ impl ListItem {
         self
     }
 
-    #[deprecated(note = "use `enabled(false)`")]
-    pub fn disabled(self) -> Self {
-        self.enabled(false)
-    }
-
     /// Let otherwise unhandled pointer presses on the [`Self::child`] content
     /// activate the owning list row. Interactive descendants still receive
     /// the event first.
@@ -139,33 +129,12 @@ impl ListItem {
         self
     }
 
-    #[deprecated(note = "use `activate_with_child`")]
-    pub fn activate_with_content(self) -> Self {
-        self.activate_with_child(true)
-    }
-
     pub fn child<W>(mut self, child: W) -> Self
     where
         W: Widget + 'static,
     {
         self.content = Some(SingleChild::new(child));
         self
-    }
-
-    #[deprecated(note = "use `child`")]
-    pub fn with_child<W>(self, child: W) -> Self
-    where
-        W: Widget + 'static,
-    {
-        self.child(child)
-    }
-
-    #[deprecated(note = "use `child`")]
-    pub fn with_content<W>(self, content: W) -> Self
-    where
-        W: Widget + 'static,
-    {
-        self.child(content)
     }
 
     pub fn label(&self) -> &str {
@@ -1144,11 +1113,6 @@ impl LayerListItem {
         self
     }
 
-    #[deprecated(note = "use `enabled(false)`")]
-    pub fn disabled(self) -> Self {
-        self.enabled(false)
-    }
-
     pub fn label(&self) -> &str {
         &self.label
     }
@@ -1376,22 +1340,6 @@ impl LayerList {
     {
         self.on_select_with_ctx = Some(Box::new(on_change));
         self
-    }
-
-    #[deprecated(note = "use `on_change`")]
-    pub fn on_select<F>(self, on_select: F) -> Self
-    where
-        F: FnMut(usize, String) + 'static,
-    {
-        self.on_change(on_select)
-    }
-
-    #[deprecated(note = "use `on_change_with_ctx`")]
-    pub fn on_select_with_ctx<F>(self, on_select: F) -> Self
-    where
-        F: FnMut(&mut EventCtx, usize, String) + 'static,
-    {
-        self.on_change_with_ctx(on_select)
     }
 
     pub fn on_visibility_change<F>(mut self, on_visibility_change: F) -> Self
@@ -2344,21 +2292,11 @@ impl TreeItem {
         self
     }
 
-    #[deprecated(note = "use `enabled(false)`")]
-    pub fn disabled(self) -> Self {
-        self.enabled(false)
-    }
-
     /// Let otherwise unhandled pointer presses on custom content activate the
     /// owning tree row. Interactive descendants still receive the event first.
     pub fn activate_with_child(mut self, activate_with_child: bool) -> Self {
         self.activate_with_content = activate_with_child;
         self
-    }
-
-    #[deprecated(note = "use `activate_with_child`")]
-    pub fn activate_with_content(self) -> Self {
-        self.activate_with_child(true)
     }
 
     /// Replace the built-in label/detail presentation with arbitrary retained
@@ -2371,22 +2309,9 @@ impl TreeItem {
         self
     }
 
-    #[deprecated(note = "use `child`")]
-    pub fn with_content<W>(self, content: W) -> Self
-    where
-        W: Widget + 'static,
-    {
-        self.child(content)
-    }
-
     pub fn item(mut self, child: TreeItem) -> Self {
         self.children.push(child);
         self
-    }
-
-    #[deprecated(note = "use `item`")]
-    pub fn with_child(self, child: TreeItem) -> Self {
-        self.item(child)
     }
 
     pub fn items<I>(mut self, children: I) -> Self
@@ -2395,14 +2320,6 @@ impl TreeItem {
     {
         self.children.extend(children);
         self
-    }
-
-    #[deprecated(note = "use `items`")]
-    pub fn children<I>(self, children: I) -> Self
-    where
-        I: IntoIterator<Item = TreeItem>,
-    {
-        self.items(children)
     }
 
     pub fn label(&self) -> &str {
@@ -3445,10 +3362,6 @@ impl TableRow {
         }
     }
 }
-
-/// Former name of [`Table`].
-#[deprecated(note = "use `Table`")]
-pub type DataGrid = Table;
 
 #[doc(alias = "DataGrid")]
 pub struct Table {
@@ -5646,10 +5559,6 @@ impl BreadcrumbItem {
         }
     }
 }
-
-/// Former name of [`Breadcrumb`].
-#[deprecated(note = "use `Breadcrumb`")]
-pub type PathBar = Breadcrumb;
 
 #[doc(alias = "PathBar")]
 pub struct Breadcrumb {

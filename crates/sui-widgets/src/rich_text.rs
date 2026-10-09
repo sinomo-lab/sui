@@ -194,14 +194,6 @@ impl RichText {
         }
     }
 
-    #[deprecated(note = "use `RichText::new(fallback).document_when(reader)`")]
-    pub fn dynamic<F>(fallback: TextDocument, reader: F) -> Self
-    where
-        F: Fn() -> TextDocument + 'static,
-    {
-        Self::new(fallback).document_when(reader)
-    }
-
     pub fn plain(text: impl Into<String>) -> Self {
         Self::from_plain_text(text, DefaultTheme::default().body_text_style())
     }

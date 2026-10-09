@@ -865,14 +865,6 @@ impl StatusBarSegment {
         }
     }
 
-    #[deprecated(note = "use `StatusBarSegment::new(fallback).text_when(reader)`")]
-    pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
-    where
-        F: Fn() -> String + 'static,
-    {
-        Self::new(fallback).text_when(reader)
-    }
-
     /// The text, read each time the status bar lays out.
     pub fn text_when<F>(mut self, text: F) -> Self
     where
@@ -975,14 +967,6 @@ impl StatusBar {
 
     pub fn text_segment(self, text: impl Into<String>) -> Self {
         self.segment(StatusBarSegment::new(text))
-    }
-
-    #[deprecated(note = "use `segment(StatusBarSegment::new(fallback).text_when(reader))`")]
-    pub fn dynamic_segment<F>(self, fallback: impl Into<String>, reader: F) -> Self
-    where
-        F: Fn() -> String + 'static,
-    {
-        self.segment(StatusBarSegment::new(fallback).text_when(reader))
     }
 
     pub(super) fn text_style(&self) -> TextStyle {
@@ -1355,14 +1339,6 @@ impl StatusBadge {
             tone_reader: None,
             min_width: None,
         }
-    }
-
-    #[deprecated(note = "use `StatusBadge::new(fallback).label_when(reader)`")]
-    pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
-    where
-        F: Fn() -> String + 'static,
-    {
-        Self::new(fallback).label_when(reader)
     }
 
     /// The label, read each time the badge lays out.

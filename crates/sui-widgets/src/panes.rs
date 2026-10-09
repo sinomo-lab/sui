@@ -143,10 +143,6 @@ fn set_focus_animation_target(
     )
 }
 
-/// Former name of [`SplitView`].
-#[deprecated(note = "use `SplitView`")]
-pub type ResizablePane = SplitView;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct FloatingViewConfig {
     pub title: String,
@@ -508,11 +504,6 @@ impl FloatingWorkspace {
 
     pub fn shared_state(&self) -> FloatingWorkspaceState {
         self.state.clone()
-    }
-
-    #[deprecated(note = "use `shared_state`")]
-    pub fn state(&self) -> FloatingWorkspaceState {
-        self.shared_state()
     }
 
     pub fn with_view<W>(mut self, config: FloatingViewConfig, child: W) -> Self
@@ -2229,13 +2220,6 @@ impl FloatingStack {
             name: None,
             windows: Vec::new(),
         }
-    }
-
-    /// Has no effect: the stack draws nothing of its own, so theme the
-    /// windows' content instead.
-    #[deprecated(note = "has no effect; theme the windows' content instead")]
-    pub fn theme(self, _theme: DefaultTheme) -> Self {
-        self
     }
 
     pub fn name(mut self, name: impl Into<String>) -> Self {

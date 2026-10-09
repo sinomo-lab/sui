@@ -104,11 +104,6 @@ impl DragDropHost {
         self.child.child()
     }
 
-    #[deprecated(note = "use `child_pod`")]
-    pub fn child(&self) -> &WidgetPod {
-        self.child_pod()
-    }
-
     pub fn child_mut(&mut self) -> &mut WidgetPod {
         self.child.child_mut()
     }
@@ -594,11 +589,6 @@ impl Draggable {
         self.child.child()
     }
 
-    #[deprecated(note = "use `child_pod`")]
-    pub fn child(&self) -> &WidgetPod {
-        self.child_pod()
-    }
-
     pub fn child_mut(&mut self) -> &mut WidgetPod {
         self.child.child_mut()
     }
@@ -853,11 +843,6 @@ impl DropTarget {
 
     pub fn child_pod(&self) -> &WidgetPod {
         self.child.child()
-    }
-
-    #[deprecated(note = "use `child_pod`")]
-    pub fn child(&self) -> &WidgetPod {
-        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {

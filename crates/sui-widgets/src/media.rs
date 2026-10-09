@@ -91,11 +91,6 @@ impl Image {
         self
     }
 
-    #[deprecated(note = "use `semantic_name`")]
-    pub fn label(self, label: impl Into<String>) -> Self {
-        self.semantic_name(label)
-    }
-
     pub fn fit(mut self, fit: ImageFit) -> Self {
         self.fit = fit;
         self
@@ -150,11 +145,6 @@ impl Image {
     pub fn show_border(mut self, show_border: bool) -> Self {
         self.show_border = show_border;
         self
-    }
-
-    #[deprecated(note = "use `show_border(false)`")]
-    pub fn without_border(self) -> Self {
-        self.show_border(false)
     }
 
     pub fn corner_radius(mut self, corner_radius: f32) -> Self {
@@ -2010,10 +2000,6 @@ enum ColorPickerSemanticPart {
     Hex,
 }
 
-/// Former name of [`ColorPickerColors`].
-#[deprecated(note = "use `ColorPickerColors`")]
-pub type ColorPickerAppearance = ColorPickerColors;
-
 /// Widget-owned color-tool paint overrides. The default appearance is derived
 /// from common semantic theme roles rather than global picker-specific tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -2254,11 +2240,6 @@ impl ColorPicker {
         self
     }
 
-    #[deprecated(note = "use `colors`")]
-    pub fn appearance(self, appearance: ColorPickerColors) -> Self {
-        self.colors(appearance)
-    }
-
     pub fn on_change<F>(mut self, on_change: F) -> Self
     where
         F: FnMut(Color) + 'static,
@@ -2292,11 +2273,6 @@ impl ColorPicker {
             self.value,
             self.alpha,
         )
-    }
-
-    #[deprecated(note = "use `current_color`")]
-    pub fn color(&self) -> Color {
-        self.current_color()
     }
 
     fn hdr_capable(&self) -> bool {
@@ -3110,11 +3086,6 @@ impl SimpleColorPicker {
         self
     }
 
-    #[deprecated(note = "use `colors`")]
-    pub fn appearance(self, appearance: ColorPickerColors) -> Self {
-        self.colors(appearance)
-    }
-
     pub fn on_change<F>(mut self, on_change: F) -> Self
     where
         F: FnMut(Color) + 'static,
@@ -3167,11 +3138,6 @@ impl SimpleColorPicker {
                 oklch_to_color(self.editing_space, self.oklch_with_alpha())
             }
         }
-    }
-
-    #[deprecated(note = "use `current_color`")]
-    pub fn color(&self) -> Color {
-        self.current_color()
     }
 
     fn oklch_with_alpha(&self) -> Oklch {

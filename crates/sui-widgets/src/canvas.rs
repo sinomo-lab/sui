@@ -71,10 +71,6 @@ pub enum CanvasGridStyle {
     Lines,
 }
 
-/// Former name of [`CanvasColors`].
-#[deprecated(note = "use `CanvasColors`")]
-pub type CanvasAppearance = CanvasColors;
-
 /// Widget-owned canvas color overrides. Unset fields resolve from common
 /// semantic theme roles on every paint, preserving live theme switching.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -112,10 +108,6 @@ impl CanvasColors {
     }
 }
 
-/// Former name of [`CanvasRulerColors`].
-#[deprecated(note = "use `CanvasRulerColors`")]
-pub type CanvasRulerAppearance = CanvasRulerColors;
-
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct CanvasRulerColors {
     pub background: Option<Color>,
@@ -135,10 +127,6 @@ impl CanvasRulerColors {
         ]
     }
 }
-
-/// Former name of [`PixelCanvasColors`].
-#[deprecated(note = "use `PixelCanvasColors`")]
-pub type PixelCanvasAppearance = PixelCanvasColors;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct PixelCanvasColors {
@@ -511,11 +499,6 @@ impl CanvasRuler {
         self
     }
 
-    #[deprecated(note = "use `colors`")]
-    pub fn appearance(self, appearance: CanvasRulerColors) -> Self {
-        self.colors(appearance)
-    }
-
     fn viewport_snapshot(&self) -> (CanvasViewport, Size) {
         self.viewport_reader
             .as_ref()
@@ -792,25 +775,12 @@ impl Canvas {
         self
     }
 
-    #[deprecated(note = "use `colors`")]
-    pub fn appearance(self, appearance: CanvasColors) -> Self {
-        self.colors(appearance)
-    }
-
     pub fn child<W>(mut self, content: W) -> Self
     where
         W: Widget + 'static,
     {
         self.content = Some(SingleChild::new(content));
         self
-    }
-
-    #[deprecated(note = "use `child`")]
-    pub fn content<W>(self, content: W) -> Self
-    where
-        W: Widget + 'static,
-    {
-        self.child(content)
     }
 
     pub fn content_bounds(mut self, bounds: Rect) -> Self {
@@ -2216,11 +2186,6 @@ impl PixelCanvas {
         self.appearance = colors;
         self.paint_image_cache.borrow_mut().take();
         self
-    }
-
-    #[deprecated(note = "use `colors`")]
-    pub fn appearance(self, appearance: PixelCanvasColors) -> Self {
-        self.colors(appearance)
     }
 
     pub fn desired_size(mut self, size: Size) -> Self {

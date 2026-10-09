@@ -559,11 +559,6 @@ impl ActionTilePaint {
         self
     }
 
-    #[deprecated(note = "use `corner_radius`")]
-    pub const fn radius(self, radius: f32) -> Self {
-        self.corner_radius(radius)
-    }
-
     pub const fn padding_x(mut self, padding_x: f32) -> Self {
         self.padding_x = Some(padding_x);
         self
@@ -660,11 +655,6 @@ impl CalloutPaint {
     pub const fn corner_radius(mut self, corner_radius: f32) -> Self {
         self.radius = Some(corner_radius);
         self
-    }
-
-    #[deprecated(note = "use `corner_radius`")]
-    pub const fn radius(self, radius: f32) -> Self {
-        self.corner_radius(radius)
     }
 
     pub const fn padding(mut self, padding: Insets) -> Self {
@@ -1054,11 +1044,6 @@ impl CodePanelPaint {
         self
     }
 
-    #[deprecated(note = "use `corner_radius`")]
-    pub const fn radius(self, radius: f32) -> Self {
-        self.corner_radius(radius)
-    }
-
     pub const fn header_height(mut self, header_height: f32) -> Self {
         self.header_height = header_height;
         self
@@ -1382,11 +1367,6 @@ impl SectionPanelPaint {
     pub const fn corner_radius(mut self, corner_radius: f32) -> Self {
         self.radius = Some(corner_radius);
         self
-    }
-
-    #[deprecated(note = "use `corner_radius`")]
-    pub const fn radius(self, radius: f32) -> Self {
-        self.corner_radius(radius)
     }
 
     pub const fn header_height(mut self, header_height: f32) -> Self {

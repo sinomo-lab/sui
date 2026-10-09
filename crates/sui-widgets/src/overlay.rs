@@ -48,11 +48,6 @@ impl OverlayHost {
         self.child.child()
     }
 
-    #[deprecated(note = "use `child_pod`")]
-    pub fn child(&self) -> &WidgetPod {
-        self.child_pod()
-    }
-
     pub fn child_mut(&mut self) -> &mut WidgetPod {
         self.child.child_mut()
     }

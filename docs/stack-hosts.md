@@ -148,7 +148,7 @@ Current popup-like widgets in `sinomo-ui-widgets` opt into transient surface beh
 - Popover when open
 - ContextMenu when open
 - Dialog when shown
-- Select and ComboBox when expanded
+- Select when expanded
 
 These widgets still use composition mode hints, but their host membership and ownership are now explicit runtime and scene metadata.
 

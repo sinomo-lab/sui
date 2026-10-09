@@ -222,11 +222,6 @@ impl Surface {
         self
     }
 
-    #[deprecated(note = "use `corner_radius`")]
-    pub fn radius(self, radius: f32) -> Self {
-        self.corner_radius(radius)
-    }
-
     pub fn padding(mut self, padding: Insets) -> Self {
         self.padding = padding;
         self
@@ -487,11 +482,6 @@ impl ShadowBox {
     pub fn corner_radius(mut self, corner_radius: f32) -> Self {
         self.radius = corner_radius.max(0.0);
         self
-    }
-
-    #[deprecated(note = "use `corner_radius`")]
-    pub fn radius(self, radius: f32) -> Self {
-        self.corner_radius(radius)
     }
 
     /// Casts the shadow `shadow` chooses from the theme, such as

@@ -248,15 +248,6 @@ pub const BUILTIN_ICON_GLYPHS: &[IconGlyph] = &[
     IconGlyph::Workflow,
 ];
 
-/// Does nothing: built-in widgets paint their Lucide icons directly, so there
-/// are no icon resources to register.
-#[deprecated(note = "built-in icons need no registration; remove the call")]
-pub fn register_builtin_icon_resources(
-    _application: &mut sui_runtime::Application,
-) -> sui_core::Result<()> {
-    Ok(())
-}
-
 #[doc(alias = "Divider")]
 pub struct Separator {
     theme: Box<DefaultTheme>,
@@ -453,11 +444,6 @@ impl Icon {
     pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
         self.label = Some(name.into());
         self
-    }
-
-    #[deprecated(note = "use `semantic_name`")]
-    pub fn label(self, label: impl Into<String>) -> Self {
-        self.semantic_name(label)
     }
 
     fn resolved_color(&self) -> Color {
@@ -1510,11 +1496,6 @@ impl Button {
         &self.label
     }
 
-    #[deprecated(note = "use `current_label`")]
-    pub fn label(&self) -> &str {
-        self.current_label()
-    }
-
     pub fn set_label(&mut self, label: impl Into<String>) {
         self.label = label.into();
     }
@@ -2474,14 +2455,6 @@ impl Checkbox {
         self
     }
 
-    #[deprecated(note = "use `on_change`")]
-    pub fn on_toggle<F>(self, on_toggle: F) -> Self
-    where
-        F: FnMut(bool) + 'static,
-    {
-        self.on_change(on_toggle)
-    }
-
     fn toggle(&mut self, ctx: &mut EventCtx) {
         self.checked = !self.current_checked();
         if let Some(on_change) = &mut self.on_change {
@@ -2889,11 +2862,6 @@ impl Switch {
         self
     }
 
-    #[deprecated(note = "use `checked`")]
-    pub fn on(self, on: bool) -> Self {
-        self.checked(on)
-    }
-
     /// Name the control for accessibility and automation instead of its
     /// label, which still shows. The name should contain the label.
     pub fn semantic_name(mut self, name: impl Into<String>) -> Self {
@@ -2968,14 +2936,6 @@ impl Switch {
         }
     }
 
-    #[deprecated(note = "use `checked_when`")]
-    pub fn on_when<F>(self, on: F) -> Self
-    where
-        F: Fn() -> bool + 'static,
-    {
-        self.checked_when(on)
-    }
-
     fn current_checked(&self) -> bool {
         if let Some(source) = &self.checked_source {
             return source.get();
@@ -3008,11 +2968,6 @@ impl Switch {
         self.current_checked()
     }
 
-    #[deprecated(note = "use `is_checked`")]
-    pub fn is_on(&self) -> bool {
-        self.is_checked()
-    }
-
     /// Selects whether the complete switch row is plain or framed.
     pub fn appearance(mut self, appearance: ChoiceAppearance) -> Self {
         self.appearance = appearance;
@@ -3032,11 +2987,6 @@ impl Switch {
     pub fn set_checked(&mut self, checked: bool) {
         self.checked = checked;
         self.toggle_animation = AnimatedScalar::new(checked as u8 as f32);
-    }
-
-    #[deprecated(note = "use `set_checked`")]
-    pub fn set_on(&mut self, on: bool) {
-        self.set_checked(on);
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -3091,14 +3041,6 @@ impl Switch {
     {
         self.on_change_with_ctx = Some(Box::new(on_change));
         self
-    }
-
-    #[deprecated(note = "use `on_change`")]
-    pub fn on_toggle<F>(self, on_toggle: F) -> Self
-    where
-        F: FnMut(bool) + 'static,
-    {
-        self.on_change(on_toggle)
     }
 
     fn resolved_text_style(&self) -> TextStyle {
@@ -3603,7 +3545,6 @@ pub struct RadioButton {
     toggle_animation: AnimatedScalar,
     focus_animation: AnimatedScalar,
     label_measurement: Option<TextMeasurement>,
-    on_select: Option<Box<dyn FnMut()>>,
     on_change: Option<Box<dyn FnMut(bool)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, bool)>>,
     preview: InteractionPreview,
@@ -3634,7 +3575,6 @@ impl RadioButton {
             focus_animation: AnimatedScalar::new(0.0),
             preview: InteractionPreview::None,
             label_measurement: None,
-            on_select: None,
             on_change: None,
             on_change_with_ctx: None,
         }
@@ -3651,11 +3591,6 @@ impl RadioButton {
         self.checked = checked;
         self.toggle_animation = AnimatedScalar::new(checked as u8 as f32);
         self
-    }
-
-    #[deprecated(note = "use `checked`")]
-    pub fn selected(self, selected: bool) -> Self {
-        self.checked(selected)
     }
 
     /// Show whatever `checked` returns, for state that other controls can
@@ -3757,11 +3692,6 @@ impl RadioButton {
         true
     }
 
-    #[deprecated(note = "use `is_checked`")]
-    pub fn is_selected(&self) -> bool {
-        self.is_checked()
-    }
-
     /// Selects whether the complete radio row is plain or framed.
     pub fn appearance(mut self, appearance: ChoiceAppearance) -> Self {
         self.appearance = appearance;
@@ -3781,11 +3711,6 @@ impl RadioButton {
     pub fn set_checked(&mut self, checked: bool) {
         self.checked = checked;
         self.toggle_animation = AnimatedScalar::new(checked as u8 as f32);
-    }
-
-    #[deprecated(note = "use `set_checked`")]
-    pub fn set_selected(&mut self, selected: bool) {
-        self.set_checked(selected);
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {
@@ -3847,17 +3772,6 @@ impl RadioButton {
         self
     }
 
-    /// Call `on_select` every time the user activates the button, even when
-    /// it is already checked.
-    #[deprecated(note = "use `on_change`, which reports only actual changes")]
-    pub fn on_select<F>(mut self, on_select: F) -> Self
-    where
-        F: FnMut() + 'static,
-    {
-        self.on_select = Some(Box::new(on_select));
-        self
-    }
-
     fn resolved_text_style(&self) -> TextStyle {
         self.text_style
             .clone()
@@ -3898,9 +3812,6 @@ impl RadioButton {
             if let Some(on_change) = &mut self.on_change_with_ctx {
                 on_change(ctx, true);
             }
-        }
-        if let Some(on_select) = &mut self.on_select {
-            on_select();
         }
     }
 
@@ -7167,11 +7078,6 @@ impl Select {
         self.expanded
     }
 
-    #[deprecated(note = "use `open`")]
-    pub fn expanded(self, expanded: bool) -> Self {
-        self.open(expanded)
-    }
-
     /// Call `on_open_change` when the user opens or closes the option list.
     pub fn on_open_change<F>(mut self, on_open_change: F) -> Self
     where
@@ -7931,19 +7837,6 @@ impl Widget for Select {
     }
 }
 
-/// Former name of [`Separator`].
-#[deprecated(note = "use `Separator`")]
-pub type Divider = Separator;
-/// Former name of [`NumberInput`].
-#[deprecated(note = "use `NumberInput`")]
-pub type SpinBox = NumberInput;
-/// Former name of [`TextArea`].
-#[deprecated(note = "use `TextArea`")]
-pub type MultilineTextInput = TextArea;
-/// Former name of [`Select`].
-#[deprecated(note = "use `Select`")]
-pub type ComboBox = Select;
-
 const PASSWORD_MASK: &str = "•";
 
 pub struct TextInput {
@@ -8017,11 +7910,6 @@ impl TextInput {
 
     pub fn accessible_name(&self) -> &str {
         &self.name
-    }
-
-    #[deprecated(note = "use `accessible_name`")]
-    pub fn name(&self) -> &str {
-        self.accessible_name()
     }
 
     pub fn theme(mut self, theme: DefaultTheme) -> Self {

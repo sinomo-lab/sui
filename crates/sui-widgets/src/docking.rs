@@ -1053,11 +1053,6 @@ impl DockWorkspace {
         self.state.clone()
     }
 
-    #[deprecated(note = "use `shared_state`")]
-    pub fn state(&self) -> DockWorkspaceState {
-        self.shared_state()
-    }
-
     pub fn panel_widget_id(&self, panel: DockPanelId) -> Option<WidgetId> {
         self.panel(panel).map(|entry| entry.child.id())
     }

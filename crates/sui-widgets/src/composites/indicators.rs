@@ -298,14 +298,6 @@ impl PlacementBadge {
         }
     }
 
-    #[deprecated(note = "use `PlacementBadge::new(fallback).label_when(reader)`")]
-    pub fn dynamic<F>(fallback: impl Into<String>, reader: F) -> Self
-    where
-        F: Fn() -> String + 'static,
-    {
-        Self::new(fallback).label_when(reader)
-    }
-
     /// The label, read each time the badge lays out.
     pub fn label_when<F>(mut self, label: F) -> Self
     where
@@ -905,10 +897,6 @@ impl Widget for Spinner {
         ctx.push(node);
     }
 }
-
-/// Former name of [`Spinner`].
-#[deprecated(note = "use `Spinner`")]
-pub type BusyIndicator = Spinner;
 
 pub(super) fn text_token_style(
     theme: &DefaultTheme,

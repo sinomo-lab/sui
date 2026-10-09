@@ -1257,11 +1257,6 @@ where
         self
     }
 
-    #[deprecated(note = "use `gap`")]
-    pub fn spacing(self, spacing: f32) -> Self {
-        self.gap(spacing)
-    }
-
     pub fn padding(mut self, padding: Insets) -> Self {
         self.padding = Some(padding);
         self

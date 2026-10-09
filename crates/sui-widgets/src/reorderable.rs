@@ -185,11 +185,6 @@ impl ReorderableList {
         self
     }
 
-    #[deprecated(note = "use `gap`")]
-    pub fn spacing(self, spacing: f32) -> Self {
-        self.gap(spacing)
-    }
-
     pub fn drag_threshold(mut self, threshold: f32) -> Self {
         self.drag_threshold = threshold.max(0.0);
         self

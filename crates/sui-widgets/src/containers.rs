@@ -121,11 +121,6 @@ impl Padding {
         self.child.child()
     }
 
-    #[deprecated(note = "use `child_pod`")]
-    pub fn child(&self) -> &WidgetPod {
-        self.child_pod()
-    }
-
     pub fn child_mut(&mut self) -> &mut WidgetPod {
         self.child.child_mut()
     }
@@ -234,11 +229,6 @@ impl Align {
 
     pub fn child_pod(&self) -> &WidgetPod {
         self.child.child()
-    }
-
-    #[deprecated(note = "use `child_pod`")]
-    pub fn child(&self) -> &WidgetPod {
-        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -355,11 +345,6 @@ impl Background {
         self.child.child()
     }
 
-    #[deprecated(note = "use `child_pod`")]
-    pub fn child(&self) -> &WidgetPod {
-        self.child_pod()
-    }
-
     pub fn child_mut(&mut self) -> &mut WidgetPod {
         self.child.child_mut()
     }
@@ -463,11 +448,6 @@ impl SemanticRegion {
         self.child.child()
     }
 
-    #[deprecated(note = "use `child_pod`")]
-    pub fn child(&self) -> &WidgetPod {
-        self.child_pod()
-    }
-
     pub fn child_mut(&mut self) -> &mut WidgetPod {
         self.child.child_mut()
     }
@@ -565,14 +545,6 @@ impl SizedBox {
     {
         self.child = Some(SingleChild::new(child));
         self
-    }
-
-    #[deprecated(note = "use `child`")]
-    pub fn with_child<W>(self, child: W) -> Self
-    where
-        W: Widget + 'static,
-    {
-        self.child(child)
     }
 
     pub fn child_pod(&self) -> Option<&WidgetPod> {
@@ -706,11 +678,6 @@ impl Stack {
     pub fn gap(mut self, gap: f32) -> Self {
         self.spacing = gap.max(0.0);
         self
-    }
-
-    #[deprecated(note = "use `gap`")]
-    pub fn spacing(self, spacing: f32) -> Self {
-        self.gap(spacing)
     }
 
     pub fn alignment(mut self, alignment: Alignment) -> Self {
@@ -1613,28 +1580,13 @@ impl Flex {
         &self.items
     }
 
-    #[deprecated(note = "use `flex_items`")]
-    pub fn items(&self) -> &[FlexItem] {
-        self.flex_items()
-    }
-
     pub fn flex_items_mut(&mut self) -> &mut [FlexItem] {
         &mut self.items
-    }
-
-    #[deprecated(note = "use `flex_items_mut`")]
-    pub fn items_mut(&mut self) -> &mut [FlexItem] {
-        self.flex_items_mut()
     }
 
     /// The [`FlexItem`] layout settings of child `index`.
     pub fn flex_item(&self, index: usize) -> Option<FlexItem> {
         self.items.get(index).copied()
-    }
-
-    #[deprecated(note = "use `flex_item`")]
-    pub fn item(&self, index: usize) -> Option<FlexItem> {
-        self.flex_item(index)
     }
 
     /// Replace the [`FlexItem`] layout settings of child `index`, returning
@@ -1645,11 +1597,6 @@ impl Flex {
         };
         *slot = item;
         true
-    }
-
-    #[deprecated(note = "use `set_flex_item`")]
-    pub fn set_item(&mut self, index: usize, item: FlexItem) -> bool {
-        self.set_flex_item(index, item)
     }
 
     pub fn children(&self) -> &[WidgetPod] {
@@ -1906,15 +1853,6 @@ pub struct RebuildOnChange<K: PartialEq + Clone> {
 }
 
 impl<K: PartialEq + Clone> RebuildOnChange<K> {
-    #[deprecated(note = "use `RebuildOnChange::key_when`")]
-    pub fn new<KF, BF>(key_fn: KF, build: BF) -> Self
-    where
-        KF: Fn() -> K + 'static,
-        BF: Fn(&K) -> WidgetPod + 'static,
-    {
-        Self::key_when(key_fn, build)
-    }
-
     /// Rebuild from the key `key_fn` returns, read during measure, on
     /// pointer release, and on redraw.
     pub fn key_when<KF, BF>(key_fn: KF, build: BF) -> Self
@@ -1931,16 +1869,6 @@ impl<K: PartialEq + Clone> RebuildOnChange<K> {
             last_key,
             child,
         }
-    }
-
-    #[deprecated(note = "use `RebuildOnChange::key_from`")]
-    pub fn new_observable<O, BF>(key_source: O, build: BF) -> Self
-    where
-        O: Observable<K> + 'static,
-        BF: Fn(&K) -> WidgetPod + 'static,
-        K: 'static,
-    {
-        Self::key_from(key_source, build)
     }
 
     /// Rebuild from an observable structural key.
@@ -1985,11 +1913,6 @@ impl<K: PartialEq + Clone> RebuildOnChange<K> {
 
     pub fn child_pod(&self) -> &WidgetPod {
         &self.child
-    }
-
-    #[deprecated(note = "use `child_pod`")]
-    pub fn child(&self) -> &WidgetPod {
-        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -2107,11 +2030,6 @@ impl<K: PartialEq + Clone> RebuildOnConstraints<K> {
 
     pub fn child_pod(&self) -> &WidgetPod {
         &self.child
-    }
-
-    #[deprecated(note = "use `child_pod`")]
-    pub fn child(&self) -> &WidgetPod {
-        self.child_pod()
     }
 
     pub fn child_mut(&mut self) -> &mut WidgetPod {
@@ -3976,11 +3894,6 @@ impl ScrollView {
         self.child.child()
     }
 
-    #[deprecated(note = "use `child_pod`")]
-    pub fn child(&self) -> &WidgetPod {
-        self.child_pod()
-    }
-
     pub fn child_mut(&mut self) -> &mut WidgetPod {
         self.child.child_mut()
     }
@@ -4325,11 +4238,6 @@ impl VirtualScrollView {
     pub fn gap(mut self, gap: f32) -> Self {
         self.spacing = gap.max(0.0);
         self
-    }
-
-    #[deprecated(note = "use `gap`")]
-    pub fn spacing(self, spacing: f32) -> Self {
-        self.gap(spacing)
     }
 
     pub fn state(mut self, state: ScrollState) -> Self {

@@ -88,11 +88,6 @@ impl MenuItem {
         self
     }
 
-    #[deprecated(note = "use `enabled(false)`")]
-    pub fn disabled(self) -> Self {
-        self.enabled(false)
-    }
-
     pub fn destructive(mut self, destructive: bool) -> Self {
         self.destructive = destructive;
         self
@@ -332,11 +327,6 @@ impl Toolbar {
         self
     }
 
-    #[deprecated(note = "use `gap`")]
-    pub fn spacing(self, spacing: f32) -> Self {
-        self.gap(spacing)
-    }
-
     /// Allow toolbar items to flow into additional rows or columns while
     /// retaining their original widget identities and navigation order.
     pub fn wrap(mut self, wrap: FlexWrap) -> Self {
@@ -351,11 +341,6 @@ impl Toolbar {
     pub fn cross_gap(mut self, gap: f32) -> Self {
         self.line_spacing = Some(gap.max(0.0));
         self
-    }
-
-    #[deprecated(note = "use `cross_gap`")]
-    pub fn line_spacing(self, spacing: f32) -> Self {
-        self.cross_gap(spacing)
     }
 
     pub fn background(mut self, color: Color) -> Self {
@@ -716,11 +701,6 @@ impl CommandGroup {
         self
     }
 
-    #[deprecated(note = "use `gap`")]
-    pub fn spacing(self, spacing: f32) -> Self {
-        self.gap(spacing)
-    }
-
     pub fn corner_radius(mut self, corner_radius: f32) -> Self {
         self.corner_radius = Some(corner_radius.max(0.0));
         self
@@ -942,11 +922,6 @@ impl ToolPaletteItem {
         self
     }
 
-    #[deprecated(note = "use `enabled(false)`")]
-    pub fn disabled(self) -> Self {
-        self.enabled(false)
-    }
-
     pub fn label(&self) -> &str {
         &self.label
     }
@@ -1116,11 +1091,6 @@ impl ToolPalette {
     pub fn gap(mut self, gap: f32) -> Self {
         self.spacing = Some(gap.max(0.0));
         self
-    }
-
-    #[deprecated(note = "use `gap`")]
-    pub fn spacing(self, spacing: f32) -> Self {
-        self.gap(spacing)
     }
 
     pub fn item_size(mut self, item_size: f32) -> Self {

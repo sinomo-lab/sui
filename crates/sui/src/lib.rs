@@ -51,16 +51,11 @@ pub use composites::{
     paint_hairline, paint_placement_badge_with, paint_rounded_panel, paint_rounded_rect,
     paint_section_label, paint_section_label_detail, paint_section_panel,
 };
-// Former names, kept so existing code keeps building; naming one warns.
-#[allow(deprecated)]
-pub use composites::{BusyIndicator, Drawer, Modal};
 pub use containers::{
     Align, Background, ContentExtent, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow,
     Padding, RebuildOnChange, RebuildOnConstraints, ScrollAxes, ScrollBar, ScrollState, ScrollView,
     SemanticRegion, SizedBox, Stack, SwitchView, TrailingSlotRow, VirtualScrollView,
 };
-#[allow(deprecated)]
-pub use controls::register_builtin_icon_resources;
 pub use controls::{
     BUILTIN_ICON_GLYPHS, Button, ButtonAppearance, Checkbox, CheckboxIndicatorState,
     ChoiceAppearance, DateTimeInput, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph,
@@ -68,9 +63,6 @@ pub use controls::{
     Separator, Slider, Switch, TextArea, TextInput, draw_glyph, paint_checkbox_indicator,
     paint_icon_button,
 };
-// Former names, kept so existing code keeps building; naming one warns.
-#[allow(deprecated)]
-pub use controls::{ComboBox, Divider, MultilineTextInput, SpinBox};
 pub use sui_core::{
     AsyncWakeToken, Clipboard, ClipboardBackend, Color, ColorSpace, CursorGrabMode, CustomEvent,
     DirtyRegion, DpiInfo, DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload,
@@ -218,12 +210,6 @@ pub use sui_widgets::{
     paint_theme_inset_shadow, paint_theme_shadow, place_overlay, resolve_effect_role,
     resolve_luminance_role, resolve_material_role, resolve_semantic_color,
     resolve_widget_hdr_style, wrap_text_lines,
-};
-// Former names, kept so existing code keeps building; naming one warns.
-#[allow(deprecated)]
-pub use sui_widgets::{
-    CanvasAppearance, CanvasRulerAppearance, ColorPickerAppearance, DataGrid, PathBar,
-    PixelCanvasAppearance, ResizablePane,
 };
 pub use sui_widgets::{KeyedStack, Presence, PresenceTransition};
 pub use sui_widgets::{Paragraph, TextPlacement, TextShaper, VerticalAlign};
@@ -682,28 +668,6 @@ impl Application {
     }
 }
 
-/// Minimal shared style values for custom facade-level components.
-#[deprecated(note = "nothing in SUI reads `Style`; keep such values in your own type")]
-#[derive(Debug, Clone, PartialEq)]
-pub struct Style {
-    /// Foreground brush used to draw content.
-    pub foreground: Brush,
-    /// Insets around the styled content.
-    pub padding: Insets,
-}
-
-#[allow(deprecated)]
-impl Default for Style {
-    fn default() -> Self {
-        let theme = Theme::default();
-
-        Self {
-            foreground: Brush::Solid(theme.foreground),
-            padding: Insets::all(0.0),
-        }
-    }
-}
-
 /// Common imports for ordinary SUI application and widget code.
 /// Tooling plumbing for inspectors, tests, and benchmarks: frame timings and
 /// scene statistics, inspector snapshots and traces, renderer debug captures,
@@ -746,13 +710,6 @@ pub mod prelude {
     pub use crate::{
         FileDialogFilter, FileDialogMode, FileDialogRequest, FileDialogSelection,
         FileDialogService, NativeFileDialogs, PlatformFile, show_file_dialog,
-    };
-    // Former names, kept so existing code keeps building; naming one warns.
-    #[allow(deprecated)]
-    pub use crate::{
-        BusyIndicator, CanvasAppearance, CanvasRulerAppearance, ColorPickerAppearance, ComboBox,
-        DataGrid, Divider, Drawer, Modal, MultilineTextInput, PathBar, PixelCanvasAppearance,
-        ResizablePane, SpinBox,
     };
 
     pub use crate::{

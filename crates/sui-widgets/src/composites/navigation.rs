@@ -1696,11 +1696,6 @@ impl SegmentedControlItem {
         self
     }
 
-    #[deprecated(note = "use `enabled(false)`")]
-    pub fn disabled(self) -> Self {
-        self.enabled(false)
-    }
-
     pub fn label(&self) -> &str {
         &self.label
     }

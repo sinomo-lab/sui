@@ -318,16 +318,6 @@ impl Dialog {
         self.apply_open(open)
     }
 
-    #[deprecated(note = "use `open`")]
-    pub fn shown(self, shown: bool) -> Self {
-        self.open(shown)
-    }
-
-    #[deprecated(note = "use `set_open`")]
-    pub fn set_shown(&mut self, shown: bool) -> bool {
-        self.set_open(shown)
-    }
-
     pub(super) fn sync_open(&mut self) {
         if let Some(open) = self.open_binding.live() {
             self.apply_open(open);
@@ -988,16 +978,6 @@ impl CommandPalette {
         self.inner.set_open(open)
     }
 
-    #[deprecated(note = "use `open`")]
-    pub fn shown(self, shown: bool) -> Self {
-        self.open(shown)
-    }
-
-    #[deprecated(note = "use `set_open`")]
-    pub fn set_shown(&mut self, shown: bool) -> bool {
-        self.set_open(shown)
-    }
-
     pub fn description(mut self, description: impl Into<String>) -> Self {
         self.inner = self.inner.description(description);
         self
@@ -1083,10 +1063,6 @@ impl Widget for CommandPalette {
         self.inner.visit_children_mut(visitor);
     }
 }
-
-/// Former name of [`Dialog`].
-#[deprecated(note = "use `Dialog`")]
-pub type Modal = Dialog;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SideSheetPlacement {
@@ -1255,21 +1231,6 @@ impl SideSheet {
 
     pub fn is_open(&self) -> bool {
         self.shown
-    }
-
-    #[deprecated(note = "use `is_open`")]
-    pub fn is_shown(&self) -> bool {
-        self.is_open()
-    }
-
-    #[deprecated(note = "use `open`")]
-    pub fn shown(self, shown: bool) -> Self {
-        self.open(shown)
-    }
-
-    #[deprecated(note = "use `set_open`")]
-    pub fn set_shown(&mut self, shown: bool) -> bool {
-        self.set_open(shown)
     }
 
     /// Read the open state from the sheet's [`SheetState`] or bound value.
@@ -1928,10 +1889,6 @@ impl Widget for SideSheet {
     }
 }
 
-/// Former name of [`SideSheet`].
-#[deprecated(note = "use `SideSheet`")]
-pub type Drawer = SideSheet;
-
 /// A modal surface anchored to the bottom edge of its allocated viewport.
 ///
 /// `BottomSheet` follows the same focus, dismissal, semantics, and action
@@ -1999,11 +1956,6 @@ impl BottomSheet {
     /// Open or close a built sheet, returning whether that changed it.
     pub fn set_open(&mut self, open: bool) -> bool {
         self.inner.set_open(open)
-    }
-
-    #[deprecated(note = "use `open`")]
-    pub fn shown(self, shown: bool) -> Self {
-        self.open(shown)
     }
 
     pub fn state(mut self, state: SheetState) -> Self {

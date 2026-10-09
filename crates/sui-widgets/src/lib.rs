@@ -75,16 +75,11 @@ pub use composites::{
     paint_rounded_rect, paint_section_label, paint_section_label_detail, paint_section_panel,
     paint_status_badge,
 };
-// Former names, kept so existing code keeps building; naming one warns.
-#[allow(deprecated)]
-pub use composites::{BusyIndicator, Drawer, Modal};
 pub use containers::{
     Align, Background, ContentExtent, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow,
     Padding, RebuildOnChange, RebuildOnConstraints, ScrollAxes, ScrollBar, ScrollState, ScrollView,
     SemanticRegion, SizedBox, Stack, SwitchView, TrailingSlotRow, VirtualScrollView,
 };
-#[allow(deprecated)]
-pub use controls::register_builtin_icon_resources;
 pub use controls::{
     BUILTIN_ICON_GLYPHS, Button, ButtonAppearance, Checkbox, CheckboxIndicatorState,
     ChoiceAppearance, DateTimeInput, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph,
@@ -92,9 +87,6 @@ pub use controls::{
     Separator, Slider, Switch, TextArea, TextInput, draw_glyph, paint_checkbox_indicator,
     paint_icon_button,
 };
-// Former names, kept so existing code keeps building; naming one warns.
-#[allow(deprecated)]
-pub use controls::{ComboBox, Divider, MultilineTextInput, SpinBox};
 pub use data::{
     Breadcrumb, BreadcrumbItem, LayerList, LayerListItem, LayerListReorderChange,
     LeadingLabelCellPaint, ListItem, ListView, Table, TableColumn, TableColumnAlignment, TableRow,
@@ -102,9 +94,6 @@ pub use data::{
     VirtualTableRowActivationKind, VirtualTableRowContext, VirtualTableSortDirection,
     VirtualTableState, paint_leading_label_cell, paint_text_block, paint_text_cell,
 };
-// Former names, kept so existing code keeps building; naming one warns.
-#[allow(deprecated)]
-pub use data::{DataGrid, PathBar};
 pub use docking::{
     DockFloatingGroup, DockLayoutError, DockNode, DockPanelId, DockWorkspace,
     DockWorkspaceSnapshot, DockWorkspaceState, DockZone,
@@ -134,13 +123,6 @@ pub use panes::{
     FloatingStack, FloatingViewConfig, FloatingViewSnapshot, FloatingWorkspace,
     FloatingWorkspaceState, SplitExtent, SplitPaneSide, SplitState, SplitStateSnapshot, SplitView,
 };
-// Former names, kept so existing code keeps building; naming one warns.
-#[allow(deprecated)]
-pub use canvas::{CanvasAppearance, CanvasRulerAppearance, PixelCanvasAppearance};
-#[allow(deprecated)]
-pub use media::ColorPickerAppearance;
-#[allow(deprecated)]
-pub use panes::ResizablePane;
 pub use presence::{KeyedStack, Presence, PresenceTransition};
 pub use reorderable::{ReorderableList, ReorderableListChange};
 pub use rich_document::{
