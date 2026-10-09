@@ -3,33 +3,42 @@
   "version": "0.5.0",
   "description": "JavaScript bindings for SUI.",
   "license": "MIT",
-  "type": "commonjs",
+  "type": "module",
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
     ".": {
       "types": "./index.d.ts",
-      "require": "./index.js"
+      "browser": "./web.js",
+      "node": "./index.js",
+      "default": "./web.js"
     }
+  },
+  "engines": {
+    "node": ">=20.19"
   },
   "files": [
     "index.js",
+    "web.js",
+    "runtime.js",
     "api.js",
     "index.d.ts",
     "*.node",
+    "web/sui_web.js",
+    "web/sui_web_bg.wasm",
     "README.md",
     "examples"
   ],
   "scripts": {
     "build": "napi build --platform --release",
-    "check:loader": "node --check index.js",
-    "test": "npm run check:loader && npm run test:consumer",
-    "test:consumer": "cargo build --package sinomo-ui-js && node tests/consumer.js"
+    "test": "cargo build --package sinomo-ui-js && node --test tests/",
+    "test:web": "cargo xtask web build && node tests/run.js web"
   },
   "keywords": [
     "sui",
     "ui",
     "widgets",
-    "napi-rs"
+    "napi-rs",
+    "webassembly"
   ]
 }

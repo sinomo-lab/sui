@@ -15,6 +15,7 @@ rust-version.workspace = true
 [features]
 default = []
 desktop = ["sui/desktop", "dep:pollster"]
+web = ["sui/web"]
 
 [lib]
 name = "sui_bindings_core"

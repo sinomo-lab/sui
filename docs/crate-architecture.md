@@ -26,6 +26,7 @@ crates/
   sui-testing/
   sui-text/
   sui-tui/
+  sui-web/
   sui-webview/
   sui-widgets/
   xtask/

@@ -66,6 +66,12 @@ pub use animation::binding_loop_mode_name;
 pub use animation::binding_stagger_origin_from_name;
 pub use animation::binding_table_column_alignment_from_name;
 pub use application::BindingApp;
+pub use application::BindingPumpStatus;
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+pub use application::BindingPumpedApp;
 pub use application::BindingRenderOptions;
 pub use application::BindingWindow;
 pub use application::registered_image_from_png;

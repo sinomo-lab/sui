@@ -5,6 +5,8 @@
 /.codex/
 /.playwright-cli
 /crates/sui-demo/web/dist
+/crates/sui-js/web
+/crates/sui-js/*.node
 /output
 
 # Python development environment and build artifacts

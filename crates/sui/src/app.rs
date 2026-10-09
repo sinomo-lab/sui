@@ -157,6 +157,43 @@ impl App {
             .run_with(|commands| on_ready(UiHandle::new(commands)))
     }
 
+    /// Start the app on the desktop without blocking and receive a UI command
+    /// handle once its event loop is ready.
+    ///
+    /// The caller drives the event loop by calling
+    /// [`PumpedDesktop::pump`](crate::PumpedDesktop::pump) repeatedly, which
+    /// lets another framework's event loop, such as a JavaScript runtime's,
+    /// own the main thread.
+    #[cfg(all(
+        feature = "desktop",
+        any(target_os = "windows", target_os = "macos", target_os = "linux")
+    ))]
+    pub fn start_pumped_with_handle(
+        self,
+        on_ready: impl FnOnce(UiHandle),
+    ) -> Result<crate::PumpedDesktop> {
+        self.application
+            .start_pumped_with(|commands| on_ready(UiHandle::new(commands)))
+    }
+
+    /// Start the app in the browser and receive a UI command handle once its
+    /// event loop is ready. The first window draws on `canvas`, or on the
+    /// page's element with id `sui-main-canvas`; `on_exit` runs when the app
+    /// exits, with the error it stopped with, if any.
+    #[cfg(all(feature = "web", target_arch = "wasm32"))]
+    pub fn start_web_with_handle(
+        self,
+        canvas: Option<crate::WebCanvas>,
+        on_ready: impl FnOnce(UiHandle),
+        on_exit: impl FnOnce(Result<()>) + 'static,
+    ) -> Result<()> {
+        self.application.start_web_with(
+            canvas,
+            |commands| on_ready(UiHandle::new(commands)),
+            on_exit,
+        )
+    }
+
     /// Run with a configured platform host and receive a UI command handle
     /// once its event loop is ready.
     #[cfg(any(feature = "desktop", feature = "web"))]

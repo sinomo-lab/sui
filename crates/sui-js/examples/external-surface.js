@@ -1,8 +1,6 @@
-"use strict";
+import * as sui from "@sui/ui";
 
-const sui = require("..");
-
-const pixels = Buffer.from([
+const pixels = Uint8Array.from([
   255, 60, 40, 255,
   40, 120, 255, 255,
   30, 180, 110, 255,

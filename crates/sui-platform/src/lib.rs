@@ -49,9 +49,11 @@ pub use debug_capture::{
 };
 #[cfg(target_os = "android")]
 pub use desktop::AndroidApp;
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+pub use desktop::PumpedDesktop;
 pub use desktop::{
     DesktopAutomationAction, DesktopAutomationConfig, DesktopExtension, DesktopExtensionContext,
-    DesktopFramePresented, DesktopPlatform, DesktopWindow, WakeSignal, Waker,
+    DesktopFramePresented, DesktopPlatform, DesktopPumpStatus, DesktopWindow, WakeSignal, Waker,
 };
 pub use display_capabilities::{
     WindowOutputDiagnostics, clear_window_output_diagnostics, clear_window_output_diagnostics_all,
@@ -67,6 +69,9 @@ pub use headless::{HeadlessPlatform, PlatformWindow};
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 pub use os_clipboard::OsClipboardBackend;
 pub use present::{PresentedFrame, present_window_frame};
+/// The canvas element a browser app draws a window on.
+#[cfg(target_arch = "wasm32")]
+pub use web_sys::HtmlCanvasElement as WebCanvas;
 
 pub(crate) fn reset_window_performance_store() {
     clear_window_performance_snapshots();

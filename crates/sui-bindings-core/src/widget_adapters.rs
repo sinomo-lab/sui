@@ -6,7 +6,7 @@ use crate::values::{BindingBool, BindingNumber, BindingText};
 use std::sync::Arc;
 use sui::ArrangeCtx;
 use sui::Checkbox;
-#[cfg(feature = "desktop")]
+#[cfg(any(feature = "desktop", feature = "web"))]
 use sui::CommandKey;
 use sui::CommandPalette;
 use sui::Constraints;
@@ -1080,6 +1080,6 @@ impl Widget for BindingScrollControlledWidget {
     }
 }
 
-#[cfg(feature = "desktop")]
+#[cfg(any(feature = "desktop", feature = "web"))]
 pub(crate) const BINDING_UI_TASKS_READY: CommandKey<()> =
     CommandKey::new("sui.bindings.ui-tasks-ready");

@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     collections::HashMap,
     fmt,
     sync::{
@@ -245,6 +246,8 @@ pub struct DesktopPlatform {
     renderer: WgpuRenderer,
     automation: Option<DesktopAutomationConfig>,
     extensions: Vec<Box<dyn DesktopExtension>>,
+    #[cfg(target_arch = "wasm32")]
+    web_canvas: Option<web_sys::HtmlCanvasElement>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -347,6 +350,14 @@ impl DesktopPlatform {
         self
     }
 
+    /// Draw the first window on `canvas` instead of the page's element with id
+    /// `sui-main-canvas`.
+    #[cfg(target_arch = "wasm32")]
+    pub fn with_web_canvas(mut self, canvas: web_sys::HtmlCanvasElement) -> Self {
+        self.web_canvas = Some(canvas);
+        self
+    }
+
     /// Attach an optional UI-thread desktop integration.
     pub fn with_extension(mut self, extension: impl DesktopExtension + 'static) -> Self {
         self.extensions.push(Box::new(extension));
@@ -409,46 +420,25 @@ impl DesktopPlatform {
         mut runtime: Runtime,
         on_ready: impl FnOnce(CommandSender),
     ) -> Result<Vec<PlatformWindow>> {
-        let event_loop = EventLoop::<DesktopUserEvent>::with_user_event()
-            .build()
-            .map_err(map_event_loop_error)?;
-        let event_loop_proxy = event_loop.create_proxy();
-        let external_wake_pending = Arc::new(AtomicBool::new(false));
-        let reactive_wake_pending = Arc::new(AtomicBool::new(false));
-        let waker = Waker::new(
-            event_loop_proxy.clone(),
-            external_wake_pending.clone(),
-            WakeKind::External,
-        );
-        let reactive_waker = Waker::new(
-            event_loop_proxy.clone(),
-            reactive_wake_pending.clone(),
-            WakeKind::Reactive,
-        );
-        runtime.set_external_waker(move || reactive_waker.wake());
-        let commands = runtime.command_sender();
-        let command_waker = waker.clone();
-        runtime.set_command_waker(move || command_waker.wake());
-        on_ready(commands);
+        let (event_loop, event_loop_proxy, external_wake_pending, reactive_wake_pending) =
+            create_event_loop(&mut runtime, on_ready)?;
 
         #[cfg(target_arch = "wasm32")]
         {
-            let mut app = DesktopApp::new(
+            self.spawn_web(
+                event_loop,
                 runtime,
-                self.renderer,
-                self.automation,
-                self.extensions,
                 event_loop_proxy,
                 external_wake_pending,
                 reactive_wake_pending,
+                |result| {
+                    if let Err(error) = result {
+                        web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(
+                            &error.to_string(),
+                        ));
+                    }
+                },
             );
-            wasm_bindgen_futures::spawn_local(async move {
-                if let Err(error) = app.renderer.initialize_async(None).await {
-                    web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(&error.to_string()));
-                    return;
-                }
-                event_loop.spawn_app(app);
-            });
             Ok(Vec::new())
         }
 
@@ -471,6 +461,93 @@ impl DesktopPlatform {
 
             Ok(app.snapshot_windows())
         }
+    }
+
+    /// Start the application in the browser. The browser's event loop drives
+    /// it; this returns once the app is scheduled, and `on_exit` runs when
+    /// the app exits, with the error it stopped with, if any.
+    ///
+    /// Only one app can run per page.
+    #[cfg(target_arch = "wasm32")]
+    pub fn start_web(
+        self,
+        mut runtime: Runtime,
+        on_ready: impl FnOnce(CommandSender),
+        on_exit: impl FnOnce(Result<()>) + 'static,
+    ) -> Result<()> {
+        let (event_loop, event_loop_proxy, external_wake_pending, reactive_wake_pending) =
+            create_event_loop(&mut runtime, on_ready)?;
+        self.spawn_web(
+            event_loop,
+            runtime,
+            event_loop_proxy,
+            external_wake_pending,
+            reactive_wake_pending,
+            on_exit,
+        );
+        Ok(())
+    }
+
+    /// Initialize the renderer, then hand the app to the browser's event
+    /// loop.
+    #[cfg(target_arch = "wasm32")]
+    fn spawn_web(
+        self,
+        event_loop: EventLoop<DesktopUserEvent>,
+        runtime: Runtime,
+        event_loop_proxy: EventLoopProxy<DesktopUserEvent>,
+        external_wake_pending: Arc<AtomicBool>,
+        reactive_wake_pending: Arc<AtomicBool>,
+        on_exit: impl FnOnce(Result<()>) + 'static,
+    ) {
+        let mut app = DesktopApp::new(
+            runtime,
+            self.renderer,
+            self.automation,
+            self.extensions,
+            event_loop_proxy,
+            external_wake_pending,
+            reactive_wake_pending,
+        );
+        app.web_canvas = self.web_canvas;
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Err(error) = app.renderer.initialize_async(None).await {
+                on_exit(Err(error));
+                return;
+            }
+            app.on_exit = Some(Box::new(on_exit));
+            event_loop.spawn_app(app);
+        });
+    }
+
+    /// Start the application without blocking: the caller drives the event
+    /// loop by calling [`PumpedDesktop::pump`] repeatedly, for example from
+    /// another framework's event loop.
+    ///
+    /// Like [`run_with`](Self::run_with), this must be called on the main
+    /// thread, and only once per process.
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    pub fn start_pumped(
+        self,
+        mut runtime: Runtime,
+        on_ready: impl FnOnce(CommandSender),
+    ) -> Result<PumpedDesktop> {
+        let (event_loop, event_loop_proxy, external_wake_pending, reactive_wake_pending) =
+            create_event_loop(&mut runtime, on_ready)?;
+        let app = DesktopApp::new(
+            runtime,
+            self.renderer,
+            self.automation,
+            self.extensions,
+            event_loop_proxy,
+            external_wake_pending,
+            reactive_wake_pending,
+        );
+        Ok(PumpedDesktop {
+            event_loop,
+            app,
+            exited: false,
+        })
     }
 
     #[cfg(target_os = "android")]
@@ -524,6 +601,109 @@ impl DesktopPlatform {
     }
 }
 
+/// Create the event loop and connect the runtime's wakers to it.
+#[allow(clippy::type_complexity)]
+fn create_event_loop(
+    runtime: &mut Runtime,
+    on_ready: impl FnOnce(CommandSender),
+) -> Result<(
+    EventLoop<DesktopUserEvent>,
+    EventLoopProxy<DesktopUserEvent>,
+    Arc<AtomicBool>,
+    Arc<AtomicBool>,
+)> {
+    let event_loop = EventLoop::<DesktopUserEvent>::with_user_event()
+        .build()
+        .map_err(map_event_loop_error)?;
+    let event_loop_proxy = event_loop.create_proxy();
+    let external_wake_pending = Arc::new(AtomicBool::new(false));
+    let reactive_wake_pending = Arc::new(AtomicBool::new(false));
+    let waker = Waker::new(
+        event_loop_proxy.clone(),
+        external_wake_pending.clone(),
+        WakeKind::External,
+    );
+    let reactive_waker = Waker::new(
+        event_loop_proxy.clone(),
+        reactive_wake_pending.clone(),
+        WakeKind::Reactive,
+    );
+    runtime.set_external_waker(move || reactive_waker.wake());
+    let commands = runtime.command_sender();
+    let command_waker = waker.clone();
+    runtime.set_command_waker(move || command_waker.wake());
+    on_ready(commands);
+    Ok((
+        event_loop,
+        event_loop_proxy,
+        external_wake_pending,
+        reactive_wake_pending,
+    ))
+}
+
+/// What a host should do after [`PumpedDesktop::pump`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopPumpStatus {
+    /// Keep pumping. `next_wake` is how soon the application needs another
+    /// turn for its own timers and animations; `None` means only new
+    /// platform events, such as input, need attention.
+    Continue { next_wake: Option<Duration> },
+    /// The application exited. Pumping again does nothing.
+    Exited,
+}
+
+/// A desktop application that its host drives one event-loop turn at a time
+/// with [`pump`](Self::pump), instead of blocking in
+/// [`DesktopPlatform::run_with`].
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+pub struct PumpedDesktop {
+    event_loop: EventLoop<DesktopUserEvent>,
+    app: DesktopApp,
+    exited: bool,
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+impl PumpedDesktop {
+    /// Process pending events and due work, waiting up to `timeout` for new
+    /// events (`None` waits indefinitely, so hosts usually pass a short or
+    /// zero timeout). Returns an error the application stopped with.
+    pub fn pump(&mut self, timeout: Option<Duration>) -> Result<DesktopPumpStatus> {
+        use winit::platform::pump_events::{EventLoopExtPumpEvents, PumpStatus};
+
+        if self.exited {
+            return Ok(DesktopPumpStatus::Exited);
+        }
+        let status = self.event_loop.pump_app_events(timeout, &mut self.app);
+        if let Some(error) = self.app.last_error.take() {
+            self.exited = true;
+            return Err(error);
+        }
+        match status {
+            PumpStatus::Exit(_) => {
+                self.exited = true;
+                Ok(DesktopPumpStatus::Exited)
+            }
+            PumpStatus::Continue => Ok(DesktopPumpStatus::Continue {
+                next_wake: self
+                    .app
+                    .next_wake
+                    .get()
+                    .map(|at| at.saturating_duration_since(Instant::now())),
+            }),
+        }
+    }
+
+    /// Whether the application has exited.
+    pub fn has_exited(&self) -> bool {
+        self.exited
+    }
+
+    /// The application's windows as of the last turn.
+    pub fn windows(&self) -> Vec<PlatformWindow> {
+        self.app.snapshot_windows()
+    }
+}
+
 struct DesktopApp {
     runtime: Runtime,
     renderer: WgpuRenderer,
@@ -541,6 +721,18 @@ struct DesktopApp {
     last_error: Option<Error>,
     external_wake_pending: Arc<AtomicBool>,
     reactive_wake_pending: Arc<AtomicBool>,
+    /// When the application next needs a turn for its own work, as of the
+    /// latest control-flow update: `None` waits for events.
+    next_wake: Cell<Option<Instant>>,
+    /// The canvas for the next window created in the browser.
+    #[cfg(target_arch = "wasm32")]
+    web_canvas: Option<web_sys::HtmlCanvasElement>,
+    /// Whether a window already uses the page's `sui-main-canvas` element.
+    #[cfg(target_arch = "wasm32")]
+    web_main_canvas_used: bool,
+    /// Runs when the browser's event loop finishes the app.
+    #[cfg(target_arch = "wasm32")]
+    on_exit: Option<Box<dyn FnOnce(Result<()>)>>,
 }
 
 impl DesktopApp {
@@ -651,13 +843,23 @@ impl DesktopApp {
             })
     }
 
+    /// The canvas for a new window: the configured canvas, else the page's
+    /// `sui-main-canvas` element for the first window. `None` lets winit
+    /// create a canvas and append it to the page.
     #[cfg(target_arch = "wasm32")]
-    fn web_canvas_for_window() -> Option<web_sys::HtmlCanvasElement> {
+    fn web_canvas_for_window(&mut self) -> Option<web_sys::HtmlCanvasElement> {
         let window = web_sys::window()?;
-        let canvas = window
-            .document()
-            .and_then(|document| document.get_element_by_id("sui-main-canvas"))
-            .and_then(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok())?;
+        let canvas = match self.web_canvas.take() {
+            Some(canvas) => canvas,
+            None if !self.web_main_canvas_used => {
+                self.web_main_canvas_used = true;
+                window
+                    .document()
+                    .and_then(|document| document.get_element_by_id("sui-main-canvas"))
+                    .and_then(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok())?
+            }
+            None => return None,
+        };
         let scale_factor = window.device_pixel_ratio().max(1.0);
         let size = Self::web_canvas_logical_size(Some(&canvas))
             .unwrap_or_else(Self::web_window_logical_size);
@@ -717,6 +919,13 @@ impl DesktopApp {
             windows: HashMap::new(),
             host_to_runtime: HashMap::new(),
             last_error: None,
+            next_wake: Cell::new(None),
+            #[cfg(target_arch = "wasm32")]
+            web_canvas: None,
+            #[cfg(target_arch = "wasm32")]
+            web_main_canvas_used: false,
+            #[cfg(target_arch = "wasm32")]
+            on_exit: None,
             external_wake_pending,
             reactive_wake_pending,
         }
@@ -915,9 +1124,9 @@ impl DesktopApp {
             #[cfg(target_arch = "wasm32")]
             {
                 install_web_favicon(window_icon.as_ref())?;
-                attributes = attributes
-                    .with_canvas(Self::web_canvas_for_window())
-                    .with_append(false);
+                let canvas = self.web_canvas_for_window();
+                let append = canvas.is_none();
+                attributes = attributes.with_canvas(canvas).with_append(append);
             }
             let window = Arc::new(event_loop.create_window(attributes).map_err(map_os_error)?);
             window.set_ime_allowed(false);
@@ -1232,13 +1441,18 @@ impl DesktopApp {
 
         match next_deadline {
             Some(deadline) if deadline <= self.frame_clock => {
+                self.next_wake.set(Some(Instant::now()));
                 event_loop.set_control_flow(ControlFlow::Poll);
             }
             Some(deadline) => {
                 let when = self.started_at + Duration::from_secs_f64(deadline.max(0.0));
+                self.next_wake.set(Some(when));
                 event_loop.set_control_flow(ControlFlow::WaitUntil(when));
             }
-            None => event_loop.set_control_flow(ControlFlow::Wait),
+            None => {
+                self.next_wake.set(None);
+                event_loop.set_control_flow(ControlFlow::Wait);
+            }
         }
 
         Ok(())
@@ -2554,6 +2768,13 @@ impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
         }
         if let Err(error) = self.drive_runtime(event_loop) {
             self.handle_error(event_loop, error);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(on_exit) = self.on_exit.take() {
+            on_exit(self.last_error.take().map_or(Ok(()), Err));
         }
     }
 

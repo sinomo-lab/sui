@@ -1,13 +1,14 @@
 # Cross-language bindings roadmap
 
-**Status:** Active. The native Python and Node/Electron alpha foundations and
-generated API coverage are implemented. Native package release, platform smoke
-coverage, exact editor-surface parity, browser bindings, custom WGSL, and
+**Status:** Active. The native Python and Node/Electron alpha foundations, the
+browser WebAssembly build of the JavaScript package, and generated API
+coverage are implemented. Native package release, platform smoke coverage,
+exact editor-surface parity, a browser support matrix, custom WGSL, and
 zero-copy binding composition remain open.
 
 This document tracks unfinished binding work. Current setup and examples live
 in the [Python guide](../../crates/sui-python/README.md), the
-[Node/Electron guide](../../crates/sui-js/README.md), and the
+[JavaScript guide](../../crates/sui-js/README.md), and the
 [examples catalog](../examples.md).
 
 ## Implementation status
@@ -23,7 +24,7 @@ release gates.
 | Exact portable widget parity | Partial | `VirtualTable` is bound directly over a thread-safe keyed `TableModel` with conformance tests. `TextSurface` uses `TextArea`; editor-surface behavior still needs dedicated contracts and tests. |
 | Native packages | Partial | Python: abi3 wheels for Windows x64, macOS arm64/x64, and Linux x64/aarch64 (`manylinux_2_28`) plus an sdist are built, tested from clean installs, and published by `.github/workflows/python.yml`. Node/Electron: artifact matrices, release CI, clean-install tests, and publication remain open. |
 | Desktop smoke coverage | Partial | Host-driven tests and examples exist; supported-platform real-window lifecycle/input/render coverage remains open. |
-| Browser JavaScript/WASM bindings | Not implemented | Define and implement the browser package and lifecycle; the Rust/WASM demo is an existing, separate surface. |
+| Browser JavaScript/WASM bindings | Implemented alpha | The JavaScript package's browser entry runs the same API on a WebAssembly build (`crates/sui-web`); a browser matrix, device-loss handling, browser accessibility, a bundler example, and a packed-package smoke test remain open. |
 | User shader registration | Not implemented | Built-in shader descriptors exist; custom WGSL validation, schemas, caching, and lifecycle handling remain open. |
 | Zero-copy binding surfaces | Partial | Descriptors and synchronization types exist; only CPU RGBA composition is rendered through the bindings today. |
 | Stable compatibility policy | Partial | Guides and generated declarations exist; deprecation policy, package/platform support policy, and release gates remain open. |
@@ -215,26 +216,31 @@ This is a capability follow-up. The first native alpha may retain documented
 equivalents; complete classification alone must not be advertised as exact
 editor parity.
 
-### 4. Design browser JavaScript/WASM bindings
+### 4. Finish the browser JavaScript/WASM bindings
 
-**Status: not implemented.** SUI's Rust/WASM demo and web renderer exist, but
-the native napi-rs package does not provide a browser JavaScript API.
+**Status: alpha implemented.** `@sui/ui` has one async API with two native
+modules: the napi-rs addon for Node/Electron and a wasm-bindgen build
+(`crates/sui-web`, built with `cargo xtask web build`) for browsers. The shared
+JavaScript layer (`crates/sui-js/runtime.js`) and the generated widget glue
+keep them identical, and the `node:test` suite runs on both. Implemented:
 
-Browser bindings are a separate product surface, not a rebuild of the napi-rs
-package. Before implementation, specify:
+- ES module initialization with top-level `await`, and asynchronous WebGPU
+  startup behind `await app.run({ canvas })`;
+- canvas ownership and resizing to the canvas's container;
+- callback error boundaries through `setErrorHandler`, including async
+  callbacks;
+- byte-based resource loading (`pngImage`, `svgImage`, `fontBytes`);
+- a framework-free example (`crates/sui-js/examples/web`).
 
-- ES module initialization and asynchronous WebGPU startup;
-- canvas ownership and resize/device-loss behavior;
-- JavaScript callback error boundaries;
-- resource upload and URL/byte loading;
-- accessibility DOM or AccessKit integration;
-- bundler-free and common-bundler examples;
-- a generated API source shared with the native TypeScript declarations where
-  the lifecycle models overlap.
+Remaining before the alpha exit criteria are met:
 
-Exit criteria for an alpha are a documented browser matrix, one framework-free
-example, one packed-package smoke test, and semantic/render compatibility for
-the portable widget tier.
+- a documented browser matrix and device-loss behavior;
+- browser accessibility (DOM mirror or AccessKit) for the canvas;
+- a common-bundler example and a packed-package smoke test;
+- a module-size budget (the release module is about 16 MB before compression)
+  and `wasm-opt` in the build;
+- semantic/render compatibility checks for the portable widget tier in a real
+  browser, beyond the Node-hosted test run.
 
 ### 5. Extend safe shader support
 

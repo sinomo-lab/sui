@@ -7,9 +7,7 @@ use std::process;
 
 mod api;
 mod source;
-#[cfg(test)]
-use api::ApiType;
-use api::{ApiDecl, ApiFunction, ApiMember};
+use api::{ApiDecl, ApiFunction, ApiMember, ApiParameter, ApiType};
 
 fn main() {
     if let Err(error) = run() {
@@ -35,13 +33,114 @@ fn run() -> Result<(), String> {
         {
             bindings_generate(true)
         }
+        [command, subcommand] if command == "web" && subcommand == "build" => web_build(false),
+        [command, subcommand, flag]
+            if command == "web" && subcommand == "build" && flag == "--release" =>
+        {
+            web_build(true)
+        }
         _ => {
             eprintln!("usage: cargo xtask bindings coverage");
             eprintln!("       cargo xtask bindings check");
             eprintln!("       cargo xtask bindings generate [--check]");
+            eprintln!("       cargo xtask web build [--release]");
             Err("unknown xtask command".to_string())
         }
     }
+}
+
+/// Build the WebAssembly module behind the JavaScript package's browser
+/// entry point into `crates/sui-js/web/`.
+fn web_build(release: bool) -> Result<(), String> {
+    let root = workspace_root()?;
+    let profile = if release { "web-release" } else { "dev" };
+    let status = process::Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+        .current_dir(&root)
+        .args([
+            "build",
+            "-p",
+            "sinomo-ui-web",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--profile",
+            profile,
+        ])
+        .status()
+        .map_err(|error| format!("failed to run cargo: {error}"))?;
+    if !status.success() {
+        return Err("building sinomo-ui-web failed".to_string());
+    }
+
+    let wasm_bindgen = wasm_bindgen_command(&root)?;
+    let profile_dir = if release { "web-release" } else { "debug" };
+    let module = root.join(format!(
+        "target/wasm32-unknown-unknown/{profile_dir}/sui_web.wasm"
+    ));
+    let out_dir = root.join("crates/sui-js/web");
+    let status = process::Command::new(&wasm_bindgen)
+        .arg("--target")
+        .arg("web")
+        .arg("--no-typescript")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg(&module)
+        .status()
+        .map_err(|error| format!("failed to run {}: {error}", wasm_bindgen.display()))?;
+    if !status.success() {
+        return Err("wasm-bindgen failed".to_string());
+    }
+    println!("built {}", relative_display(&root, &out_dir));
+    Ok(())
+}
+
+/// The `wasm-bindgen` CLI matching the workspace's `wasm-bindgen` crate:
+/// `$WASM_BINDGEN`, or `wasm-bindgen` on the `PATH` when its version matches.
+fn wasm_bindgen_command(root: &Path) -> Result<PathBuf, String> {
+    let lock = read_source(root, "Cargo.lock")?;
+    let version = lock
+        .split("[[package]]")
+        .find(|package| {
+            package
+                .lines()
+                .any(|line| line == "name = \"wasm-bindgen\"")
+        })
+        .and_then(|package| {
+            package
+                .lines()
+                .find_map(|line| line.strip_prefix("version = \""))
+                .map(|version| version.trim_end_matches('"').to_string())
+        })
+        .ok_or("Cargo.lock does not list the wasm-bindgen crate")?;
+    let command = env::var_os("WASM_BINDGEN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("wasm-bindgen"));
+    let output = process::Command::new(&command)
+        .arg("--version")
+        .output()
+        .map_err(|error| {
+            format!(
+                "failed to run {}: {error}; {}",
+                command.display(),
+                wasm_bindgen_install_hint(&version)
+            )
+        })?;
+    let reported = String::from_utf8_lossy(&output.stdout);
+    if !reported.split_whitespace().any(|word| word == version) {
+        return Err(format!(
+            "{} reports `{}`, but the workspace uses wasm-bindgen {version}; {}",
+            command.display(),
+            reported.trim(),
+            wasm_bindgen_install_hint(&version)
+        ));
+    }
+    Ok(command)
+}
+
+fn wasm_bindgen_install_hint(version: &str) -> String {
+    format!(
+        "install the matching CLI with `cargo install wasm-bindgen-cli --version {version}` or \
+         point WASM_BINDGEN at it"
+    )
 }
 
 fn bindings_generate(check: bool) -> Result<(), String> {
@@ -84,6 +183,20 @@ fn bindings_generate(check: bool) -> Result<(), String> {
     );
     update_generated_file(&js_generated_path, &js_generated, check)?;
 
+    let web_generated_path = root.join("crates/sui-web/src/generated_widgets.rs");
+    let web_template_path = root.join("bindings/templates/web_widgets.rs.in");
+    let web_template = fs::read_to_string(&web_template_path)
+        .map_err(|error| format!("failed to read {}: {error}", web_template_path.display()))?;
+    validate_rust_template("web", items, &web_template)?;
+    let web_generated = render_generated_rust_template(
+        "web",
+        "WebAssembly widget bindings",
+        "bindings/templates/web_widgets.rs.in",
+        &web_template,
+        items,
+    );
+    update_generated_file(&web_generated_path, &web_generated, check)?;
+
     let ts_path = root.join("crates/sui-js/index.d.ts");
     let current_ts = fs::read_to_string(&ts_path)
         .map_err(|error| format!("failed to read {}: {error}", ts_path.display()))?;
@@ -92,8 +205,20 @@ fn bindings_generate(check: bool) -> Result<(), String> {
     update_generated_file(&ts_path, &next_ts, check)?;
 
     let js_api_path = root.join("crates/sui-js/api.js");
-    let js_api = render_generated_js_api(items);
+    let js_api = render_generated_js_api(items, &js_export_names(&next_ts));
     update_generated_file(&js_api_path, &js_api, check)?;
+
+    let js_exports = render_js_exports(&next_ts);
+    let mut js_entry_paths = Vec::new();
+    for entry in ["crates/sui-js/index.js", "crates/sui-js/web.js"] {
+        let path = root.join(entry);
+        let current = fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let next = update_js_entry(&current, &js_exports)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        update_generated_file(&path, &next, check)?;
+        js_entry_paths.push(path);
+    }
 
     let python_stub_template_path = root.join("bindings/templates/python_api.pyi.in");
     let python_stub_template = fs::read_to_string(&python_stub_template_path).map_err(|error| {
@@ -117,8 +242,12 @@ fn bindings_generate(check: bool) -> Result<(), String> {
             relative_display(&root, &python_generated_path)
         );
         println!("generated {}", relative_display(&root, &js_generated_path));
+        println!("generated {}", relative_display(&root, &web_generated_path));
         println!("generated {}", relative_display(&root, &ts_path));
         println!("generated {}", relative_display(&root, &js_api_path));
+        for path in &js_entry_paths {
+            println!("generated {}", relative_display(&root, path));
+        }
         println!("generated {}", relative_display(&root, &python_stub_path));
     }
 
@@ -956,9 +1085,6 @@ fn render_generated_ts(items: &[Item]) -> String {
                 output.push_str("}\n\n");
             }
             Some(ApiDecl::Function(signature)) => {
-                output.push_str("export function ");
-                output.push_str(&signature.typescript());
-                output.push_str("\n\n");
                 render_idiomatic_ts_factory(&mut output, signature);
             }
             None => {}
@@ -975,7 +1101,8 @@ fn validate_rust_template(language: &str, items: &[Item], template: &str) -> Res
     for item in items {
         let (kind, rust_name) = match language {
             "python" => (item.python_kind.as_deref(), item.python_rust.as_ref()),
-            "js" => (item.js_kind.as_deref(), item.js_rust.as_ref()),
+            // The WebAssembly glue mirrors the Node addon's Rust names.
+            "js" | "web" => (item.js_kind.as_deref(), item.js_rust.as_ref()),
             _ => return Err(format!("unsupported binding language `{language}`")),
         };
         let present = match (language, kind) {
@@ -994,6 +1121,14 @@ fn validate_rust_template(language: &str, items: &[Item], template: &str) -> Res
             ("js", Some("function")) => rust_name.is_some_and(|name| {
                 source
                     .js_functions
+                    .contains(&(item.name.clone(), name.clone()))
+            }),
+            ("web", Some("class")) => source
+                .web_classes
+                .contains(&(item.name.clone(), format!("Js{}", item.name))),
+            ("web", Some("function")) => rust_name.is_some_and(|name| {
+                source
+                    .web_functions
                     .contains(&(item.name.clone(), name.clone()))
             }),
             _ => false,
@@ -1094,7 +1229,7 @@ fn render_idiomatic_ts_factory(output: &mut String, factory: &ApiFunction) {
     output.push_str(";\n\n");
 }
 
-fn render_generated_js_api(items: &[Item]) -> String {
+fn render_generated_js_api(items: &[Item], exports: &BTreeSet<String>) -> String {
     let factories = items
         .iter()
         .filter_map(|item| match &item.api_decl {
@@ -1103,11 +1238,15 @@ fn render_generated_js_api(items: &[Item]) -> String {
         })
         .collect::<Vec<_>>();
     let mut output = String::new();
-    output.push_str("\"use strict\";\n\n");
     output.push_str("// Generated by `cargo xtask bindings generate` from bindings/widgets.sui.\n");
     output.push_str("// Do not edit by hand.\n\n");
-    output.push_str("function decorateApi(native) {\n");
-    output.push_str("  const factories = {\n");
+    output.push_str("/**\n");
+    output.push_str(" * Widget factories over a native module. `action` wraps callbacks whose\n");
+    output.push_str(" * result is ignored, so they may be async; `guard` wraps callbacks whose\n");
+    output.push_str(" * result the widget uses.\n");
+    output.push_str(" */\n");
+    output.push_str("export function createFactories(native, { action, guard }) {\n");
+    output.push_str("  return {\n");
     for factory in &factories {
         let options_name = factory_options_parameter_name(factory);
         output.push_str("    ");
@@ -1134,25 +1273,97 @@ fn render_generated_js_api(items: &[Item]) -> String {
             if argument_index > 0 {
                 output.push_str(", ");
             }
-            output.push_str(&parameter.name);
+            push_js_argument(&mut output, parameter, &parameter.name);
             argument_index += 1;
         }
         for parameter in &factory.optional {
             if argument_index > 0 {
                 output.push_str(", ");
             }
-            output.push_str(options_name);
-            output.push('.');
-            output.push_str(&parameter.name);
+            push_js_argument(
+                &mut output,
+                parameter,
+                &format!("{options_name}.{}", parameter.name),
+            );
             argument_index += 1;
         }
         output.push_str(");\n    },\n");
     }
-    output.push_str("  };\n\n");
-    output.push_str("  return Object.assign(native, factories);\n");
+    output.push_str("  };\n");
     output.push_str("}\n\n");
-    output.push_str("module.exports = { decorateApi };\n");
+    output.push_str("/** The names the package exports, as declared in index.d.ts. */\n");
+    output.push_str("export const EXPORTS = [\n");
+    for name in exports {
+        output.push_str("  \"");
+        output.push_str(name);
+        output.push_str("\",\n");
+    }
+    output.push_str("];\n");
     output
+}
+
+/// The values `index.d.ts` declares.
+fn js_export_names(ts: &str) -> BTreeSet<String> {
+    source::typescript_exports(ts)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect()
+}
+
+/// Pass `expression` to a native factory, wrapping callbacks.
+fn push_js_argument(output: &mut String, parameter: &ApiParameter, expression: &str) {
+    match &parameter.ty {
+        ApiType::Callback(_, result) if **result == ApiType::Void => {
+            output.push_str("action(");
+            output.push_str(expression);
+            output.push(')');
+        }
+        ApiType::Callback(..) => {
+            output.push_str("guard(");
+            output.push_str(expression);
+            output.push(')');
+        }
+        _ => output.push_str(expression),
+    }
+}
+
+const GENERATED_EXPORTS_START: &str = "// BEGIN GENERATED SUI EXPORTS";
+const GENERATED_EXPORTS_END: &str = "// END GENERATED SUI EXPORTS";
+
+/// Render the named exports of a JavaScript entry point: every value that
+/// `index.d.ts` declares, destructured from the entry's `api` object.
+fn render_js_exports(ts: &str) -> String {
+    let names = js_export_names(ts);
+    let mut output = String::new();
+    output.push_str(GENERATED_EXPORTS_START);
+    output.push('\n');
+    output.push_str("// Generated by `cargo xtask bindings generate` from index.d.ts.\n");
+    output.push_str("export const {\n");
+    for name in names {
+        output.push_str("  ");
+        output.push_str(&name);
+        output.push_str(",\n");
+    }
+    output.push_str("} = api;\n");
+    output.push_str(GENERATED_EXPORTS_END);
+    output.push('\n');
+    output
+}
+
+/// Replace the generated export section of a JavaScript entry point.
+fn update_js_entry(current: &str, generated: &str) -> Result<String, String> {
+    let start = current
+        .find(GENERATED_EXPORTS_START)
+        .ok_or_else(|| format!("missing `{GENERATED_EXPORTS_START}`"))?;
+    let end = current
+        .find(GENERATED_EXPORTS_END)
+        .ok_or_else(|| format!("missing `{GENERATED_EXPORTS_END}`"))?
+        + GENERATED_EXPORTS_END.len();
+    let mut output = String::new();
+    output.push_str(&current[..start]);
+    output.push_str(generated.trim_end_matches(['\r', '\n']));
+    output.push_str(&current[end..]);
+    Ok(output)
 }
 
 /// Render `_native.pyi`. `non_nullable` comes from
@@ -1719,8 +1930,15 @@ fn check_js(item: &Item, js: &source::RustSource) -> Check {
 
 fn check_ts(item: &Item, ts: &BTreeSet<(String, String)>) -> Check {
     match item.ts_kind.as_deref() {
-        Some(kind @ ("function" | "class")) => {
-            declaration_check(&[ts.contains(&(kind.to_string(), item.name.clone()))])
+        Some("function") => {
+            let name = match &item.api_decl {
+                Some(ApiDecl::Function(signature)) => signature.factory_name.clone(),
+                _ => to_lower_camel_case(&item.name),
+            };
+            declaration_check(&[ts.contains(&("function".to_string(), name))])
+        }
+        Some("class") => {
+            declaration_check(&[ts.contains(&("class".to_string(), item.name.clone()))])
         }
         Some(_) => Check::Missing,
         None => Check::NotApplicable,
@@ -2005,7 +2223,7 @@ pub struct NotAWidget;
         assert_eq!(parsed.optional.len(), 2);
         assert_eq!(
             parsed.optional[1].ty.typescript(),
-            "(index: number, value: string) => void"
+            "(index: number, value: string) => void | Promise<void>"
         );
         assert_eq!(factory_options_parameter_name(&parsed), "config");
     }
@@ -2024,9 +2242,26 @@ pub struct NotAWidget;
             ..Item::default()
         };
 
-        let generated = render_generated_js_api(&[item]);
+        let generated = render_generated_js_api(&[item], &BTreeSet::from(["button".to_string()]));
+        assert!(generated.ends_with("export const EXPORTS = [\n  \"button\",\n];\n"));
+        assert!(generated.contains("export function createFactories(native, { action, guard })"));
         assert!(generated.contains("button(label, options = {})"));
-        assert!(generated.contains("native.Button(label, options.onPress)"));
+        assert!(generated.contains("native.Button(label, action(options.onPress))"));
+    }
+
+    #[test]
+    fn generated_javascript_entries_export_every_declared_value() {
+        let ts = "export class App {}\nexport function button(): Widget;\nexport const version: string;\nexport interface Options {}\n";
+        let exports = render_js_exports(ts);
+        assert!(exports.contains("  App,\n  button,\n  version,\n} = api;"));
+        assert!(!exports.contains("Options"));
+        let entry = format!(
+            "const api = {{}};\n{GENERATED_EXPORTS_START}\nstale\n{GENERATED_EXPORTS_END}\nexport default api;\n"
+        );
+        let updated = update_js_entry(&entry, &exports).unwrap();
+        assert!(updated.starts_with("const api = {};\n// BEGIN"));
+        assert!(updated.ends_with("// END GENERATED SUI EXPORTS\nexport default api;\n"));
+        assert!(!updated.contains("stale"));
     }
 
     #[test]

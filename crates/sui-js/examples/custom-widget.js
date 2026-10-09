@@ -1,12 +1,10 @@
-"use strict";
-
-const sui = require("..");
+import * as sui from "@sui/ui";
 
 const app = new sui.App();
 const marker = app.rgbaImage(
   2,
   1,
-  Buffer.from([255, 255, 255, 255, 80, 180, 255, 255])
+  Uint8Array.from([255, 255, 255, 255, 80, 180, 255, 255])
 );
 
 const meter = {

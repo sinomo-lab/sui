@@ -12,12 +12,13 @@ use crate::messages::{BindingMessageAction, BindingMessageBus};
 use crate::runtime::BindingRuntime;
 use crate::tasks::{BindingUiHandle, UiTaskQueue};
 use crate::theme::BindingTheme;
-#[cfg(feature = "desktop")]
+#[cfg(any(feature = "desktop", feature = "web"))]
 use crate::widget_adapters::BINDING_UI_TASKS_READY;
 use crate::widget_adapters::BindingUiTaskRootWidget;
 use crate::widget_descriptor::{BindingBuildContext, BindingWidget};
 use std::io::Cursor;
-#[cfg(feature = "desktop")]
+use std::time::Duration;
+#[cfg(any(feature = "desktop", feature = "web"))]
 use sui::App as SuiApp;
 use sui::Point;
 use sui::RegisteredFont;
@@ -25,7 +26,7 @@ use sui::RegisteredImage;
 use sui::Runtime;
 use sui::SceneCommand;
 use sui::Size;
-#[cfg(feature = "desktop")]
+#[cfg(any(feature = "desktop", feature = "web"))]
 use sui::Window as SuiWindow;
 use sui::WindowBuilder;
 use sui::WindowColorManagementMode;
@@ -33,6 +34,85 @@ use sui::WindowDynamicRangeMode;
 use sui::WindowOutputColorPrimaries;
 use sui::WindowRenderOptions;
 use sui::WindowToneMappingMode;
+
+/// Route a started platform's command handle into the binding task queue:
+/// posted tasks wake every window, and exit requests reach the platform.
+#[cfg(any(feature = "desktop", feature = "web"))]
+fn connect_ui_tasks(ui_tasks: &UiTaskQueue, native_ui: sui::UiHandle) {
+    let exit_ui = native_ui.clone();
+    ui_tasks.set_exit_hook(move || exit_ui.request_exit());
+    ui_tasks.set_waker(move || {
+        native_ui.broadcast_application(BINDING_UI_TASKS_READY, ());
+    });
+}
+
+/// What a host should do after [`BindingPumpedApp::pump`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingPumpStatus {
+    /// Keep pumping; the application next needs a turn after `next_wake`
+    /// (`None`: only when platform events arrive).
+    Continue { next_wake: Option<Duration> },
+    /// The application exited.
+    Exited,
+}
+
+/// A desktop application whose host drives the event loop one turn at a
+/// time, created by [`BindingApp::start_pumped_with_handle`].
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+pub struct BindingPumpedApp {
+    desktop: sui::PumpedDesktop,
+    ui_tasks: UiTaskQueue,
+    exited: bool,
+}
+
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+impl BindingPumpedApp {
+    /// Process pending events and due work, waiting up to `timeout` for new
+    /// events. Returns the error the application stopped with, if any.
+    pub fn pump(&mut self, timeout: Option<Duration>) -> Result<BindingPumpStatus, String> {
+        let result = self.desktop.pump(timeout);
+        let status = match result {
+            Ok(sui::DesktopPumpStatus::Continue { next_wake }) => {
+                return Ok(BindingPumpStatus::Continue { next_wake });
+            }
+            Ok(sui::DesktopPumpStatus::Exited) => Ok(BindingPumpStatus::Exited),
+            Err(error) => Err(error.to_string()),
+        };
+        self.finish();
+        status
+    }
+
+    /// Whether the application has exited.
+    pub fn has_exited(&self) -> bool {
+        self.exited
+    }
+
+    fn finish(&mut self) {
+        if !self.exited {
+            self.exited = true;
+            // Handles may outlive the loop; posts and exit requests after
+            // this point must not reach the finished platform.
+            self.ui_tasks.clear_exit_hook();
+            self.ui_tasks.clear_waker();
+        }
+    }
+}
+
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+impl Drop for BindingPumpedApp {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BindingWindow {
@@ -112,7 +192,7 @@ impl BindingWindow {
         }
     }
 
-    #[cfg(feature = "desktop")]
+    #[cfg(any(feature = "desktop", feature = "web"))]
     pub(crate) fn configure_app_window(&self, mut window: SuiWindow) -> SuiWindow {
         if let Some(size) = self.initial_size {
             window = window.initial_size(size);
@@ -449,6 +529,89 @@ impl BindingApp {
     pub fn run_with_handle(&self, on_ready: impl FnOnce(BindingUiHandle)) -> Result<(), String> {
         let ui_tasks = UiTaskQueue::new();
         let ui_handle = ui_tasks.handle().with_message_bus(self.messages.clone());
+        let app = self.platform_app(&ui_tasks, &ui_handle)?;
+        let tasks_for_waker = ui_tasks.clone();
+        let result = app
+            .run_with_handle(move |native_ui| {
+                connect_ui_tasks(&tasks_for_waker, native_ui);
+                on_ready(ui_handle);
+            })
+            .map_err(|error| error.to_string());
+        // Handles may outlive the loop; posts and exit requests after this
+        // point must not reach the finished platform.
+        ui_tasks.clear_exit_hook();
+        ui_tasks.clear_waker();
+        result
+    }
+
+    /// Start the application on the desktop without blocking. The caller
+    /// drives it with [`BindingPumpedApp::pump`]; `on_ready` receives the UI
+    /// handle once the event loop exists.
+    #[cfg(all(
+        feature = "desktop",
+        any(target_os = "windows", target_os = "macos", target_os = "linux")
+    ))]
+    pub fn start_pumped_with_handle(
+        &self,
+        on_ready: impl FnOnce(BindingUiHandle),
+    ) -> Result<BindingPumpedApp, String> {
+        let ui_tasks = UiTaskQueue::new();
+        let ui_handle = ui_tasks.handle().with_message_bus(self.messages.clone());
+        let app = self.platform_app(&ui_tasks, &ui_handle)?;
+        let tasks_for_waker = ui_tasks.clone();
+        let desktop = app
+            .start_pumped_with_handle(move |native_ui| {
+                connect_ui_tasks(&tasks_for_waker, native_ui);
+                on_ready(ui_handle);
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(BindingPumpedApp {
+            desktop,
+            ui_tasks,
+            exited: false,
+        })
+    }
+
+    /// Start the application in the browser without blocking, drawing the
+    /// first window on `canvas` (or the page's `sui-main-canvas` element).
+    /// `on_ready` receives the UI handle once the event loop exists, and
+    /// `on_exit` runs when the app exits, with the error it stopped with.
+    #[cfg(all(feature = "web", target_arch = "wasm32"))]
+    pub fn start_web_with_handle(
+        &self,
+        canvas: Option<sui::WebCanvas>,
+        on_ready: impl FnOnce(BindingUiHandle),
+        on_exit: impl FnOnce(Result<(), String>) + 'static,
+    ) -> Result<(), String> {
+        let ui_tasks = UiTaskQueue::new();
+        let ui_handle = ui_tasks.handle().with_message_bus(self.messages.clone());
+        let app = self.platform_app(&ui_tasks, &ui_handle)?;
+        let tasks_for_waker = ui_tasks.clone();
+        app.start_web_with_handle(
+            canvas,
+            move |native_ui| {
+                connect_ui_tasks(&tasks_for_waker, native_ui);
+                on_ready(ui_handle);
+            },
+            move |result| {
+                // Handles may outlive the app; posts and exit requests after
+                // this point must not reach the finished platform.
+                ui_tasks.clear_exit_hook();
+                ui_tasks.clear_waker();
+                on_exit(result.map_err(|error| error.to_string()));
+            },
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    /// Build the platform application for this app's windows, with every
+    /// root draining `ui_tasks`.
+    #[cfg(any(feature = "desktop", feature = "web"))]
+    fn platform_app(
+        &self,
+        ui_tasks: &UiTaskQueue,
+        ui_handle: &BindingUiHandle,
+    ) -> Result<SuiApp, String> {
         let mut app = SuiApp::new();
         if let Some(options) = self.render_options {
             app = app.render_options(options.into_sui());
@@ -469,7 +632,7 @@ impl BindingApp {
         }
 
         for window in &self.windows {
-            window.root.bind_ui_handle(&ui_handle);
+            window.root.bind_ui_handle(ui_handle);
             if let Some(theme) = &self.theme {
                 theme.bind_ui_handle(ui_handle.clone());
             }
@@ -493,22 +656,7 @@ impl BindingApp {
             app = app.window(app_window);
         }
 
-        let tasks_for_waker = ui_tasks.clone();
-        let result = app
-            .run_with_handle(move |native_ui| {
-                let exit_ui = native_ui.clone();
-                tasks_for_waker.set_exit_hook(move || exit_ui.request_exit());
-                tasks_for_waker.set_waker(move || {
-                    native_ui.broadcast_application(BINDING_UI_TASKS_READY, ());
-                });
-                on_ready(ui_handle);
-            })
-            .map_err(|error| error.to_string());
-        // Handles may outlive the loop; posts and exit requests after this
-        // point must not reach the finished platform.
-        ui_tasks.clear_exit_hook();
-        ui_tasks.clear_waker();
-        result
+        Ok(app)
     }
 
     #[cfg(not(feature = "desktop"))]

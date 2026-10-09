@@ -463,7 +463,12 @@ impl SelectedKey {
 
     fn set(&self, key: u64) {
         match self {
-            Self::State(state) => state.set(BindingValue::Integer(key as i64)),
+            // A state holding a string keeps holding one: JavaScript passes
+            // keys as strings because they may exceed its safe integers.
+            Self::State(state) => state.set(match state.get() {
+                BindingValue::String(_) => BindingValue::String(key.to_string()),
+                _ => BindingValue::Integer(key as i64),
+            }),
             Self::Local(local) => local.set(Some(key)),
         }
     }

@@ -1,119 +1,162 @@
 # SUI JavaScript bindings
 
-`@sui/ui` is the native SUI addon for Node.js and Electron. It uses napi-rs and
-ships CommonJS entry points plus TypeScript declarations in `index.d.ts`.
+`@sui/ui` brings SUI to JavaScript in two forms with one API:
 
-The binding supports retained widget trees, desktop event-loop execution,
-host-driven rendering, thread-safe state updates, JavaScript-owned custom
-widgets, accessibility semantics, renderer-neutral paint commands, image and
-font resources, live theme handles, renderer/HDR policy, and external-surface
-descriptors. It is an alpha,
-source-built package; the npm package and prebuilt native binaries are not
-published yet.
+- **Node.js and Electron**: a native addon (napi-rs) that opens desktop
+  windows;
+- **browsers**: a WebAssembly build that draws on a `<canvas>`.
+
+Both run the app on the host's event loop, so `await`, timers, `fetch`, and
+other I/O keep working while windows are open, and callbacks may be `async`.
+The package is ESM with TypeScript declarations in `index.d.ts`. Node loads the
+addon, and bundlers and browsers load the WebAssembly build, through the
+`node` and `browser` export conditions.
+
+The binding supports retained widget trees, host-driven rendering for tests,
+JavaScript-owned custom widgets, accessibility semantics, renderer-neutral
+paint commands, image and font resources, live theme handles, renderer/HDR
+policy, and external-surface descriptors. It is an alpha, source-built
+package; the npm package and prebuilt binaries are not published yet.
 
 ## Prerequisites
 
 - Rust 1.90 or newer and Cargo;
-- Node.js with npm;
-- napi-rs CLI 3.x;
-- for `App.run()`, a desktop supported by SUI's `winit` and `wgpu` backends.
+- Node.js 20.19 or newer;
+- for the addon: napi-rs CLI 3.x (`npm install --global @napi-rs/cli@3`), and
+  for opening windows a desktop supported by SUI's `winit` and `wgpu` backends;
+- for the browser build: the `wasm32-unknown-unknown` Rust target
+  (`rustup target add wasm32-unknown-unknown`) and the `wasm-bindgen` CLI
+  matching the workspace's `wasm-bindgen` crate
+  (`cargo install wasm-bindgen-cli --version 0.2.129`).
 
-Install the compatible napi-rs CLI once:
+## Build
 
-```bash
-npm install --global @napi-rs/cli@3
-```
-
-## Build the native addon
-
-From `crates/sui-js`:
+From `crates/sui-js`, build the Node addon:
 
 ```bash
 npm run build
-node -e 'console.log(require(".").App)'
 ```
 
-From the workspace root:
+It runs `napi build --platform --release`; the generated `.node` file stays
+next to `index.js`, where the loader looks for it. From the workspace root,
+build the browser module into `crates/sui-js/web/`:
 
 ```bash
-npm --prefix crates/sui-js run build
-node -e 'console.log(require("./crates/sui-js").App)'
+cargo xtask web build --release
 ```
 
-The build runs `napi build --platform --release`. The generated `.node` file
-must remain next to `index.js`, where the package loader searches for it. It is
-a local build artifact and should not be committed.
+Both outputs are local build artifacts and are not committed.
+
+## Open a window
+
+```javascript
+import * as sui from "@sui/ui";
+
+const count = new sui.State(0);
+
+const app = new sui.App().window(
+  new sui.Window("Hello from JavaScript").root(
+    sui.column(
+      [
+        sui.label(count),
+        sui.button("Increment", { onPress: () => count.set(Number(count.get()) + 1) }),
+      ],
+      { gap: 8 },
+    ),
+  ),
+);
+
+await app.run();
+```
+
+`app.run()` opens the app's windows and returns a promise that resolves when
+the app exits and rejects if it fails. Builders such as `Window.root()` and
+`App.window()` return their object, so they chain. `run` takes options:
+
+- `onReady(ui)` runs once the windows exist and receives the `UiHandle`. If it
+  throws or rejects, the app exits and `run()` rejects with that error.
+- `signal` exits the app when an `AbortSignal` aborts.
+- `canvas` (browser only) is the canvas, or its element id, for the first
+  window. It defaults to the element with id `sui-main-canvas`, or a new canvas
+  filling the page. SUI keeps the canvas the size of its container: the
+  closest ancestor with a `data-sui-resize-container` attribute, else its
+  parent, else the viewport.
+
+`ui.requestExit()` ends the app, `ui.emit(name, payload)` sends a message to
+`app.on(name, listener)` listeners, and `await ui.showFileDialog(options)`
+resolves with the chosen paths, or `null` when the user cancels. Browsers have
+no native file dialogs, so there it rejects. One app runs at a time per
+process or page.
+
+On Windows, SUI raises the system timer resolution while an app runs, as
+browsers do, so Node's timers can schedule frames at full rate.
+
+## Callbacks, async work, and errors
+
+Callbacks such as `onPress`, `onChange`, `state.watch`, and `app.on`
+listeners may be `async`:
+
+```javascript
+sui.button("Load", {
+  async onPress() {
+    status.set("Loading…");
+    const response = await fetch(url);
+    status.set(response.ok ? "Loaded" : "Failed");
+  },
+});
+```
+
+A callback that throws, or whose promise rejects, does not stop the app: the
+error goes to the handler set with `sui.setErrorHandler(handler)`, which logs
+with `console.error` by default. Callbacks whose result SUI uses, such as a
+`rebuildOnChange` builder, a `state.select` selector, or custom-widget
+`measure` and `paint`, must be synchronous.
+
+State changes made anywhere, whether in a timer, after an `await`, or in a
+callback, update the windows that show the state.
 
 ## Run the examples
 
-After building, run these commands from `crates/sui-js`:
+After building the addon, run these from `crates/sui-js`:
 
 ```bash
 node examples/counter.js
 node examples/custom-widget.js
 node examples/external-surface.js
+node examples/window.js
 ```
 
-Or run them from the workspace root:
+The first three render without a platform through `App.start()` and print
+snapshot or event information; `window.js` opens a desktop window.
 
-```bash
-node crates/sui-js/examples/counter.js
-node crates/sui-js/examples/custom-widget.js
-node crates/sui-js/examples/external-surface.js
-```
-
-The examples deliberately use `App.start()`. They render in process and print
-snapshot or event information; they do not open desktop windows.
-
-- [`counter.js`](examples/counter.js) covers `State`, built-in controls, a
-  posted UI task, and rerendering.
+- [`counter.js`](examples/counter.js) covers `State`, built-in controls, an
+  async callback, and rerendering.
 - [`custom-widget.js`](examples/custom-widget.js) supplies JavaScript
   measurement, event, semantics, and paint callbacks.
 - [`external-surface.js`](examples/external-surface.js) renders a CPU-RGBA
   texture through `ExternalSurface`.
+- [`window.js`](examples/window.js) runs a window next to Node timers and an
+  async callback.
+- [`web/index.html`](examples/web/index.html) runs in a browser: after
+  `cargo xtask web build`, serve `crates/sui-js` over HTTP (for example with
+  `python -m http.server --directory crates/sui-js`) and open
+  `/examples/web/index.html`.
 
-## Open a desktop window
-
-Use `App.run()` when JavaScript owns the normal desktop event loop:
-
-```javascript
-"use strict";
-
-const sui = require("@sui/ui");
-
-const root = sui.column(
-  [
-    sui.label("Ready"),
-    sui.button("No-op", { onPress() {} }),
-  ],
-  { gap: 8 }
-);
-
-const window = new sui.Window("Hello from JavaScript");
-window.root(root);
-
-const app = new sui.App();
-app.window(window);
-app.run();
-```
+## Widgets
 
 JavaScript factories use `lowerCamelCase` and collect optional values in an
-options object. This avoids positional `undefined` placeholders as APIs grow.
-The original `PascalCase` positional functions remain available for existing
-applications.
+options object.
 
 Interactive controls accept `enabled`, a boolean or a `State`. `column(...)`
 and `row(...)` take `justify`, `alignItems`, and `wrap`; wrap a direct child in
 `flexItem(child, { grow: 1 })` to size it along the main axis, and use
 `spacer()` to fill the remaining space. `rebuildOnChange(states, build)`
-rebuilds a subtree on the UI thread whenever one of `states` changes. Pass a
-Host-driven tests can call `runningApp.advanceTime(seconds)`,
+rebuilds a subtree whenever one of `states` changes. Host-driven tests can
+call `runningApp.advanceTime(seconds)`,
 `settleAnimations()`, and `screenshotPng()`, set `setMotionPreference(...)`,
 and scope `find`/`getOne` queries with `within: node.id`.
 `FocusController` and `focusScope(child, { controller })` move keyboard focus
-from code. `UiHandle` schedules UI-thread work with `callLater` and
-`callEvery`, and shows native file dialogs with `showFileDialog`;
-`clipboardText()` and `setClipboardText()` reach the clipboard. Pass a
+from code. `clipboardText()` and `setClipboardText()` reach the clipboard. Pass a
 `ScrollController` as `controller` to `scrollView` or `virtualScrollView` to
 scroll from code with `scrollTo` and `scrollToItem`. Labels take typography
 options, `listView` accepts `ListItem` objects beside strings, and `grid`
@@ -188,13 +231,9 @@ primary actions, checked controls, links, focus rings, thin indicators,
 selection borders, and glows; surfaces, selection fills, fields, menus, and
 scroll chrome remain neutral.
 
-When running directly from this checkout, replace `require("@sui/ui")` with
-`require(".")` from `crates/sui-js`, or
-`require("./crates/sui-js")` from the workspace root.
-
-`App.run()` blocks until the desktop application exits. Use
-`App.runWithHandle(callback)` when startup code needs the thread-safe
-`UiHandle` after the event loop is ready.
+When running directly from this checkout, import `./index.js` from
+`crates/sui-js` (or `./crates/sui-js/index.js` from the workspace root)
+instead of `@sui/ui`.
 
 Use `App.start()` for embedding, deterministic tests, or host-driven rendering:
 
@@ -205,8 +244,10 @@ console.log(snapshot.commandCount, snapshot.semanticsCount);
 ```
 
 The returned `RunningApp` can render windows, dispatch binding event
-descriptors, drain posted work, request redraws, and expose window handles. It
-does not create or present a native desktop surface by itself.
+descriptors, drain queued work, request redraws, and expose window handles. It
+does not create or present a native surface by itself. After driving it,
+`await running.idle()` waits for async callbacks to settle and applies their
+updates. On Node, `await running.saveScreenshot(path)` writes a PNG.
 
 `running.setInspectorTracing()` and `running.inspect()` expose a
 renderer-neutral diagnostic snapshot: the accessibility nodes, focus and
@@ -243,25 +284,21 @@ role, name, text, description, focus, and visibility. Nodes retain hierarchy,
 bounds, actions, values, and interaction state; pass one to `running.hover`,
 `click`, `press`, or `fill` for locator-style deterministic tests.
 
-## State and threading
+## State and messages
 
-`State` values used by an application are attached to its UI task queue when
-the app starts or runs. Updates from outside the UI drain path are queued and
-mark the affected windows for redraw. `UiHandle.post(callback)` is the normal
-way to schedule arbitrary work back onto the UI thread.
+`state.select(fn)` creates a retained derived state, and
+`state.watch(fn, { signal })` calls `fn` with each new value until its
+`StateSubscription` unsubscribes or is disposed (`using sub = state.watch(…)`),
+or until the signal aborts. Selectors suppress unchanged values.
+`await state.changed()` resolves with the next value, and
+`for await (const value of state.changes())` iterates over changes.
 
-Widget and custom-paint callbacks run synchronously on the UI thread. Keep them
-short; perform blocking I/O or long computation elsewhere, then publish the
-result through `State` or `UiHandle`.
+For application services, register a listener with `app.on(name, listener)`,
+which returns a disposable `Subscription`, or wait for one message with
+`await app.once(name)`; publish with `uiHandle.emit(name, payload)`.
 
-`state.select(fn)` creates a retained derived state, and `state.watch(fn)`
-returns an explicit `StateSubscription`. Selectors suppress unchanged values;
-subscriptions can be released with `unsubscribe()`.
-
-For application services and worker results, register a named handler with
-`app.on(name, callback)` and publish through `uiHandle.emit(name, payload)`.
-The binding maps this JavaScript message API onto the UI task queue, preserving
-UI-thread delivery without exposing Rust generic command keys.
+Custom-widget and paint callbacks run synchronously during a frame. Keep them
+short; do slow work in async callbacks and publish the result through `State`.
 
 ## Custom widgets and resources
 
@@ -286,8 +323,8 @@ included in semantics unless the callback explicitly includes them.
 
 The paint surface supports styled text, paths and path clips, rounded
 rectangles, shadows, transforms, image quads, and validated built-in shaders.
-Applications can register fonts and RGBA, PNG, or SVG images from buffers or
-files. See [`examples/custom-widget.js`](examples/custom-widget.js) for a
+Applications can register fonts and RGBA, PNG, or SVG images from bytes, and
+on Node also from files. See [`examples/custom-widget.js`](examples/custom-widget.js) for a
 complete custom control.
 
 `ExternalSurface` accepts CPU-upload, shared-texture, and shared-render-target
@@ -297,8 +334,8 @@ implemented yet.
 
 ## TypeScript
 
-`index.d.ts` declares the checked-in binding surface. A local CommonJS project
-can point at the package directory while developing:
+`index.d.ts` declares the package for both entry points. A local project can
+depend on the package directory while developing:
 
 ```json
 {
@@ -308,20 +345,20 @@ can point at the package directory while developing:
 }
 ```
 
-Build the native addon before importing that dependency at runtime.
+Build the addon or the browser module before importing it.
 
 ## Current limitations
 
 - The npm package, native binaries, and release automation are not published;
   users build from source.
-- This package targets Node.js and Electron. Browser/WASM bindings are not
-  implemented.
+- On Node, the app's event loop runs between Node's own tasks and checks for
+  input at least every 8 ms; creating the first window blocks Node briefly.
+- In the browser, apps cannot read files (`pngFile`, `svgFile`, `fontFile`),
+  show file dialogs, or take screenshots; pass bytes instead.
 - Every public Rust widget is classified as directly bound, manually wrapped,
   or represented by a documented JavaScript-level equivalent. Some equivalents
   intentionally expose portable value models instead of Rust closure or `Any`
   implementation details.
-- Desktop `run` entry points exist, but the repository does not yet have broad
-  real-window smoke coverage for every supported platform.
 - Custom WGSL, arbitrary shader resources, and uniforms are not exposed;
   custom paint can use only validated built-in shaders.
 - Shared textures and shared render targets are descriptor-level APIs today;
@@ -330,22 +367,19 @@ Build the native addon before importing that dependency at runtime.
 
 ## Validate binding changes
 
-Check the CommonJS loader and Rust-side binding tests:
+From `crates/sui-js`, build the addon and run the test suite:
 
 ```bash
-npm run check:loader
-cargo test -p sinomo-ui-js
+npm test
 ```
 
-From the workspace root, use:
+Run the same suite on the browser build, in Node:
 
 ```bash
-npm --prefix crates/sui-js run check:loader
-cargo test -p sinomo-ui-js
+npm run test:web
 ```
 
-After a native build, run all three JavaScript examples as the package-level
-smoke test.
+Set `SUI_DESKTOP_TESTS=1` to include the tests that open desktop windows.
 
 ## More documentation
 

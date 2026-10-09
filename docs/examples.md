@@ -213,9 +213,11 @@ normal desktop execution, and current limitations.
 
 ## JavaScript examples
 
-The JavaScript package is a native napi-rs addon for Node.js and Electron. It
-requires Rust 1.90 or newer, Node.js with npm, and the napi-rs CLI. The package
-and native binaries are not published yet, so build the addon locally first.
+The JavaScript package runs on Node.js and Electron through a napi-rs addon,
+and in browsers through a WebAssembly build. The examples below use the addon,
+which needs Rust 1.90 or newer, Node.js 20.19 or newer with npm, and the
+napi-rs CLI. The package and native binaries are not published yet, so build
+the addon locally first.
 
 Install the compatible CLI once, then build and run every example from the
 workspace root:
@@ -226,19 +228,31 @@ npm --prefix crates/sui-js run build
 node crates/sui-js/examples/counter.js
 node crates/sui-js/examples/custom-widget.js
 node crates/sui-js/examples/external-surface.js
+node crates/sui-js/examples/window.js
 ```
 
 The build places a native `.node` artifact next to
 `crates/sui-js/index.js`. It is a generated local artifact and should not be
-committed. Like the Python samples, these programs use `App.start()` and print
-host-driven render information rather than opening windows:
+committed. Like the Python samples, the first three programs use `App.start()`
+and print host-driven render information rather than opening windows:
 
 - [`counter.js`](../crates/sui-js/examples/counter.js) uses binding state,
-  built-in controls, and a posted UI task;
+  built-in controls, and an async callback;
 - [`custom-widget.js`](../crates/sui-js/examples/custom-widget.js) implements a
   custom painted and accessible widget;
 - [`external-surface.js`](../crates/sui-js/examples/external-surface.js)
-  exercises the CPU-RGBA external-surface fallback.
+  exercises the CPU-RGBA external-surface fallback;
+- [`window.js`](../crates/sui-js/examples/window.js) opens a desktop window
+  with `await app.run()` beside Node timers.
+
+[`examples/web`](../crates/sui-js/examples/web/index.html) runs the same API
+in a browser. Build the WebAssembly module, serve the package directory, and
+open `http://localhost:8000/examples/web/index.html`:
+
+```bash
+cargo xtask web build
+python -m http.server --directory crates/sui-js
+```
 
 See the [JavaScript binding guide](../crates/sui-js/README.md) for package-local
 commands, TypeScript declarations, desktop execution, and current limitations.

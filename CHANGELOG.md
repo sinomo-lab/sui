@@ -44,6 +44,52 @@ Versioning, with the usual expectation that the API may change during the
     registration.
   - `RadioButton::on_select`, which fired on every activation, has no
     replacement; `on_change` reports only actual changes.
+- The JavaScript package `@sui/ui` is now ESM and async-first, and needs
+  Node.js 20.19 or newer (CommonJS code can still `require` it):
+  - `App.run()` returns a promise and runs the app on Node's event loop
+    instead of blocking; pass `{ onReady(ui) { … } }` instead of calling
+    `App.runWithHandle`.
+  - `UiHandle.post`, `callLater`, and `callEvery`, `Timer`, and `UiTaskQueue`
+    are gone; Node's own timers and promises work while the app runs.
+  - `UiHandle.showFileDialog(options)` returns a promise of the paths instead
+    of taking a callback.
+  - Widget factories are `lowerCamelCase` only; the `PascalCase` positional
+    functions such as `Button` are no longer exported.
+  - `RunningApp.windowId(index)` is now `windowHandle(index)`.
+
+### JavaScript
+
+- Added a WebAssembly build that runs the same API in browsers: build it with
+  `cargo xtask web build`, and bundlers and browsers load it through the
+  package's `browser` export condition. `App.run({ canvas })` draws on a
+  canvas and keeps it the size of its container.
+- Callbacks may be `async`, and errors from callbacks, including rejected
+  promises, go to `setErrorHandler` (by default `console.error`) without
+  stopping the app.
+- Added promise helpers: `app.once(name)`, `state.changed()`, the
+  `state.changes()` async iterator, and `running.idle()` to wait for async
+  callbacks in tests. `App.run` and listeners take an `AbortSignal`.
+- `app.on` returns a `Subscription`; it and `StateSubscription` are
+  disposable with `using`.
+- Builders such as `Window.root()` and `App.window()` return their object for
+  chaining; `Point`, `Size`, `Rect`, and `Color` have `equals` and `toString`;
+  added `Color.rgba`, `Color.black`, `Color.white`, `version`, and
+  `RunningApp.saveScreenshot`.
+- Fixed `rebuildOnChange`, which rendered nothing, and custom widget `event`
+  callbacks that return nothing, whose context requests were dropped.
+- A virtual table's `selected` state that holds a string now receives the
+  selected key as a string, matching the key type of its callbacks.
+- Added a `node:test` suite that runs on both the addon and the WebAssembly
+  build.
+
+### Rust
+
+- Added `DesktopPlatform::start_pumped` and `PumpedDesktop`, and
+  `App::start_pumped_with_handle`, to drive the desktop event loop one turn at
+  a time from another framework's event loop.
+- Added `DesktopPlatform::start_web` and `with_web_canvas`, and
+  `App::start_web_with_handle`, to run in the browser on a chosen canvas and
+  learn when the app exits.
 
 ## [0.5.0] - 2026-10-08
 

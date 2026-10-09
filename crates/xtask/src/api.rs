@@ -289,6 +289,10 @@ impl ApiType {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            // JavaScript callbacks whose result is ignored may be async.
+            Self::Callback(parameters, result) if **result == Self::Void => {
+                format!("({}) => void | Promise<void>", ts_parameters(parameters))
+            }
             Self::Callback(parameters, result) => {
                 format!("({}) => {}", ts_parameters(parameters), result.typescript())
             }
@@ -406,20 +410,6 @@ impl ApiFunction {
             optional,
             return_type,
         })
-    }
-    pub fn typescript(&self) -> String {
-        let parameters = self
-            .required
-            .iter()
-            .chain(&self.optional)
-            .cloned()
-            .collect::<Vec<_>>();
-        format!(
-            "{}({}): {};",
-            self.legacy_name,
-            ts_parameters(&parameters),
-            self.return_type.typescript()
-        )
     }
     pub fn python(&self, name: &str, non_nullable: &BTreeSet<String>) -> String {
         let parameters = self
@@ -549,7 +539,7 @@ mod tests {
                     .python("choose", &BTreeSet::new())
                     .contains(": int")
             );
-            assert!(function.typescript().contains(": number"));
+            assert_eq!(function.required[0].ty.typescript(), "number");
             let floating =
                 ApiFunction::parse("Choose", &format!("Choose({name}: number): boolean;")).unwrap();
             assert!(
@@ -588,7 +578,8 @@ mod tests {
     fn explicit_python_parameter_aliases_preserve_host_api_names() {
         let function =
             ApiFunction::parse("Slider", "Slider(min? as min_value: number): Widget;").unwrap();
-        assert_eq!(function.typescript(), "Slider(min?: number): Widget;");
+        assert_eq!(function.optional[0].name, "min");
+        assert_eq!(function.optional[0].ty.typescript(), "number");
         assert_eq!(
             function.python("slider", &BTreeSet::new()),
             "def slider(min_value: float | None = ...) -> Widget: ...\n"

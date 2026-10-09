@@ -3012,8 +3012,8 @@ pub fn js_rebuild_on_change(
     env: Env,
     states: Vec<ClassInstance<'_, JsState>>,
     // The stored reference cannot borrow the call's environment, so the
-    // result is read as an untyped value and converted immediately.
-    build: Function<'_, (), Unknown<'static>>,
+    // result's class instance is not tied to it.
+    build: Function<'_, (), ClassInstance<'static, JsWidget>>,
 ) -> Result<JsWidget> {
     let env = JsEnvHandle::from_env(env);
     let build = build.create_ref()?;
@@ -3022,10 +3022,7 @@ pub fn js_rebuild_on_change(
         let widget = build
             .borrow_back(&env)
             .and_then(|build| build.call(()))
-            .and_then(|value| {
-                let widget = unsafe { <&JsWidget>::from_napi_value(env.raw(), value.raw())? };
-                widget.binding_widget()
-            });
+            .and_then(|widget| widget.binding_widget());
         widget.map_err(|error| ForeignCallbackFailure::new(error.to_string()))
     });
     Ok(JsWidget::from_binding(BindingWidget::rebuild_on_change(

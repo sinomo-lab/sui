@@ -90,12 +90,20 @@ pub use sui_platform::AndroidApp;
     any(target_os = "windows", target_os = "macos", target_os = "linux")
 ))]
 pub use sui_platform::OsClipboardBackend;
+/// The canvas element a browser app draws a window on.
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+pub use sui_platform::WebCanvas;
 #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 pub use sui_platform::{
     DesktopExtension, DesktopExtensionContext, DesktopPlatform, DesktopWindow, FileDialogFilter,
     FileDialogFuture, FileDialogMode, FileDialogRequest, FileDialogSelection, FileDialogService,
     HeadlessPlatform, NativeFileDialogs, PlatformFile, PlatformWindow, Waker, show_file_dialog,
 };
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+pub use sui_platform::{DesktopPumpStatus, PumpedDesktop};
 pub use sui_reactive::{
     Change as ObservableChange, Changed, Observable, Observer, Selector, Signal, SourceId,
     Subscription, Task, TaskHandle, TaskState, WeakObserver, Zip, batch, combine, combine_named,
@@ -596,9 +604,48 @@ impl Application {
     #[cfg(any(feature = "desktop", feature = "web"))]
     pub fn run_with_platform_and_handle(
         self,
-        mut platform: DesktopPlatform,
+        platform: DesktopPlatform,
         on_ready: impl FnOnce(CommandSender),
     ) -> Result<()> {
+        let (platform, runtime) = self.prepare_platform(platform)?;
+        let _ = platform.run_with(runtime, on_ready)?;
+        Ok(())
+    }
+
+    /// Start the application on the desktop without blocking, invoking
+    /// `on_ready` with the application's typed command sender. The caller
+    /// drives the event loop with [`PumpedDesktop::pump`].
+    #[cfg(all(
+        feature = "desktop",
+        any(target_os = "windows", target_os = "macos", target_os = "linux")
+    ))]
+    pub fn start_pumped_with(self, on_ready: impl FnOnce(CommandSender)) -> Result<PumpedDesktop> {
+        let (platform, runtime) = self.prepare_platform(DesktopPlatform::new())?;
+        platform.start_pumped(runtime, on_ready)
+    }
+
+    /// Start the application in the browser, drawing the first window on
+    /// `canvas` (or the page's `sui-main-canvas` element). `on_ready`
+    /// receives the command sender; `on_exit` runs when the app exits.
+    #[cfg(all(feature = "web", target_arch = "wasm32"))]
+    pub fn start_web_with(
+        self,
+        canvas: Option<WebCanvas>,
+        on_ready: impl FnOnce(CommandSender),
+        on_exit: impl FnOnce(Result<()>) + 'static,
+    ) -> Result<()> {
+        let mut platform = DesktopPlatform::new();
+        if let Some(canvas) = canvas {
+            platform = platform.with_web_canvas(canvas);
+        }
+        let (platform, runtime) = self.prepare_platform(platform)?;
+        platform.start_web(runtime, on_ready, on_exit)
+    }
+
+    /// Build the runtime and apply this application's renderer settings to
+    /// `platform`.
+    #[cfg(any(feature = "desktop", feature = "web"))]
+    fn prepare_platform(self, mut platform: DesktopPlatform) -> Result<(DesktopPlatform, Runtime)> {
         let feathering_enabled = self.feathering_enabled;
         let feather_width = self.feather_width;
         let external_texture_registry = self.external_texture_registry.clone();
@@ -614,8 +661,7 @@ impl Application {
                 set_window_render_options(window_id, options);
             }
         }
-        let _ = platform.run_with(runtime, on_ready)?;
-        Ok(())
+        Ok((platform, runtime))
     }
 
     /// Like [`run`](Self::run) but invokes `on_ready` with a typed,

@@ -78,11 +78,11 @@ series.
 | Web | Alpha | Rust/Wasm and WebGPU; used by the live widget book |
 | Android | Experimental | Native-activity host with lifecycle-aware surface management |
 | Python | Alpha | `pip install sinomo-ui`; wheels for Windows, macOS, and Linux |
-| JavaScript | Alpha | Working but incomplete Node/Electron binding, currently built from source |
+| JavaScript | Alpha | Async API for Node/Electron (native addon) and browsers (WebAssembly), built from source |
 
 The web path runs SUI applications through Rust/Wasm and WebGPU; it is not a
-DOM framework. Applications authored in JavaScript can use the separate
-Node/Electron API. See [Platforms and Cargo features](https://github.com/sinomo-lab/sui/blob/main/docs/api/platforms-and-features.md)
+DOM framework. Applications authored in JavaScript use one async API on
+Node/Electron and in the browser. See [Platforms and Cargo features](https://github.com/sinomo-lab/sui/blob/main/docs/api/platforms-and-features.md)
 and the [JavaScript binding guide](https://github.com/sinomo-lab/sui/blob/main/crates/sui-js/README.md)
 for the current boundaries.
 

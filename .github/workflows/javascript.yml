@@ -1,0 +1,78 @@
+name: JavaScript package
+
+# Tests the `@sui/ui` package on both of its native modules: the Node addon on
+# each desktop platform, and the WebAssembly build (run in Node).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: javascript-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node addon (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-latest
+          - platform: macos-arm64
+            runner: macos-latest
+          - platform: windows-x86_64
+            runner: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install a software Vulkan driver for offscreen rendering
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
+
+      - name: Build the addon
+        run: cargo build --locked -p sinomo-ui-js
+
+      - name: Check the generated bindings
+        run: cargo xtask bindings generate --check
+
+      - name: Run the test suite
+        run: node crates/sui-js/tests/run.js node
+
+  web:
+    name: WebAssembly build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install the WebAssembly target and the matching wasm-bindgen CLI
+        shell: bash
+        run: |
+          rustup target add wasm32-unknown-unknown
+          version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+          cargo install --locked wasm-bindgen-cli --version "$version"
+
+      - name: Build the WebAssembly module
+        run: cargo xtask web build
+
+      - name: Run the test suite
+        run: node crates/sui-js/tests/run.js web

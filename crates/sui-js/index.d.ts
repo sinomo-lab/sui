@@ -163,6 +163,9 @@ export class Point {
   constructor(x: number, y: number);
   x: number;
   y: number;
+  /** Whether `other` is a Point with the same coordinates. */
+  equals(other: unknown): boolean;
+  toString(): string;
 }
 
 export class Modifiers {
@@ -267,6 +270,9 @@ export class Size {
   constructor(width: number, height: number);
   width: number;
   height: number;
+  /** Whether `other` is a Size with the same dimensions. */
+  equals(other: unknown): boolean;
+  toString(): string;
 }
 
 export class Rect {
@@ -277,6 +283,9 @@ export class Rect {
   height: number;
   readonly origin: Point;
   readonly size: Size;
+  /** Whether `other` is a Rect with the same position and size. */
+  equals(other: unknown): boolean;
+  toString(): string;
 }
 
 export class Path {
@@ -321,10 +330,16 @@ export class Transform {
 
 export class Color {
   constructor(red: number, green: number, blue: number, alpha?: number);
+  static rgba(red: number, green: number, blue: number, alpha?: number): Color;
+  static black(): Color;
+  static white(): Color;
   red: number;
   green: number;
   blue: number;
   alpha: number;
+  /** Whether `other` is a Color with the same channels. */
+  equals(other: unknown): boolean;
+  toString(): string;
 }
 
 export type AnimationValueKind =
@@ -650,17 +665,40 @@ export class Widget {
   constructor(callbacks: WidgetCallbacks, children?: Widget[]);
 }
 
+/** Options for listeners that an `AbortSignal` can stop. */
+export interface ListenOptions {
+  signal?: AbortSignal;
+}
+
 export class State {
   constructor(value: BindingValue);
   get(): BindingValue;
   set(value: BindingValue): void;
+  /** A derived state; `selector` must be synchronous. */
   select(selector: (value: BindingValue) => BindingValue): State;
-  watch(callback: (value: BindingValue) => void): StateSubscription;
+  /** Call `callback` with each new value until unsubscribed or aborted. */
+  watch(
+    callback: (value: BindingValue) => void | Promise<void>,
+    options?: ListenOptions
+  ): StateSubscription;
+  /** Resolve with the next value the state changes to. */
+  changed(options?: ListenOptions): Promise<BindingValue>;
+  /** Iterate over the state's changes until the loop exits or is aborted. */
+  changes(options?: ListenOptions): AsyncGenerator<BindingValue, void, undefined>;
   readonly text: string;
 }
 
-export class StateSubscription {
+export class StateSubscription implements Disposable {
   unsubscribe(): boolean;
+  [Symbol.dispose](): void;
+}
+
+/** A listener registration returned by `App.on`. */
+export class Subscription implements Disposable {
+  /** Stop listening. Returns `false` when already unsubscribed. */
+  unsubscribe(): boolean;
+  readonly active: boolean;
+  [Symbol.dispose](): void;
 }
 
 export type ThemePreset =
@@ -691,11 +729,11 @@ export class Theme {
 
 export class Window {
   constructor(title: string);
-  root(widget: Widget): void;
-  setInitialSize(size: Size): void;
-  setInitialPosition(position: Point): void;
-  setIconSvg(svg: Uint8Array): void;
-  removeIcon(): void;
+  root(widget: Widget): this;
+  setInitialSize(size: Size): this;
+  setInitialPosition(position: Point): this;
+  setIconSvg(svg: Uint8Array): this;
+  removeIcon(): this;
 }
 
 export interface RenderOptions {
@@ -710,13 +748,42 @@ export interface RenderOptions {
   useSystemSdrBrightness?: boolean;
 }
 
+export interface RunOptions {
+  /**
+   * Runs once the windows exist. If it throws or rejects, the app exits and
+   * `run()` rejects with the error.
+   */
+  onReady?(ui: UiHandle): void | Promise<void>;
+  /** Exit the app when the signal aborts. */
+  signal?: AbortSignal;
+  /**
+   * Browser only: the canvas to draw the first window on, or its element id.
+   * Defaults to the element with id `sui-main-canvas`.
+   */
+  canvas?: HTMLCanvasElement | string;
+}
+
 export class App {
   constructor();
-  window(window: Window): void;
-  configureRendering(options: RenderOptions): void;
-  setTheme(theme: Theme): void;
-  on(name: string, callback: (payload: BindingValue) => void): void;
+  window(window: Window): this;
+  configureRendering(options: RenderOptions): this;
+  setTheme(theme: Theme): this;
+  /** Listen for messages that `UiHandle.emit` sends. */
+  on(
+    name: string,
+    listener: (payload: BindingValue) => void | Promise<void>,
+    options?: ListenOptions
+  ): Subscription;
+  /** Resolve with the payload of the next message called `name`. */
+  once(name: string, options?: ListenOptions): Promise<BindingValue>;
+  /**
+   * Open the app's windows and run until the app exits. The app runs on the
+   * host's event loop, so timers, promises, and I/O keep working. One app
+   * runs at a time.
+   */
+  run(options?: RunOptions | ((ui: UiHandle) => void | Promise<void>)): Promise<void>;
   render(index?: number): RenderSnapshot;
+  /** Start the app without a platform, for tests and headless rendering. */
   start(): RunningApp;
   rgbaImage(width: number, height: number, pixels: Uint8Array): ImageHandle;
   pngImage(png: Uint8Array): ImageHandle;
@@ -727,8 +794,6 @@ export class App {
   svgFileAtSize(width: number, height: number, path: string): ImageHandle;
   fontBytes(data: Uint8Array): FontHandle;
   fontFile(path: string): FontHandle;
-  run(): void;
-  runWithHandle(callback: (ui: UiHandle) => void): void;
   readonly windowCount: number;
   readonly fontResourceCount: number;
   readonly imageResourceCount: number;
@@ -756,19 +821,26 @@ export function setMotionPreference(preference: "full" | "reduced" | "off" | nul
 export function clipboardText(): string | null;
 export function setClipboardText(text: string): void;
 
-export class Timer {
-  cancel(): void;
-  readonly active: boolean;
-}
+/**
+ * Handle errors thrown by callbacks, including rejections of async
+ * callbacks. The app keeps running. `null` restores the default, which
+ * logs with `console.error`.
+ */
+export function setErrorHandler(handler: ((error: unknown) => void) | null): void;
+
+/** The version of the SUI native module. */
+export const version: string;
 
 export class UiHandle {
-  callLater(delayMs: number, callback: () => void): Timer;
-  callEvery(intervalMs: number, callback: () => void): Timer;
-  showFileDialog(options: FileDialogOptions | undefined, onResult: (paths: string[] | null) => void): void;
+  /**
+   * Show a native file dialog. Resolves with the chosen paths, or `null`
+   * when cancelled; rejects when no dialog can be shown, as in browsers.
+   */
+  showFileDialog(options?: FileDialogOptions): Promise<string[] | null>;
+  /** Ask the running app to exit. Returns `false` when it is not running. */
   requestExit(): boolean;
-  post(callback: () => void): void;
+  /** Send a message to the app's `on` listeners. */
   emit(name: string, payload: BindingValue): boolean;
-  readonly pendingCount: number;
 }
 
 export interface FrameTiming {
@@ -878,8 +950,12 @@ export class RunningApp {
   click(node: SemanticNode, index?: number): void;
   press(node: SemanticNode, key: string, index?: number): void;
   fill(node: SemanticNode, text: string, index?: number): void;
+  /** Wait for async callbacks to settle and apply their updates. */
+  idle(): Promise<void>;
+  /** Node only: write a PNG screenshot of a window. */
+  saveScreenshot(path: string, index?: number): Promise<void>;
   readonly windowCount: number;
-  windowId(index: number): WindowHandle;
+  windowHandle(index: number): WindowHandle;
   windowIds(): string[];
   readonly pendingCount: number;
 }
@@ -935,13 +1011,6 @@ export class ExternalTextureDescriptor {
   validate(): void;
   readonly tier: InteropTier;
   readonly size: Size;
-}
-
-export class UiTaskQueue {
-  constructor();
-  post(callback: () => void): void;
-  drain(): number;
-  readonly pendingCount: number;
 }
 
 export interface SemanticsQuery {
@@ -1029,8 +1098,6 @@ export class TableRow {
   constructor(cells: string[]);
 }
 
-export function Label(value: State | BindingValue, semanticName?: string, color?: Color, fontSize?: number, lineHeight?: number, weight?: number, singleLine?: boolean, selectable?: boolean): Widget;
-
 export interface LabelOptions {
   semanticName?: string;
   color?: Color;
@@ -1043,10 +1110,8 @@ export interface LabelOptions {
 
 export function label(value: State | BindingValue, options?: LabelOptions): Widget;
 
-export function Button(label: State | BindingValue, onPress?: () => void, enabled?: State | boolean | number, appearance?: "filled" | "tonal" | "outline" | "ghost", tone?: SemanticTone | string, icon?: IconGlyph | string, minWidth?: number, semanticName?: string, description?: string): Widget;
-
 export interface ButtonOptions {
-  onPress?: () => void;
+  onPress?: () => void | Promise<void>;
   enabled?: State | boolean | number;
   appearance?: "filled" | "tonal" | "outline" | "ghost";
   tone?: SemanticTone | string;
@@ -1058,8 +1123,6 @@ export interface ButtonOptions {
 
 export function button(label: State | BindingValue, options?: ButtonOptions): Widget;
 
-export function Icon(glyph: IconGlyph | string, semanticName?: string, size?: number, color?: Color): Widget;
-
 export interface IconOptions {
   semanticName?: string;
   size?: number;
@@ -1068,144 +1131,116 @@ export interface IconOptions {
 
 export function icon(glyph: IconGlyph | string, options?: IconOptions): Widget;
 
-export function IconButton(glyph: IconGlyph | string, label: State | BindingValue, selected?: State | boolean | number, enabled?: State | boolean | number, size?: number, iconSize?: number, description?: string, onPress?: () => void): Widget;
-
 export interface IconButtonOptions {
   selected?: State | boolean | number;
   enabled?: State | boolean | number;
   size?: number;
   iconSize?: number;
   description?: string;
-  onPress?: () => void;
+  onPress?: () => void | Promise<void>;
 }
 
 export function iconButton(glyph: IconGlyph | string, label: State | BindingValue, options?: IconButtonOptions): Widget;
 
-export function Link(label: State | BindingValue, url: State | BindingValue, semanticName?: string, enabled?: State | boolean | number, onOpen?: (url: string) => void): Widget;
-
 export interface LinkOptions {
   semanticName?: string;
   enabled?: State | boolean | number;
-  onOpen?: (url: string) => void;
+  onOpen?: (url: string) => void | Promise<void>;
 }
 
 export function link(label: State | BindingValue, url: State | BindingValue, options?: LinkOptions): Widget;
 
-export function Checkbox(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number, semanticName?: string): Widget;
-
 export interface CheckboxOptions {
   checked?: State | boolean | number;
-  onChange?: (checked: boolean) => void;
+  onChange?: (checked: boolean) => void | Promise<void>;
   enabled?: State | boolean | number;
   semanticName?: string;
 }
 
 export function checkbox(label: State | BindingValue, options?: CheckboxOptions): Widget;
 
-export function Switch(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number, semanticName?: string): Widget;
-
 export interface SwitchOptions {
   checked?: State | boolean | number;
-  onChange?: (checked: boolean) => void;
+  onChange?: (checked: boolean) => void | Promise<void>;
   enabled?: State | boolean | number;
   semanticName?: string;
 }
 
 export function switchControl(label: State | BindingValue, options?: SwitchOptions): Widget;
 
-export function RadioButton(label: State | BindingValue, checked?: State | boolean | number, onChange?: (checked: boolean) => void, enabled?: State | boolean | number, semanticName?: string): Widget;
-
 export interface RadioButtonOptions {
   checked?: State | boolean | number;
-  onChange?: (checked: boolean) => void;
+  onChange?: (checked: boolean) => void | Promise<void>;
   enabled?: State | boolean | number;
   semanticName?: string;
 }
 
 export function radioButton(label: State | BindingValue, options?: RadioButtonOptions): Widget;
 
-export function RadioGroup(name: State | BindingValue, options: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface RadioGroupOptions {
   selected?: State | number | boolean;
-  onChange?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function radioGroup(name: State | BindingValue, options: string[], config?: RadioGroupOptions): Widget;
 
-export function SegmentedControl(name: State | BindingValue, items: SegmentedControlItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface SegmentedControlOptions {
   selected?: State | number | boolean;
-  onChange?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function segmentedControl(name: State | BindingValue, items: SegmentedControlItem[], options?: SegmentedControlOptions): Widget;
 
-export function Breadcrumb(name: State | BindingValue, items: string[], current?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
-
 export interface BreadcrumbOptions {
   current?: State | number | boolean;
-  onActivate?: (index: number, value: string) => void;
+  onActivate?: (index: number, value: string) => void | Promise<void>;
 }
 
 export function breadcrumb(name: State | BindingValue, items: string[], options?: BreadcrumbOptions): Widget;
 
-export function PathBar(name: State | BindingValue, items: string[], current?: State | number | boolean, onActivate?: (index: number, value: string) => void): Widget;
-
 export interface PathBarOptions {
   current?: State | number | boolean;
-  onActivate?: (index: number, value: string) => void;
+  onActivate?: (index: number, value: string) => void | Promise<void>;
 }
 
 export function pathBar(name: State | BindingValue, items: string[], options?: PathBarOptions): Widget;
 
-export function ListView(name: State | BindingValue, items: (string | ListItem)[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface ListViewOptions {
   selected?: State | number | boolean;
-  onChange?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function listView(name: State | BindingValue, items: (string | ListItem)[], options?: ListViewOptions): Widget;
 
-export function Table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface TableOptions {
   selected?: State | number | boolean;
-  onChange?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function table(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], options?: TableOptions): Widget;
 
-export function DataGrid(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface DataGridOptions {
   selected?: State | number | boolean;
-  onChange?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function dataGrid(name: State | BindingValue, columns: TableColumn[], rows: TableRow[], options?: DataGridOptions): Widget;
-
-export function Slider(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, onChange?: (value: number) => void, enabled?: State | boolean | number): Widget;
 
 export interface SliderOptions {
   value?: State | number | boolean;
   min?: number;
   max?: number;
   step?: number;
-  onChange?: (value: number) => void;
+  onChange?: (value: number) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function slider(name: State | BindingValue, options?: SliderOptions): Widget;
-
-export function NumberInput(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, step?: number, precision?: number, onChange?: (value: number) => void, enabled?: State | boolean | number): Widget;
 
 export interface NumberInputOptions {
   value?: State | number | boolean;
@@ -1213,24 +1248,20 @@ export interface NumberInputOptions {
   max?: number;
   step?: number;
   precision?: number;
-  onChange?: (value: number) => void;
+  onChange?: (value: number) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function numberInput(name: State | BindingValue, options?: NumberInputOptions): Widget;
 
-export function Select(name: State | BindingValue, options: string[], selected?: State | number | boolean, placeholder?: string, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface SelectOptions {
   selected?: State | number | boolean;
   placeholder?: string;
-  onChange?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function select(name: State | BindingValue, options: string[], config?: SelectOptions): Widget;
-
-export function ProgressBar(name: State | BindingValue, value?: State | number | boolean, min?: number, max?: number, showValue?: boolean): Widget;
 
 export interface ProgressBarOptions {
   value?: State | number | boolean;
@@ -1241,8 +1272,6 @@ export interface ProgressBarOptions {
 
 export function progressBar(name: State | BindingValue, options?: ProgressBarOptions): Widget;
 
-export function SignalMeter(name: State | BindingValue, active?: State | boolean | number, description?: string, bars?: number, size?: Size): Widget;
-
 export interface SignalMeterOptions {
   active?: State | boolean | number;
   description?: string;
@@ -1252,8 +1281,6 @@ export interface SignalMeterOptions {
 
 export function signalMeter(name: State | BindingValue, options?: SignalMeterOptions): Widget;
 
-export function StatusBadge(label: State | BindingValue, tone?: SemanticTone | string, icon?: IconGlyph | string, minWidth?: number): Widget;
-
 export interface StatusBadgeOptions {
   tone?: SemanticTone | string;
   icon?: IconGlyph | string;
@@ -1261,8 +1288,6 @@ export interface StatusBadgeOptions {
 }
 
 export function statusBadge(label: State | BindingValue, options?: StatusBadgeOptions): Widget;
-
-export function StatusBar(segments: StatusBarSegment[], name?: string, description?: State | BindingValue, height?: number): Widget;
 
 export interface StatusBarOptions {
   name?: string;
@@ -1272,15 +1297,11 @@ export interface StatusBarOptions {
 
 export function statusBar(segments: StatusBarSegment[], options?: StatusBarOptions): Widget;
 
-export function DetailRow(label: State | BindingValue, value: State | BindingValue, maxValueLines?: number): Widget;
-
 export interface DetailRowOptions {
   maxValueLines?: number;
 }
 
 export function detailRow(label: State | BindingValue, value: State | BindingValue, options?: DetailRowOptions): Widget;
-
-export function BusyIndicator(name: State | BindingValue, label?: State | BindingValue, size?: number): Widget;
 
 export interface BusyIndicatorOptions {
   label?: State | BindingValue;
@@ -1289,35 +1310,29 @@ export interface BusyIndicatorOptions {
 
 export function busyIndicator(name: State | BindingValue, options?: BusyIndicatorOptions): Widget;
 
-export function TextInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number, readOnly?: boolean, onSubmit?: (value: string) => void, onFocusChange?: (focused: boolean) => void): Widget;
-
 export interface TextInputOptions {
   value?: State | BindingValue;
   placeholder?: string;
-  onChange?: (value: string) => void;
+  onChange?: (value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
   readOnly?: boolean;
-  onSubmit?: (value: string) => void;
-  onFocusChange?: (focused: boolean) => void;
+  onSubmit?: (value: string) => void | Promise<void>;
+  onFocusChange?: (focused: boolean) => void | Promise<void>;
 }
 
 export function textInput(name: State | BindingValue, options?: TextInputOptions): Widget;
 
-export function TextArea(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number, readOnly?: boolean, onSubmit?: (value: string) => void, onFocusChange?: (focused: boolean) => void): Widget;
-
 export interface TextAreaOptions {
   value?: State | BindingValue;
   placeholder?: string;
-  onChange?: (value: string) => void;
+  onChange?: (value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
   readOnly?: boolean;
-  onSubmit?: (value: string) => void;
-  onFocusChange?: (focused: boolean) => void;
+  onSubmit?: (value: string) => void | Promise<void>;
+  onFocusChange?: (focused: boolean) => void | Promise<void>;
 }
 
 export function textArea(name: State | BindingValue, options?: TextAreaOptions): Widget;
-
-export function RichText(spans: TextSpan[], semanticName?: string, minWidth?: number, minHeight?: number): Widget;
 
 export interface RichTextOptions {
   semanticName?: string;
@@ -1347,17 +1362,13 @@ export class RichDocumentUpdate {
   readonly appendOnly: boolean;
 }
 
-export function RichDocumentView(document: RichDocument, onLink?: (destination: string) => void, onImage?: (source: string) => void, onAttachment?: (blockId: string) => void): Widget;
-
 export interface RichDocumentViewOptions {
-  onLink?: (destination: string) => void;
-  onImage?: (source: string) => void;
-  onAttachment?: (blockId: string) => void;
+  onLink?: (destination: string) => void | Promise<void>;
+  onImage?: (source: string) => void | Promise<void>;
+  onAttachment?: (blockId: string) => void | Promise<void>;
 }
 
 export function richDocumentView(document: RichDocument, options?: RichDocumentViewOptions): Widget;
-
-export function Image(image: ImageHandle, semanticName?: string, fit?: ImageFit, size?: Size): Widget;
 
 export interface ImageOptions {
   semanticName?: string;
@@ -1367,17 +1378,13 @@ export interface ImageOptions {
 
 export function image(image: ImageHandle, options?: ImageOptions): Widget;
 
-export function ColorSwatch(name: string, color: Color, size?: Size, readOnly?: boolean, onPress?: () => void): Widget;
-
 export interface ColorSwatchOptions {
   size?: Size;
   readOnly?: boolean;
-  onPress?: () => void;
+  onPress?: () => void | Promise<void>;
 }
 
 export function colorSwatch(name: string, color: Color, options?: ColorSwatchOptions): Widget;
-
-export function Separator(axis?: Axis, name?: string, inset?: number, thickness?: number, length?: number): Widget;
 
 export interface SeparatorOptions {
   axis?: Axis;
@@ -1389,8 +1396,6 @@ export interface SeparatorOptions {
 
 export function separator(options?: SeparatorOptions): Widget;
 
-export function EmptyState(title: string, description: string, name?: string, detail?: string, icon?: IconGlyph | string, action?: Widget, background?: Color, transparent?: boolean): Widget;
-
 export interface EmptyStateOptions {
   name?: string;
   detail?: string;
@@ -1401,8 +1406,6 @@ export interface EmptyStateOptions {
 }
 
 export function emptyState(title: string, description: string, options?: EmptyStateOptions): Widget;
-
-export function Surface(child: Widget, role?: SurfaceRole | string, name?: string, border?: SurfaceBorder | string, elevation?: SurfaceElevation | string, cornerRadius?: number, padding?: number, fillWidth?: boolean, fillHeight?: boolean): Widget;
 
 export interface SurfaceOptions {
   role?: SurfaceRole | string;
@@ -1417,8 +1420,6 @@ export interface SurfaceOptions {
 
 export function surface(child: Widget, options?: SurfaceOptions): Widget;
 
-export function Toolbar(children: Widget[], axis?: Axis, name?: string, extent?: number, padding?: number, gap?: number, background?: Color, divider?: boolean): Widget;
-
 export interface ToolbarOptions {
   axis?: Axis;
   name?: string;
@@ -1431,8 +1432,6 @@ export interface ToolbarOptions {
 
 export function toolbar(children: Widget[], options?: ToolbarOptions): Widget;
 
-export function Column(children: Widget[], gap?: number, justify?: "start" | "center" | "end" | "space-between" | "space-around" | "space-evenly", alignItems?: "start" | "center" | "end" | "stretch", wrap?: boolean): Widget;
-
 export interface ColumnOptions {
   gap?: number;
   justify?: "start" | "center" | "end" | "space-between" | "space-around" | "space-evenly";
@@ -1442,8 +1441,6 @@ export interface ColumnOptions {
 
 export function column(children: Widget[], options?: ColumnOptions): Widget;
 
-export function Row(children: Widget[], gap?: number, justify?: "start" | "center" | "end" | "space-between" | "space-around" | "space-evenly", alignItems?: "start" | "center" | "end" | "stretch", wrap?: boolean): Widget;
-
 export interface RowOptions {
   gap?: number;
   justify?: "start" | "center" | "end" | "space-between" | "space-around" | "space-evenly";
@@ -1452,8 +1449,6 @@ export interface RowOptions {
 }
 
 export function row(children: Widget[], options?: RowOptions): Widget;
-
-export function FlexItem(child: Widget, grow?: number, shrink?: number, basis?: number, minWidth?: number, minHeight?: number, maxWidth?: number, maxHeight?: number, alignSelf?: "start" | "center" | "end" | "stretch"): Widget;
 
 export interface FlexItemOptions {
   grow?: number;
@@ -1468,11 +1463,7 @@ export interface FlexItemOptions {
 
 export function flexItem(child: Widget, options?: FlexItemOptions): Widget;
 
-export function RebuildOnChange(states: State[], build: () => Widget): Widget;
-
 export function rebuildOnChange(states: State[], build: () => Widget): Widget;
-
-export function GridCell(child: Widget, row: number, column: number, rowSpan?: number, columnSpan?: number, horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
 
 export interface GridCellOptions {
   rowSpan?: number;
@@ -1483,19 +1474,13 @@ export interface GridCellOptions {
 
 export function gridCell(child: Widget, row: number, column: number, options?: GridCellOptions): Widget;
 
-export function FocusScope(child: Widget, controller?: FocusController): Widget;
-
 export interface FocusScopeOptions {
   controller?: FocusController;
 }
 
 export function focusScope(child: Widget, options?: FocusScopeOptions): Widget;
 
-export function Spacer(): Widget;
-
 export function spacer(): Widget;
-
-export function Grid(children: Widget[], columns?: number | (number | string)[], name?: string, gap?: number, columnGap?: number, rowGap?: number, rows?: (number | string)[]): Widget;
 
 export interface GridOptions {
   columns?: number | (number | string)[];
@@ -1508,8 +1493,6 @@ export interface GridOptions {
 
 export function grid(children: Widget[], options?: GridOptions): Widget;
 
-export function AspectRatio(child: Widget, ratio: number, fit?: "contain" | "cover", horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
-
 export interface AspectRatioOptions {
   fit?: "contain" | "cover";
   horizontal?: "start" | "center" | "end" | "stretch";
@@ -1517,8 +1500,6 @@ export interface AspectRatioOptions {
 }
 
 export function aspectRatio(child: Widget, ratio: number, options?: AspectRatioOptions): Widget;
-
-export function SafeArea(child: Widget, edges?: string, minimumLeft?: number, minimumTop?: number, minimumRight?: number, minimumBottom?: number): Widget;
 
 export interface SafeAreaOptions {
   edges?: string;
@@ -1530,8 +1511,6 @@ export interface SafeAreaOptions {
 
 export function safeArea(child: Widget, options?: SafeAreaOptions): Widget;
 
-export function Presence(child: Widget, shown?: State | boolean | number, collapse?: boolean, appear?: boolean): Widget;
-
 export interface PresenceOptions {
   shown?: State | boolean | number;
   collapse?: boolean;
@@ -1540,8 +1519,6 @@ export interface PresenceOptions {
 
 export function presence(child: Widget, options?: PresenceOptions): Widget;
 
-export function LayoutTransition(child: Widget, duration?: number, easing?: "linear" | "ease-in" | "ease-out" | "ease-in-out"): Widget;
-
 export interface LayoutTransitionOptions {
   duration?: number;
   easing?: "linear" | "ease-in" | "ease-out" | "ease-in-out";
@@ -1549,12 +1526,10 @@ export interface LayoutTransitionOptions {
 
 export function layoutTransition(child: Widget, options?: LayoutTransitionOptions): Widget;
 
-export function AdaptiveView(compact: Widget, medium: Widget, expanded: Widget, mediumBreakpoint?: number, expandedBreakpoint?: number, onClassChange?: (value: "compact" | "medium" | "expanded") => void): Widget;
-
 export interface AdaptiveViewOptions {
   mediumBreakpoint?: number;
   expandedBreakpoint?: number;
-  onClassChange?: (value: "compact" | "medium" | "expanded") => void;
+  onClassChange?: (value: "compact" | "medium" | "expanded") => void | Promise<void>;
 }
 
 export function adaptiveView(compact: Widget, medium: Widget, expanded: Widget, options?: AdaptiveViewOptions): Widget;
@@ -1562,8 +1537,6 @@ export function adaptiveView(compact: Widget, medium: Widget, expanded: Widget, 
 export class ConstraintCase {
   constructor(child: Widget, minWidth?: number, maxWidth?: number, minHeight?: number, maxHeight?: number, minAspectRatio?: number, maxAspectRatio?: number, orientation?: "any" | "portrait" | "landscape");
 }
-
-export function ConstraintView(cases: ConstraintCase[], fallback: Widget): Widget;
 
 export function constraintView(cases: ConstraintCase[], fallback: Widget): Widget;
 
@@ -1593,8 +1566,6 @@ export class ResponsiveSidebarState {
   toggleOverlay(): boolean;
 }
 
-export function ResponsiveSidebar(state: ResponsiveSidebarState, sidebar: Widget, content: Widget, name?: string, mediumBreakpoint?: number, expandedBreakpoint?: number, railWidth?: number, overlayWidth?: number, dismissOnScrim?: boolean, onModeChange?: (mode: "overlay-closed" | "overlay-open" | "rail" | "inline") => void): Widget;
-
 export interface ResponsiveSidebarOptions {
   name?: string;
   mediumBreakpoint?: number;
@@ -1602,7 +1573,7 @@ export interface ResponsiveSidebarOptions {
   railWidth?: number;
   overlayWidth?: number;
   dismissOnScrim?: boolean;
-  onModeChange?: (mode: "overlay-closed" | "overlay-open" | "rail" | "inline") => void;
+  onModeChange?: (mode: "overlay-closed" | "overlay-open" | "rail" | "inline") => void | Promise<void>;
 }
 
 export function responsiveSidebar(state: ResponsiveSidebarState, sidebar: Widget, content: Widget, options?: ResponsiveSidebarOptions): Widget;
@@ -1615,8 +1586,6 @@ export class MasterDetailState {
   showDetail(): boolean;
 }
 
-export function MasterDetail(state: MasterDetailState, master: Widget, detail: Widget, mediumBreakpoint?: number, expandedBreakpoint?: number, masterWidth?: number): Widget;
-
 export interface MasterDetailOptions {
   mediumBreakpoint?: number;
   expandedBreakpoint?: number;
@@ -1624,8 +1593,6 @@ export interface MasterDetailOptions {
 }
 
 export function masterDetail(state: MasterDetailState, master: Widget, detail: Widget, options?: MasterDetailOptions): Widget;
-
-export function OverlayHost(child: Widget): Widget;
 
 export function overlayHost(child: Widget): Widget;
 
@@ -1636,8 +1603,6 @@ export class NotificationCenter {
   clear(): boolean;
   readonly size: number;
 }
-
-export function NotificationHost(center: NotificationCenter, width?: number): Widget;
 
 export interface NotificationHostOptions {
   width?: number;
@@ -1707,8 +1672,6 @@ export class CanvasShape {
   static polyline(points: Point[], stroke: CanvasStroke): CanvasShape;
 }
 
-export function Canvas(name: string, shapes?: CanvasShape[], viewport?: CanvasViewport, drawStroke?: CanvasStroke, desiredSize?: Size): Widget;
-
 export interface CanvasOptions {
   shapes?: CanvasShape[];
   viewport?: CanvasViewport;
@@ -1717,8 +1680,6 @@ export interface CanvasOptions {
 }
 
 export function canvas(name: string, options?: CanvasOptions): Widget;
-
-export function CanvasRuler(axis: Axis, name: string, documentSize: Size, viewport?: CanvasViewport, viewportSize?: Size, extent?: number): Widget;
 
 export interface CanvasRulerOptions {
   viewport?: CanvasViewport;
@@ -1759,8 +1720,6 @@ export class PixelCanvasState {
   latestExport(): PixelCanvasExport | undefined;
 }
 
-export function PixelCanvas(state: PixelCanvasState, name: string, width: number, height: number, paperColor?: Color, desiredSize?: Size, viewport?: CanvasViewport, fitOnFirstLayout?: boolean, pixels?: Color[]): Widget;
-
 export interface PixelCanvasOptions {
   paperColor?: Color;
   desiredSize?: Size;
@@ -1776,39 +1735,31 @@ export class DragScope {
   readonly active: boolean;
 }
 
-export function DragDropHost(scope: DragScope, child: Widget, onExternalHover?: (paths: string[]) => void, onExternalDrop?: (path: string) => void, onExternalCancel?: () => void): Widget;
-
 export interface DragDropHostOptions {
-  onExternalHover?: (paths: string[]) => void;
-  onExternalDrop?: (path: string) => void;
-  onExternalCancel?: () => void;
+  onExternalHover?: (paths: string[]) => void | Promise<void>;
+  onExternalDrop?: (path: string) => void | Promise<void>;
+  onExternalCancel?: () => void | Promise<void>;
 }
 
 export function dragDropHost(scope: DragScope, child: Widget, options?: DragDropHostOptions): Widget;
-
-export function Draggable(scope: DragScope, child: Widget, payload: string, effect?: "copy" | "move" | "link", previewLabel?: string, threshold?: number, onStart?: (payload: string) => void, onEnd?: (payload: string) => void): Widget;
 
 export interface DraggableOptions {
   effect?: "copy" | "move" | "link";
   previewLabel?: string;
   threshold?: number;
-  onStart?: (payload: string) => void;
-  onEnd?: (payload: string) => void;
+  onStart?: (payload: string) => void | Promise<void>;
+  onEnd?: (payload: string) => void | Promise<void>;
 }
 
 export function draggable(scope: DragScope, child: Widget, payload: string, options?: DraggableOptions): Widget;
 
-export function DropTarget(scope: DragScope, child: Widget, effect?: "none" | "copy" | "move" | "link", onDrop?: (payload: string) => void, onHoverChange?: (hovered: boolean) => void): Widget;
-
 export interface DropTargetOptions {
   effect?: "none" | "copy" | "move" | "link";
-  onDrop?: (payload: string) => void;
-  onHoverChange?: (hovered: boolean) => void;
+  onDrop?: (payload: string) => void | Promise<void>;
+  onHoverChange?: (hovered: boolean) => void | Promise<void>;
 }
 
 export function dropTarget(scope: DragScope, child: Widget, options?: DropTargetOptions): Widget;
-
-export function VirtualList(name: string, model: VirtualListModel, estimatedRowHeight?: number, gap?: number, padding?: number, rowPadding?: number, overscanViewports?: number, cacheCapacity?: number, selectable?: boolean, transparent?: boolean, stickToEnd?: boolean, overlayScrollBars?: boolean, onChange?: (key: string) => void, onNearStart?: () => void, onNearEnd?: () => void): Widget;
 
 export interface VirtualListOptions {
   estimatedRowHeight?: number;
@@ -1821,29 +1772,25 @@ export interface VirtualListOptions {
   transparent?: boolean;
   stickToEnd?: boolean;
   overlayScrollBars?: boolean;
-  onChange?: (key: string) => void;
-  onNearStart?: () => void;
-  onNearEnd?: () => void;
+  onChange?: (key: string) => void | Promise<void>;
+  onNearStart?: () => void | Promise<void>;
+  onNearEnd?: () => void | Promise<void>;
 }
 
 export function virtualList(name: string, model: VirtualListModel, options?: VirtualListOptions): Widget;
 
-export function VirtualTable(name: string, columns: VirtualTableColumn[], model: TableModel, selected?: State, rowHeight?: number, onChange?: (key: string) => void, onRowActivate?: (key: string) => void, onHeaderActivate?: (columnKey: string) => void, onColumnResize?: (columnKey: string, width: number) => void, onNearEnd?: () => void, enabled?: State | boolean | number): Widget;
-
 export interface VirtualTableOptions {
   selected?: State;
   rowHeight?: number;
-  onChange?: (key: string) => void;
-  onRowActivate?: (key: string) => void;
-  onHeaderActivate?: (columnKey: string) => void;
-  onColumnResize?: (columnKey: string, width: number) => void;
-  onNearEnd?: () => void;
+  onChange?: (key: string) => void | Promise<void>;
+  onRowActivate?: (key: string) => void | Promise<void>;
+  onHeaderActivate?: (columnKey: string) => void | Promise<void>;
+  onColumnResize?: (columnKey: string, width: number) => void | Promise<void>;
+  onNearEnd?: () => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function virtualTable(name: string, columns: VirtualTableColumn[], model: TableModel, options?: VirtualTableOptions): Widget;
-
-export function ScrollView(child: Widget, axes?: ScrollAxes, name?: string, controller?: ScrollController): Widget;
 
 export interface ScrollViewOptions {
   axes?: ScrollAxes;
@@ -1852,8 +1799,6 @@ export interface ScrollViewOptions {
 }
 
 export function scrollView(child: Widget, options?: ScrollViewOptions): Widget;
-
-export function ExternalSurface(texture: ExternalTextureDescriptor, desiredSize?: Size, name?: string): Widget;
 
 export interface ExternalSurfaceOptions {
   desiredSize?: Size;
@@ -1871,11 +1816,9 @@ export class TreeItem {
   constructor(label: string, detail?: string, expanded?: boolean, enabled?: boolean, children?: TreeItem[]);
 }
 
-export function TreeView(name: State | BindingValue, items: TreeItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface TreeViewOptions {
   selected?: State | number | boolean;
-  onChange?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
@@ -1885,11 +1828,9 @@ export class LayerListItem {
   constructor(label: string, detail?: string, visible?: boolean, locked?: boolean, enabled?: boolean);
 }
 
-export function LayerList(name: State | BindingValue, items: LayerListItem[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface LayerListOptions {
   selected?: State | number | boolean;
-  onChange?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
@@ -1909,46 +1850,36 @@ export class ColorPaletteSwatch {
   readonly color: Color;
 }
 
-export function Menu(name: State | BindingValue, items: MenuItem[], highlighted?: State | number | boolean, onActivate?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface MenuOptions {
   highlighted?: State | number | boolean;
-  onActivate?: (index: number, value: string) => void;
+  onActivate?: (index: number, value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function menu(name: State | BindingValue, items: MenuItem[], options?: MenuOptions): Widget;
 
-export function ContextMenu(name: string, trigger: Widget, items: MenuItem[], onActivate?: (index: number, value: string) => void): Widget;
-
 export interface ContextMenuOptions {
-  onActivate?: (index: number, value: string) => void;
+  onActivate?: (index: number, value: string) => void | Promise<void>;
 }
 
 export function contextMenu(name: string, trigger: Widget, items: MenuItem[], options?: ContextMenuOptions): Widget;
 
-export function TabBar(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface TabBarOptions {
   selected?: State | number | boolean;
-  onChange?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function tabBar(name: State | BindingValue, tabs: string[], options?: TabBarOptions): Widget;
 
-export function Tabs(name: State | BindingValue, tabs: string[], selected?: State | number | boolean, panels?: Widget[], onChange?: (index: number, label: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface TabsOptions {
   selected?: State | number | boolean;
   panels?: Widget[];
-  onChange?: (index: number, label: string) => void;
+  onChange?: (index: number, label: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function tabs(name: State | BindingValue, tabs: string[], options?: TabsOptions): Widget;
-
-export function Dialog(title: State | BindingValue, content: Widget, open?: State | boolean | number, description?: string, modal?: boolean, dismissOnScrim?: boolean, maxWidth?: number, actions?: Widget[], onDismiss?: () => void): Widget;
 
 export interface DialogOptions {
   open?: State | boolean | number;
@@ -1957,23 +1888,19 @@ export interface DialogOptions {
   dismissOnScrim?: boolean;
   maxWidth?: number;
   actions?: Widget[];
-  onDismiss?: () => void;
+  onDismiss?: () => void | Promise<void>;
 }
 
 export function dialog(title: State | BindingValue, content: Widget, options?: DialogOptions): Widget;
-
-export function CommandPalette(name: string, content: Widget, description?: string, open?: State | boolean | number, maxWidth?: number, onDismiss?: () => void): Widget;
 
 export interface CommandPaletteOptions {
   description?: string;
   open?: State | boolean | number;
   maxWidth?: number;
-  onDismiss?: () => void;
+  onDismiss?: () => void | Promise<void>;
 }
 
 export function commandPalette(name: string, content: Widget, options?: CommandPaletteOptions): Widget;
-
-export function Padding(child: Widget, padding?: number, top?: number, right?: number, bottom?: number, fillChildWidth?: boolean, fillChildHeight?: boolean): Widget;
 
 export interface PaddingOptions {
   padding?: number;
@@ -1986,8 +1913,6 @@ export interface PaddingOptions {
 
 export function padding(child: Widget, options?: PaddingOptions): Widget;
 
-export function Align(child: Widget, horizontal?: "start" | "center" | "end" | "stretch", vertical?: "start" | "center" | "end" | "stretch"): Widget;
-
 export interface AlignOptions {
   horizontal?: "start" | "center" | "end" | "stretch";
   vertical?: "start" | "center" | "end" | "stretch";
@@ -1995,11 +1920,7 @@ export interface AlignOptions {
 
 export function align(child: Widget, options?: AlignOptions): Widget;
 
-export function Background(child: Widget, color: Color): Widget;
-
 export function background(child: Widget, color: Color): Widget;
-
-export function SizedBox(child?: Widget, width?: number, height?: number): Widget;
 
 export interface SizedBoxOptions {
   child?: Widget;
@@ -2009,8 +1930,6 @@ export interface SizedBoxOptions {
 
 export function sizedBox(options?: SizedBoxOptions): Widget;
 
-export function Stack(children: Widget[], axis?: Axis, gap?: number, alignment?: "start" | "center" | "end" | "stretch"): Widget;
-
 export interface StackOptions {
   axis?: Axis;
   gap?: number;
@@ -2019,16 +1938,12 @@ export interface StackOptions {
 
 export function stack(children: Widget[], options?: StackOptions): Widget;
 
-export function SemanticRegion(name: State | BindingValue, child: Widget, description?: State | BindingValue, role?: string): Widget;
-
 export interface SemanticRegionOptions {
   description?: State | BindingValue;
   role?: string;
 }
 
 export function semanticRegion(name: State | BindingValue, child: Widget, options?: SemanticRegionOptions): Widget;
-
-export function FormRow(label: string, control: Widget, stacked?: boolean, labelWidth?: number, controlWidth?: number, gap?: number): Widget;
 
 export interface FormRowOptions {
   stacked?: boolean;
@@ -2039,8 +1954,6 @@ export interface FormRowOptions {
 
 export function formRow(label: string, control: Widget, options?: FormRowOptions): Widget;
 
-export function FieldGroup(children: Widget[], gap?: number, padding?: number, maxWidth?: number, fillWidth?: boolean): Widget;
-
 export interface FieldGroupOptions {
   gap?: number;
   padding?: number;
@@ -2049,8 +1962,6 @@ export interface FieldGroupOptions {
 }
 
 export function fieldGroup(children: Widget[], options?: FieldGroupOptions): Widget;
-
-export function FormSection(title: string, child: Widget, description?: string, headerAction?: Widget, padding?: number, bodyGap?: number, headerGap?: number, maxWidth?: number, fillWidth?: boolean, cornerRadius?: number, elevation?: SurfaceElevation | string): Widget;
 
 export interface FormSectionOptions {
   description?: string;
@@ -2066,8 +1977,6 @@ export interface FormSectionOptions {
 
 export function formSection(title: string, child: Widget, options?: FormSectionOptions): Widget;
 
-export function PanelSection(title: string, child: Widget, headerAction?: Widget, gap?: number, actionGap?: number, collapsible?: boolean, expanded?: boolean): Widget;
-
 export interface PanelSectionOptions {
   headerAction?: Widget;
   gap?: number;
@@ -2077,8 +1986,6 @@ export interface PanelSectionOptions {
 }
 
 export function panelSection(title: string, child: Widget, options?: PanelSectionOptions): Widget;
-
-export function DockPanel(title: string, child: Widget, name?: string, headerHeight?: number, padding?: number, background?: Color, headerBackground?: Color): Widget;
 
 export interface DockPanelOptions {
   name?: string;
@@ -2090,11 +1997,7 @@ export interface DockPanelOptions {
 
 export function dockPanel(title: string, child: Widget, options?: DockPanelOptions): Widget;
 
-export function StatusBarHost(content: Widget, statusBar: Widget): Widget;
-
 export function statusBarHost(content: Widget, statusBar: Widget): Widget;
-
-export function Tooltip(text: string, child: Widget, placement?: "above" | "below"): Widget;
 
 export interface TooltipOptions {
   placement?: "above" | "below";
@@ -2102,21 +2005,17 @@ export interface TooltipOptions {
 
 export function tooltip(text: string, child: Widget, options?: TooltipOptions): Widget;
 
-export function Popover(name: string, trigger: Widget, content: Widget, open?: State | boolean | number, onOpenChange?: (open: boolean) => void): Widget;
-
 export interface PopoverOptions {
   open?: State | boolean | number;
-  onOpenChange?: (open: boolean) => void;
+  onOpenChange?: (open: boolean) => void | Promise<void>;
 }
 
 export function popover(name: string, trigger: Widget, content: Widget, options?: PopoverOptions): Widget;
 
-export function ToolPalette(name: string, items: ToolPaletteItem[], selected?: State | number | boolean, axis?: Axis, onChange?: (index: number, value: string) => void, extent?: number, padding?: number, gap?: number, itemSize?: number, iconSize?: number, background?: Color, divider?: boolean, enabled?: State | boolean | number): Widget;
-
 export interface ToolPaletteOptions {
   selected?: State | number | boolean;
   axis?: Axis;
-  onChange?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
   extent?: number;
   padding?: number;
   gap?: number;
@@ -2129,11 +2028,9 @@ export interface ToolPaletteOptions {
 
 export function toolPalette(name: string, items: ToolPaletteItem[], options?: ToolPaletteOptions): Widget;
 
-export function PresetStrip(name: string, presets: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, itemWidth?: number, itemHeight?: number, gap?: number, enabled?: State | boolean | number): Widget;
-
 export interface PresetStripOptions {
   selected?: State | number | boolean;
-  onChange?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
   itemWidth?: number;
   itemHeight?: number;
   gap?: number;
@@ -2142,21 +2039,17 @@ export interface PresetStripOptions {
 
 export function presetStrip(name: string, presets: string[], options?: PresetStripOptions): Widget;
 
-export function BrowserTabBar(name: string, tabs: string[], selected?: State | number | boolean, onChange?: (index: number, value: string) => void, onClose?: (index: number, value: string) => void): Widget;
-
 export interface BrowserTabBarOptions {
   selected?: State | number | boolean;
-  onChange?: (index: number, value: string) => void;
-  onClose?: (index: number, value: string) => void;
+  onChange?: (index: number, value: string) => void | Promise<void>;
+  onClose?: (index: number, value: string) => void | Promise<void>;
 }
 
 export function browserTabBar(name: string, tabs: string[], options?: BrowserTabBarOptions): Widget;
 
-export function ColorPalette(name: string, swatches: ColorPaletteSwatch[], selected?: State | number | boolean, onChange?: (index: number, name: string, color: Color) => void, columns?: number, swatchSize?: number, gap?: number, enabled?: State | boolean | number): Widget;
-
 export interface ColorPaletteOptions {
   selected?: State | number | boolean;
-  onChange?: (index: number, name: string, color: Color) => void;
+  onChange?: (index: number, name: string, color: Color) => void | Promise<void>;
   columns?: number;
   swatchSize?: number;
   gap?: number;
@@ -2165,11 +2058,9 @@ export interface ColorPaletteOptions {
 
 export function colorPalette(name: string, swatches: ColorPaletteSwatch[], options?: ColorPaletteOptions): Widget;
 
-export function ColorPicker(name: string, color?: Color, onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean, enabled?: State | boolean | number): Widget;
-
 export interface ColorPickerOptions {
   color?: Color;
-  onChange?: (color: Color) => void;
+  onChange?: (color: Color) => void | Promise<void>;
   showAlpha?: boolean;
   compact?: boolean;
   enabled?: State | boolean | number;
@@ -2177,12 +2068,10 @@ export interface ColorPickerOptions {
 
 export function colorPicker(name: string, options?: ColorPickerOptions): Widget;
 
-export function SimpleColorPicker(name: string, color?: Color, mode?: "hsl" | "hsv" | "rgb" | "oklch", onChange?: (color: Color) => void, showAlpha?: boolean, compact?: boolean): Widget;
-
 export interface SimpleColorPickerOptions {
   color?: Color;
   mode?: "hsl" | "hsv" | "rgb" | "oklch";
-  onChange?: (color: Color) => void;
+  onChange?: (color: Color) => void | Promise<void>;
   showAlpha?: boolean;
   compact?: boolean;
 }
@@ -2197,43 +2086,35 @@ export class BrushPreviewSpec {
   readonly shape: "round" | "square";
 }
 
-export function PasswordInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number, readOnly?: boolean, onSubmit?: (value: string) => void, onFocusChange?: (focused: boolean) => void): Widget;
-
 export interface PasswordInputOptions {
   value?: State | BindingValue;
   placeholder?: string;
-  onChange?: (value: string) => void;
+  onChange?: (value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
   readOnly?: boolean;
-  onSubmit?: (value: string) => void;
-  onFocusChange?: (focused: boolean) => void;
+  onSubmit?: (value: string) => void | Promise<void>;
+  onFocusChange?: (focused: boolean) => void | Promise<void>;
 }
 
 export function passwordInput(name: State | BindingValue, options?: PasswordInputOptions): Widget;
 
-export function DateTimeInput(name: State | BindingValue, value?: State | BindingValue, placeholder?: string, onChange?: (value: string) => void, enabled?: State | boolean | number): Widget;
-
 export interface DateTimeInputOptions {
   value?: State | BindingValue;
   placeholder?: string;
-  onChange?: (value: string) => void;
+  onChange?: (value: string) => void | Promise<void>;
   enabled?: State | boolean | number;
 }
 
 export function dateTimeInput(name: State | BindingValue, options?: DateTimeInputOptions): Widget;
 
-export function ActionCard(title: string, description: string, icon?: IconGlyph | string, tone?: SemanticTone | string, enabled?: State | boolean | number, onPress?: () => void): Widget;
-
 export interface ActionCardOptions {
   icon?: IconGlyph | string;
   tone?: SemanticTone | string;
   enabled?: State | boolean | number;
-  onPress?: () => void;
+  onPress?: () => void | Promise<void>;
 }
 
 export function actionCard(title: string, description: string, options?: ActionCardOptions): Widget;
-
-export function BrushPreview(name: string, spec: BrushPreviewSpec, kind?: string, size?: Size): Widget;
 
 export interface BrushPreviewOptions {
   kind?: string;
@@ -2241,8 +2122,6 @@ export interface BrushPreviewOptions {
 }
 
 export function brushPreview(name: string, spec: BrushPreviewSpec, options?: BrushPreviewOptions): Widget;
-
-export function CommandGroup(name: string, children: Widget[], axis?: Axis, padding?: number, gap?: number, cornerRadius?: number, background?: Color, border?: Color): Widget;
 
 export interface CommandGroupOptions {
   axis?: Axis;
@@ -2255,8 +2134,6 @@ export interface CommandGroupOptions {
 
 export function commandGroup(name: string, children: Widget[], options?: CommandGroupOptions): Widget;
 
-export function CoverageDots(name: string, current: number, target: number, tone?: SemanticTone | string, maxDots?: number, showLabel?: boolean, minWidth?: number): Widget;
-
 export interface CoverageDotsOptions {
   tone?: SemanticTone | string;
   maxDots?: number;
@@ -2265,8 +2142,6 @@ export interface CoverageDotsOptions {
 }
 
 export function coverageDots(name: string, current: number, target: number, options?: CoverageDotsOptions): Widget;
-
-export function Dock(body: Widget, top?: Widget, topHeight?: number, bottom?: Widget, bottomHeight?: number, fallbackWidth?: number, fallbackBodyHeight?: number): Widget;
 
 export interface DockOptions {
   top?: Widget;
@@ -2279,8 +2154,6 @@ export interface DockOptions {
 
 export function dock(body: Widget, options?: DockOptions): Widget;
 
-export function FixedPaneSplit(first: Widget, divider: Widget, second: Widget, axis?: Axis, fixedPane?: "first" | "second", fixedExtent?: number, dividerExtent?: number, fallbackFlexibleExtent?: number): Widget;
-
 export interface FixedPaneSplitOptions {
   axis?: Axis;
   fixedPane?: "first" | "second";
@@ -2290,8 +2163,6 @@ export interface FixedPaneSplitOptions {
 }
 
 export function fixedPaneSplit(first: Widget, divider: Widget, second: Widget, options?: FixedPaneSplitOptions): Widget;
-
-export function FramedField(child: Widget, name?: string, description?: string, padding?: number, minHeight?: number, fillWidth?: boolean, focused?: State | boolean | number, invalid?: State | boolean | number): Widget;
 
 export interface FramedFieldOptions {
   name?: string;
@@ -2305,15 +2176,11 @@ export interface FramedFieldOptions {
 
 export function framedField(child: Widget, options?: FramedFieldOptions): Widget;
 
-export function MeasuredBottomDock(body: Widget, bottom: Widget, fallbackSize?: Size): Widget;
-
 export interface MeasuredBottomDockOptions {
   fallbackSize?: Size;
 }
 
 export function measuredBottomDock(body: Widget, bottom: Widget, options?: MeasuredBottomDockOptions): Widget;
-
-export function PlacementBadge(label: State | BindingValue, icon?: IconGlyph | string, tone?: SemanticTone | string, current?: number, target?: number, minWidth?: number): Widget;
 
 export interface PlacementBadgeOptions {
   icon?: IconGlyph | string;
@@ -2325,8 +2192,6 @@ export interface PlacementBadgeOptions {
 
 export function placementBadge(label: State | BindingValue, options?: PlacementBadgeOptions): Widget;
 
-export function PropertyRow(label: string, control: Widget, stacked?: boolean, labelWidth?: number, controlWidth?: number, gap?: number): Widget;
-
 export interface PropertyRowOptions {
   stacked?: boolean;
   labelWidth?: number;
@@ -2336,16 +2201,12 @@ export interface PropertyRowOptions {
 
 export function propertyRow(label: string, control: Widget, options?: PropertyRowOptions): Widget;
 
-export function SectionLabel(label: string, semanticName?: string, color?: Color): Widget;
-
 export interface SectionLabelOptions {
   semanticName?: string;
   color?: Color;
 }
 
 export function sectionLabel(label: string, options?: SectionLabelOptions): Widget;
-
-export function SideSheet(title: string, body: Widget, description?: string, open?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, placement?: "left" | "right", width?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
 
 export interface SideSheetOptions {
   description?: string;
@@ -2356,12 +2217,10 @@ export interface SideSheetOptions {
   width?: number;
   headerAction?: Widget;
   actions?: Widget[];
-  onDismiss?: () => void;
+  onDismiss?: () => void | Promise<void>;
 }
 
 export function sideSheet(title: string, body: Widget, options?: SideSheetOptions): Widget;
-
-export function BottomSheet(title: string, body: Widget, description?: string, open?: State | boolean | number, modal?: boolean, dismissOnScrim?: boolean, height?: number, headerAction?: Widget, actions?: Widget[], onDismiss?: () => void): Widget;
 
 export interface BottomSheetOptions {
   description?: string;
@@ -2371,12 +2230,10 @@ export interface BottomSheetOptions {
   height?: number;
   headerAction?: Widget;
   actions?: Widget[];
-  onDismiss?: () => void;
+  onDismiss?: () => void | Promise<void>;
 }
 
 export function bottomSheet(title: string, body: Widget, options?: BottomSheetOptions): Widget;
-
-export function SplitView(first: Widget, second: Widget, axis?: Axis, name?: string, ratio?: State | number | boolean, minFirst?: number, minSecond?: number, dividerThickness?: number, onChange?: (ratio: number) => void): Widget;
 
 export interface SplitViewOptions {
   axis?: Axis;
@@ -2385,20 +2242,16 @@ export interface SplitViewOptions {
   minFirst?: number;
   minSecond?: number;
   dividerThickness?: number;
-  onChange?: (ratio: number) => void;
+  onChange?: (ratio: number) => void | Promise<void>;
 }
 
 export function splitView(first: Widget, second: Widget, options?: SplitViewOptions): Widget;
-
-export function SwitchView(children: Widget[], selected?: State | number | boolean): Widget;
 
 export interface SwitchViewOptions {
   selected?: State | number | boolean;
 }
 
 export function switchView(children: Widget[], options?: SwitchViewOptions): Widget;
-
-export function TrailingSlotRow(body: Widget, trailing: Widget, trailingWidth?: number, trailingHeight?: number, gap?: number): Widget;
 
 export interface TrailingSlotRowOptions {
   trailingWidth?: number;
@@ -2437,8 +2290,6 @@ export class FloatingWorkspaceState {
   bringToFront(id: string): boolean;
   setMaximized(id: string, maximized: boolean): boolean;
 }
-
-export function FloatingWorkspace(state: FloatingWorkspaceState, views: FloatingView[], name?: string): Widget;
 
 export interface FloatingWorkspaceOptions {
   name?: string;
@@ -2485,23 +2336,17 @@ export class DockPanelSpec {
   readonly title: string;
 }
 
-export function DockWorkspace(state: DockState, panels: DockPanelSpec[], name?: string): Widget;
-
 export interface DockWorkspaceOptions {
   name?: string;
 }
 
 export function dockWorkspace(state: DockState, panels: DockPanelSpec[], options?: DockWorkspaceOptions): Widget;
 
-export function FloatingStack(windows: FloatingStackWindow[], name?: string): Widget;
-
 export interface FloatingStackOptions {
   name?: string;
 }
 
 export function floatingStack(windows: FloatingStackWindow[], options?: FloatingStackOptions): Widget;
-
-export function VirtualScrollView(children: Widget[], name?: string, padding?: number, gap?: number, controller?: ScrollController): Widget;
 
 export interface VirtualScrollViewOptions {
   name?: string;
@@ -2512,13 +2357,11 @@ export interface VirtualScrollViewOptions {
 
 export function virtualScrollView(children: Widget[], options?: VirtualScrollViewOptions): Widget;
 
-export function ReorderableList(name: string, children: Widget[], gap?: number, dragThreshold?: number, previewLabel?: string, onReorder?: (item: number, fromIndex: number, toIndex: number) => void): Widget;
-
 export interface ReorderableListOptions {
   gap?: number;
   dragThreshold?: number;
   previewLabel?: string;
-  onReorder?: (item: number, fromIndex: number, toIndex: number) => void;
+  onReorder?: (item: number, fromIndex: number, toIndex: number) => void | Promise<void>;
 }
 
 export function reorderableList(name: string, children: Widget[], options?: ReorderableListOptions): Widget;

@@ -114,16 +114,16 @@ call out platform or stability limits.
 ## Python and JavaScript
 
 Native bindings implement the same high-level ownership model but are alpha.
-The Python package is published on PyPI as `sinomo-ui`; the Node/Electron
-package is not published yet:
+The Python package is published on PyPI as `sinomo-ui`; the JavaScript
+package, which runs on Node/Electron and in browsers, is not published yet:
 
 - [Python/PyO3 guide](../crates/sui-python/README.md)
-- [Node/Electron napi-rs guide](../crates/sui-js/README.md)
+- [JavaScript guide](../crates/sui-js/README.md)
 
 Both expose normal desktop execution and a host-driven mode for embedding or
 tests. They do not expose arbitrary runtime-graph mutation as the default API.
-Browser JavaScript/WASM bindings, package publication, custom user WGSL, and
-zero-copy external-surface composition remain roadmap items; see the
+npm publication, custom user WGSL, and zero-copy external-surface composition
+remain roadmap items; see the
 [active binding plan](./plans/cross-language-bindings-plan.md).
 
 ## Stability boundary

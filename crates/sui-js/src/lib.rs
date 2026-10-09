@@ -8,6 +8,7 @@
 mod compatibility_tests;
 
 use std::{
+    cell::RefCell,
     collections::HashMap,
     fs,
     sync::{Arc, Mutex},
@@ -35,22 +36,23 @@ use sui_bindings_core::{
     BindingMasterDetailState, BindingMenuItem, BindingMessageAction, BindingModifiers,
     BindingNotificationCenter, BindingNumber, BindingNumberAction, BindingPixelCanvasExport,
     BindingPixelCanvasState, BindingPointerButton, BindingPointerEvent, BindingPointerEventKind,
-    BindingPointerKind, BindingRawMouseMotionEvent, BindingReactiveInvalidationTrace,
-    BindingRenderOptions, BindingRenderSnapshot, BindingReorderAction,
-    BindingResponsiveSidebarState, BindingRichDocument, BindingRichDocumentUpdate, BindingRuntime,
-    BindingScrollAxes, BindingScrollController, BindingScrollDelta, BindingSegmentedControlItem,
-    BindingSelectAction, BindingSemanticNode, BindingSemanticQuery, BindingShader, BindingSpring,
-    BindingState, BindingStateSubscription, BindingStatusBarSegment, BindingStringAction,
-    BindingStringsAction, BindingTableColumn, BindingTableRow, BindingText,
-    BindingTextFieldOptions, BindingTextSpan, BindingTheme, BindingTimer, BindingToolPaletteItem,
-    BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue, BindingVirtualListItem,
-    BindingVirtualListModel, BindingWidget, BindingWidgetBuilder, BindingWidgetRebuildTrace,
-    BindingWidgetTiming, BindingWindow, BindingWindowEvent, BindingWindowId, ExternalBackendHandle,
-    ExternalSync, ExternalTextureDescriptor, ExternalTextureFormat, ExternalTextureValidationError,
-    ForeignArrangeCtx, ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx,
-    ForeignMeasureCtx, ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
+    BindingPointerKind, BindingPumpStatus, BindingRawMouseMotionEvent,
+    BindingReactiveInvalidationTrace, BindingRenderOptions, BindingRenderSnapshot,
+    BindingReorderAction, BindingResponsiveSidebarState, BindingRichDocument,
+    BindingRichDocumentUpdate, BindingRuntime, BindingScrollAxes, BindingScrollController,
+    BindingScrollDelta, BindingSegmentedControlItem, BindingSelectAction, BindingSemanticNode,
+    BindingSemanticQuery, BindingShader, BindingSpring, BindingState, BindingStateSubscription,
+    BindingStatusBarSegment, BindingStringAction, BindingStringsAction, BindingTableColumn,
+    BindingTableRow, BindingText, BindingTextFieldOptions, BindingTextSpan, BindingTheme,
+    BindingToolPaletteItem, BindingTransition, BindingTreeItem, BindingUiHandle, BindingValue,
+    BindingVirtualListItem, BindingVirtualListModel, BindingWidget, BindingWidgetBuilder,
+    BindingWidgetRebuildTrace, BindingWidgetTiming, BindingWindow, BindingWindowEvent,
+    BindingWindowId, ExternalBackendHandle, ExternalSync, ExternalTextureDescriptor,
+    ExternalTextureFormat, ExternalTextureValidationError, ForeignArrangeCtx,
+    ForeignCallbackFailure, ForeignCallbackResult, ForeignEventCtx, ForeignMeasureCtx,
+    ForeignPaintCtx, ForeignSemanticsCtx, ForeignWidget, ForeignWidgetCallbacks,
     NativeGraphicsBackend, PaintCommand, PaintCommandBuilder, PaintValidationError,
-    RendererInteropCapabilities, RendererInteropTier, UiTaskQueue, binding_alignment_from_name,
+    RendererInteropCapabilities, RendererInteropTier, binding_alignment_from_name,
     binding_aspect_ratio_fit_from_name, binding_button_appearance_from_name,
     binding_clipboard_text, binding_easing_from_name, binding_file_dialog_mode_from_name,
     binding_flex_justify_from_name, binding_grid_track_from_name, binding_icon_glyph_from_name,
@@ -81,6 +83,8 @@ use sui_crate::{
 type JsStateSelector<'env> =
     Function<'env, FnArgs<(Either3<String, f64, bool>,)>, Either3<String, f64, bool>>;
 type JsValueCallback<'env> = Function<'env, FnArgs<(Either3<String, f64, bool>,)>, ()>;
+/// Receives a file dialog's chosen paths, or an error message.
+type JsFileDialogCallback<'env> = Function<'env, FnArgs<(Option<Vec<String>>, Option<String>)>, ()>;
 type JsArrangeCallback<'env> =
     Function<'env, FnArgs<(JsRect, Vec<JsSize>)>, Vec<ClassInstance<'env, JsRect>>>;
 
@@ -3122,18 +3126,11 @@ impl JsApp {
             .map_err(napi_runtime_error)
     }
 
-    #[napi]
-    pub fn run(&self) -> Result<()> {
-        recover_lock(&self.inner).run().map_err(napi_runtime_error)
-    }
-
-    #[napi(js_name = "runWithHandle")]
-    pub fn run_with_handle(&self, callback: Function<'_, JsUiHandle, ()>) -> Result<()> {
-        recover_lock(&self.inner)
-            .run_with_handle(move |handle| {
-                let _ = callback.call(JsUiHandle { inner: handle });
-            })
-            .map_err(napi_runtime_error)
+    /// Open the app's windows without blocking. The JavaScript layer drives
+    /// the returned app from the host's event loop with `pump`.
+    #[napi(js_name = "startPumped")]
+    pub fn start_pumped(&self) -> Result<JsPumpedApp> {
+        start_pumped_app(&recover_lock(&self.inner))
     }
 
     #[napi(getter)]
@@ -3149,6 +3146,147 @@ impl JsApp {
     #[napi(getter)]
     pub fn font_resource_count(&self) -> u32 {
         recover_lock(&self.inner).font_resource_count() as u32
+    }
+}
+
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+fn start_pumped_app(app: &BindingApp) -> Result<JsPumpedApp> {
+    let mut ui = None;
+    let inner = app
+        .start_pumped_with_handle(|handle| ui = Some(handle))
+        .map_err(napi_runtime_error)?;
+    let ui = ui.ok_or_else(|| napi_runtime_error("the app did not provide a UI handle"))?;
+    Ok(JsPumpedApp {
+        inner: RefCell::new(inner),
+        ui,
+        timer_resolution: RefCell::new(Some(TimerResolution::fine())),
+    })
+}
+
+/// Fine-grained system timers while an app runs. Node's timers schedule the
+/// app's event-loop turns, and Windows rounds their waits up to its default
+/// 15.6 ms tick, which would halve animation frame rates. Browsers raise the
+/// resolution the same way while they are active.
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+struct TimerResolution;
+
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+impl TimerResolution {
+    fn fine() -> Self {
+        #[cfg(target_os = "windows")]
+        // SAFETY: `timeBeginPeriod` has no memory-safety preconditions; the
+        // matching `timeEndPeriod` runs on drop.
+        unsafe {
+            windows_timer::timeBeginPeriod(1);
+        }
+        Self
+    }
+}
+
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+impl Drop for TimerResolution {
+    fn drop(&mut self) {
+        #[cfg(target_os = "windows")]
+        // SAFETY: balances the `timeBeginPeriod(1)` call in `fine`.
+        unsafe {
+            windows_timer::timeEndPeriod(1);
+        }
+    }
+}
+
+#[cfg(all(feature = "desktop", target_os = "windows"))]
+mod windows_timer {
+    #[link(name = "winmm")]
+    unsafe extern "system" {
+        pub fn timeBeginPeriod(period: u32) -> u32;
+        pub fn timeEndPeriod(period: u32) -> u32;
+    }
+}
+
+#[cfg(not(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+)))]
+fn start_pumped_app(_app: &BindingApp) -> Result<JsPumpedApp> {
+    Err(napi_runtime_error(
+        "running an app needs the `desktop` feature on Windows, macOS, or Linux",
+    ))
+}
+
+/// A started app driven one event-loop turn at a time. The JavaScript
+/// `App.run()` pumps it from the host's event loop; it is not exported.
+#[napi(js_name = "PumpedApp")]
+pub struct JsPumpedApp {
+    #[cfg(all(
+        feature = "desktop",
+        any(target_os = "windows", target_os = "macos", target_os = "linux")
+    ))]
+    inner: RefCell<sui_bindings_core::BindingPumpedApp>,
+    ui: BindingUiHandle,
+    #[cfg(all(
+        feature = "desktop",
+        any(target_os = "windows", target_os = "macos", target_os = "linux")
+    ))]
+    timer_resolution: RefCell<Option<TimerResolution>>,
+}
+
+#[napi]
+impl JsPumpedApp {
+    /// Process pending events and due work, waiting up to `timeoutMs` for
+    /// new events. Returns how many milliseconds until the app next needs a
+    /// turn (`Infinity`: only when events arrive), or `-1` once it exited.
+    #[napi]
+    pub fn pump(&self, timeout_ms: Option<f64>) -> Result<f64> {
+        #[cfg(all(
+            feature = "desktop",
+            any(target_os = "windows", target_os = "macos", target_os = "linux")
+        ))]
+        {
+            let timeout = timeout_ms
+                .filter(|value| value.is_finite())
+                .map(|value| std::time::Duration::from_secs_f64(value.max(0.0) / 1000.0));
+            let mut inner = self.inner.try_borrow_mut().map_err(|_| {
+                napi_runtime_error("pump() cannot be called from inside an app callback")
+            })?;
+            let status = inner.pump(timeout);
+            if !matches!(status, Ok(BindingPumpStatus::Continue { .. })) {
+                self.timer_resolution.borrow_mut().take();
+            }
+            match status.map_err(napi_runtime_error)? {
+                BindingPumpStatus::Exited => Ok(-1.0),
+                BindingPumpStatus::Continue { next_wake } => Ok(next_wake
+                    .map(|wait| wait.as_secs_f64() * 1000.0)
+                    .unwrap_or(f64::INFINITY)),
+            }
+        }
+        #[cfg(not(all(
+            feature = "desktop",
+            any(target_os = "windows", target_os = "macos", target_os = "linux")
+        )))]
+        {
+            let _ = timeout_ms;
+            Ok(-1.0)
+        }
+    }
+
+    /// The handle for requesting exit, emitting messages, and file dialogs.
+    #[napi(getter)]
+    pub fn ui_handle(&self) -> JsUiHandle {
+        JsUiHandle {
+            inner: self.ui.clone(),
+        }
     }
 }
 
@@ -3211,92 +3349,17 @@ pub struct JsFileDialogOptions {
     pub name: Option<String>,
 }
 
-/// A callback scheduled with `UiHandle.callLater` or `UiHandle.callEvery`.
-#[napi(js_name = "Timer")]
-pub struct JsTimer {
-    inner: BindingTimer,
-}
-
-#[napi]
-impl JsTimer {
-    /// Stop the timer. A callback already queued for the UI thread still runs.
-    #[napi]
-    pub fn cancel(&self) {
-        self.inner.cancel();
-    }
-
-    /// Whether the timer can still fire.
-    #[napi(getter)]
-    pub fn active(&self) -> bool {
-        self.inner.is_active()
-    }
-}
-
-fn js_timer_duration(milliseconds: f64, name: &str) -> Result<std::time::Duration> {
-    if !milliseconds.is_finite() || milliseconds < 0.0 {
-        return Err(napi_invalid_arg(format!(
-            "{name} must be a finite, non-negative number of milliseconds"
-        )));
-    }
-    Ok(std::time::Duration::from_secs_f64(milliseconds / 1000.0))
-}
-
 #[napi]
 impl JsUiHandle {
-    /// Run `callback` on the UI thread after `delayMs` milliseconds.
-    #[napi]
-    pub fn call_later(
-        &self,
-        env: Env,
-        delay_ms: f64,
-        callback: Function<'_, (), ()>,
-    ) -> Result<JsTimer> {
-        let delay = js_timer_duration(delay_ms, "delayMs")?;
-        let env = JsEnvHandle::from_env(env);
-        let callback = callback.create_ref()?;
-        Ok(JsTimer {
-            inner: self.inner.call_later(delay, move || {
-                let env = env.to_env();
-                if let Ok(callback) = callback.borrow_back(&env) {
-                    let _ = callback.call(());
-                }
-            }),
-        })
-    }
-
-    /// Run `callback` on the UI thread every `intervalMs` milliseconds until
-    /// the returned timer is cancelled.
-    #[napi]
-    pub fn call_every(
-        &self,
-        env: Env,
-        interval_ms: f64,
-        callback: Function<'_, (), ()>,
-    ) -> Result<JsTimer> {
-        let interval = js_timer_duration(interval_ms, "intervalMs")?;
-        if interval.is_zero() {
-            return Err(napi_invalid_arg("intervalMs must be greater than zero"));
-        }
-        let env = JsEnvHandle::from_env(env);
-        let callback = Arc::new(callback.create_ref()?);
-        Ok(JsTimer {
-            inner: self.inner.call_every(interval, move || {
-                let env = env.to_env();
-                if let Ok(callback) = callback.borrow_back(&env) {
-                    let _ = callback.call(());
-                }
-            }),
-        })
-    }
-
-    /// Show a native file dialog. `onResult` runs on the UI thread with the
-    /// chosen paths, or `null` when the user cancels.
+    /// Show a native file dialog. `onResult` runs with the chosen paths, or
+    /// `null` when the user cancels, and an error message when the dialog
+    /// could not be shown.
     #[napi]
     pub fn show_file_dialog(
         &self,
         env: Env,
         options: Option<JsFileDialogOptions>,
-        on_result: Function<'_, FnArgs<(Option<Vec<String>>,)>, ()>,
+        on_result: JsFileDialogCallback<'_>,
     ) -> Result<()> {
         let options = options.unwrap_or(JsFileDialogOptions {
             mode: None,
@@ -3327,47 +3390,40 @@ impl JsUiHandle {
         self.inner.show_file_dialog(request, move |result| {
             let env = env.to_env();
             if let Ok(on_result) = on_result.borrow_back(&env) {
-                let paths = result.ok().flatten().map(|paths| {
-                    paths
-                        .iter()
-                        .map(|path| path.to_string_lossy().into_owned())
-                        .collect::<Vec<_>>()
-                });
-                let _ = on_result.call(FnArgs::from((paths,)));
+                let (paths, error) = match result {
+                    Ok(paths) => (
+                        paths.map(|paths| {
+                            paths
+                                .iter()
+                                .map(|path| path.to_string_lossy().into_owned())
+                                .collect::<Vec<_>>()
+                        }),
+                        None,
+                    ),
+                    Err(error) => (None, Some(error)),
+                };
+                let _ = on_result.call(FnArgs::from((paths, error)));
             }
         });
         Ok(())
     }
 
-    /// Ask the running desktop event loop to exit. Returns `false` when no
-    /// event loop is running.
+    /// Ask the running app to exit. Returns `false` when it is not running.
     #[napi]
     pub fn request_exit(&self) -> bool {
         self.inner.request_exit()
     }
 
     #[napi]
-    pub fn post(&self, env: Env, callback: Function<'_, (), ()>) -> Result<()> {
-        let env = JsEnvHandle::from_env(env);
-        let callback = callback.create_ref()?;
-        self.inner.post(move || {
-            let env = env.to_env();
-            if let Ok(callback) = callback.borrow_back(&env) {
-                let _ = callback.call(());
-            }
-        });
-        Ok(())
-    }
-
-    #[napi(getter)]
-    pub fn pending_count(&self) -> u32 {
-        self.inner.pending_count() as u32
-    }
-
-    #[napi]
     pub fn emit(&self, name: String, payload: Either3<String, f64, bool>) -> bool {
         self.inner.emit(name, binding_value_from_js(payload))
     }
+}
+
+/// The version of the native module; the package exports it as `version`.
+#[napi(js_name = "nativeVersion")]
+pub fn js_native_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 /// Text on the clipboard: the system clipboard on desktop hosts with a
@@ -3897,7 +3953,7 @@ impl JsRunningApp {
         recover_lock(&self.inner).window_count() as u32
     }
 
-    #[napi(js_name = "windowId")]
+    #[napi(js_name = "windowHandle")]
     pub fn window_id(&self, index: u32) -> Result<JsWindowHandle> {
         recover_lock(&self.inner)
             .window_id_at(index as usize)
@@ -4388,12 +4444,15 @@ impl JsObjectCallbacks {
         if !object.has_named_property("event")? {
             return Ok(false);
         }
-        let event_fn: Function<'_, FnArgs<(JsEvent, JsEventContext)>, bool> =
+        // `undefined` (no return value) means the event was not handled.
+        let event_fn: Function<'_, FnArgs<(JsEvent, JsEventContext)>, Option<bool>> =
             object.get_named_property("event")?;
-        event_fn.apply(
-            object,
-            FnArgs::from((JsEvent::from_binding(BindingEvent::from(event)), context)),
-        )
+        event_fn
+            .apply(
+                object,
+                FnArgs::from((JsEvent::from_binding(BindingEvent::from(event)), context)),
+            )
+            .map(|handled| handled.unwrap_or(false))
     }
 
     fn call_measure(&self, constraints: Constraints, child_sizes: &[Size]) -> Result<Size> {
@@ -4484,58 +4543,6 @@ impl JsObjectCallbacks {
         let env = self.env.to_env();
         let object = self.object(&env)?;
         object.get("name")
-    }
-}
-
-#[napi(js_name = "UiTaskQueue")]
-#[derive(Clone)]
-pub struct JsUiTaskQueue {
-    inner: UiTaskQueue,
-}
-
-#[napi]
-impl JsUiTaskQueue {
-    #[napi(constructor)]
-    pub fn new() -> Self {
-        Self {
-            inner: UiTaskQueue::new(),
-        }
-    }
-
-    #[napi]
-    pub fn post(&self, env: Env, callback: Function<'_, (), ()>) -> Result<()> {
-        let env = JsEnvHandle::from_env(env);
-        let callback = callback.create_ref()?;
-        self.inner.post(move || {
-            let env = env.to_env();
-            if let Ok(callback) = callback.borrow_back(&env) {
-                let _ = callback.call(());
-            }
-        });
-        Ok(())
-    }
-
-    #[napi]
-    pub fn drain(&self) -> u32 {
-        self.inner.drain() as u32
-    }
-
-    #[napi(getter)]
-    pub fn pending_count(&self) -> u32 {
-        self.inner.pending_count() as u32
-    }
-}
-
-impl Default for JsUiTaskQueue {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl JsUiTaskQueue {
-    #[cfg(test)]
-    fn post_rust_for_test(&self, task: impl FnOnce() + Send + 'static) {
-        self.inner.post(task);
     }
 }
 
@@ -5676,10 +5683,7 @@ impl PaintCommandBuilderIntrospection for PaintCommandBuilder {
 mod tests {
     use std::{
         fs,
-        sync::{
-            Arc, Mutex,
-            atomic::{AtomicUsize, Ordering},
-        },
+        sync::{Arc, Mutex},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -6455,21 +6459,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(text.text(), "a");
-    }
-
-    #[test]
-    fn ui_task_queue_drains_posted_tasks() {
-        let queue = JsUiTaskQueue::new();
-        let count = Arc::new(AtomicUsize::new(0));
-        let count_for_task = Arc::clone(&count);
-        queue.post_rust_for_test(move || {
-            count_for_task.fetch_add(1, Ordering::SeqCst);
-        });
-
-        assert_eq!(queue.pending_count(), 1);
-        assert_eq!(queue.drain(), 1);
-        assert_eq!(queue.pending_count(), 0);
-        assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 
     #[test]

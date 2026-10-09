@@ -20,6 +20,8 @@ pub(crate) struct RustSource {
     pub python_classes: BTreeSet<(String, String)>,
     pub js_functions: BTreeSet<(String, String)>,
     pub js_classes: BTreeSet<(String, String)>,
+    pub web_functions: BTreeSet<(String, String)>,
+    pub web_classes: BTreeSet<(String, String)>,
     pub registered_functions: BTreeSet<String>,
     pub registered_classes: BTreeSet<String>,
     pub fixtures: BTreeMap<String, String>,
@@ -83,7 +85,10 @@ impl RustSource {
                         self.python_classes.insert((export, name.clone()));
                     }
                     if let Some(export) = attribute_name(&value.attrs, "napi", "js_name") {
-                        self.js_classes.insert((export, name));
+                        self.js_classes.insert((export, name.clone()));
+                    }
+                    if let Some(export) = attribute_name(&value.attrs, "wasm_bindgen", "js_name") {
+                        self.web_classes.insert((export, name));
                     }
                 }
                 Item::Enum(value) if !tests => {
@@ -104,7 +109,12 @@ impl RustSource {
                             self.python_functions.insert((export, name.clone()));
                         }
                         if let Some(export) = attribute_name(&value.attrs, "napi", "js_name") {
-                            self.js_functions.insert((export, name));
+                            self.js_functions.insert((export, name.clone()));
+                        }
+                        if let Some(export) =
+                            attribute_name(&value.attrs, "wasm_bindgen", "js_name")
+                        {
+                            self.web_functions.insert((export, name));
                         }
                     }
                 }
@@ -327,7 +337,7 @@ pub(crate) fn typescript_exports(source: &str) -> BTreeSet<(String, String)> {
                 offset += 1;
             }
             if let (Some(kind), Some(name)) = (tokens.get(offset), tokens.get(offset + 1))
-                && matches!(kind.as_str(), "class" | "function")
+                && matches!(kind.as_str(), "class" | "function" | "const")
             {
                 exports.insert((kind.clone(), name.clone()));
             }
@@ -427,10 +437,18 @@ fn attribute_name(attrs: &[syn::Attribute], attribute: &str, key: &str) -> Optio
         for entry in entries {
             if let Meta::NameValue(value) = entry
                 && value.path.is_ident(key)
-                && let syn::Expr::Lit(expr) = value.value
-                && let syn::Lit::Str(value) = expr.lit
             {
-                return Some(value.value());
+                match value.value {
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(value),
+                        ..
+                    }) => return Some(value.value()),
+                    // wasm-bindgen also accepts bare identifiers.
+                    syn::Expr::Path(path) => {
+                        return path.path.get_ident().map(ToString::to_string);
+                    }
+                    _ => {}
+                }
             }
         }
     }

@@ -111,9 +111,9 @@ service, subject to browser user-activation and security policy. Files expose
 byte-oriented `read`/`write` operations rather than host filesystem paths, and
 folder selection is intentionally unavailable.
 
-The Rust/Wasm application surface is implemented. The workspace's native
-JavaScript binding targets Node/Electron; it is not a browser JavaScript/DOM
-binding.
+The Rust/Wasm application surface is implemented. The JavaScript package
+also runs in the browser through its WebAssembly build, drawing on a canvas;
+it is not a DOM binding.
 
 ## Android
 
@@ -200,8 +200,8 @@ not compile target-specific WebAssembly or Android code.
 
 ## Binding Packages
 
-The Rust facade is the stable center of this guide. Native Python and
-Node/Electron crates are present as alpha surfaces but are not registry
-packages and have their own host-driven API details. See the binding READMEs in
-`crates/sui-python` and `crates/sui-js` when shipping those artifacts; do not
-infer browser JavaScript or Python wheel availability from the Rust features.
+The Rust facade is the stable center of this guide. The Python package is
+published on PyPI as `sinomo-ui`; the JavaScript package (a Node/Electron
+addon and a browser WebAssembly build) is an alpha surface that is not on npm
+yet. Both have their own host-driven API details; see the binding READMEs in
+`crates/sui-python` and `crates/sui-js`.
