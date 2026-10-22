@@ -2,24 +2,27 @@ import sinomo_ui as sui
 
 
 class Meter:
-    name = "CPU meter"
+    name = "Level meter"
 
     def __init__(self, value, marker):
         self.value = value
         self.marker = marker
-        self.events = []
 
     def measure(self, constraints):
         return constraints.clamp(sui.Size(160, 28))
 
-    def event(self, event):
-        self.events.append((event.kind, event.action))
-        return True
+    def event_with_context(self, event, context):
+        if event.kind == "pointer" and event.action == "down" and event.button == "primary":
+            bounds = context.bounds
+            self.value = max(0.0, min(1.0, (event.position.x - bounds.x) / bounds.width))
+            context.request_semantics()
+            return True  # Mark the event handled and repaint.
+        return False
 
     def semantics(self, semantics):
         semantics.node(
             role="progress_bar",
-            name="CPU meter",
+            name=self.name,
             value=self.value,
             min_value=0.0,
             max_value=1.0,
@@ -54,22 +57,19 @@ app = sui.App()
 marker = app.rgba_image(2, 1, bytes([255, 255, 255, 255, 80, 180, 255, 255]))
 meter = Meter(0.62, marker)
 app.window(
-    sui.Window("Custom widget").root(
-        sui.column(
-            [
-                sui.Widget(meter),
-                sui.label("Host-driven custom widget"),
-            ],
-            gap=8,
+    sui.Window("Custom widget", size=sui.Size(320, 160)).root(
+        sui.surface(
+            sui.column(
+                [sui.Widget(meter), sui.label("Click the meter to change its level.")],
+                gap=16,
+            ),
+            role="window",
+            padding=16,
+            fill_width=True,
+            fill_height=True,
         )
     )
 )
 
-running = app.start()
-snapshot = running.render()
-print("commands:", snapshot.command_count)
-print("images:", snapshot.draw_image_count, snapshot.registered_image_count)
-running.handle_event(
-    sui.Event.pointer("down", sui.Point(12, 12), button="primary", buttons=1)
-)
-print("events:", meter.events)
+if __name__ == "__main__":
+    app.run()

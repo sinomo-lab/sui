@@ -18,13 +18,19 @@ count = sui.State(0)
 app = sui.App()
 app.window(
     sui.Window("Counter", size=sui.Size(320, 160)).root(
-        sui.column(
-            [
-                sui.label(count),
-                sui.button("Add one", on_press=lambda: count.set(count.get() + 1)),
-            ],
-            gap=8,
-            align_items="center",
+        sui.surface(
+            sui.column(
+                [
+                    sui.label(count),
+                    sui.button("Add one", on_press=lambda: count.set(count.get() + 1)),
+                ],
+                gap=8,
+                align_items="center",
+            ),
+            role="window",
+            padding=16,
+            fill_width=True,
+            fill_height=True,
         )
     )
 )
@@ -35,6 +41,13 @@ The distribution is `sinomo-ui`; import the `sinomo_ui` package, which the
 examples alias as `sui`. Widget factories are `snake_case` functions such as
 `sui.label(...)`, and classes such as `sui.App` and `sui.State` are
 `PascalCase`. The package is fully typed (`py.typed`).
+
+The root `surface` explicitly paints the active theme's window background.
+`fill_width=True` and `fill_height=True` make it fill the available space;
+`padding=16` insets the controls. Window backgrounds are opt-in, so embedded
+widget trees can leave their surroundings unpainted. Use
+`sui.background(child, color)` for a fixed-color background over a child's
+bounds; themed surfaces follow live theme changes.
 
 ## Platforms
 
@@ -73,12 +86,18 @@ import sinomo_ui as sui
 app = sui.App()
 app.window(
     sui.Window("Hello from Python").root(
-        sui.column(
-            [
-                sui.label("Ready"),
-                sui.button("Close terminal with Ctrl+C", on_press=lambda: None),
-            ],
-            gap=8,
+        sui.surface(
+            sui.column(
+                [
+                    sui.label("Ready"),
+                    sui.button("Close terminal with Ctrl+C", on_press=lambda: None),
+                ],
+                gap=8,
+            ),
+            role="window",
+            padding=16,
+            fill_width=True,
+            fill_height=True,
         )
     )
 )
@@ -540,13 +559,13 @@ uv run --project crates/sui-python python crates/sui-python/examples/custom_widg
 uv run --project crates/sui-python python crates/sui-python/examples/external_surface.py
 ```
 
-The examples deliberately use `App.start()`. They render in process and print
-snapshot or event information; they do not open desktop windows.
+Each example calls `App.run()` and opens a desktop window with an explicitly
+painted background. Close the window to exit.
 
-- [`counter.py`](https://github.com/sinomo-lab/sui/blob/main/crates/sui-python/examples/counter.py) covers `State`, built-in controls, a
-  posted UI task, and rerendering.
+- [`counter.py`](https://github.com/sinomo-lab/sui/blob/main/crates/sui-python/examples/counter.py) counts button presses, enables or disables
+  the button, and switches between light and dark themes.
 - [`custom_widget.py`](https://github.com/sinomo-lab/sui/blob/main/crates/sui-python/examples/custom_widget.py) supplies Python measurement,
-  event, semantics, and paint callbacks.
+  event, semantics, and paint callbacks for a clickable meter.
 - [`external_surface.py`](https://github.com/sinomo-lab/sui/blob/main/crates/sui-python/examples/external_surface.py) renders a CPU-RGBA
   texture through `ExternalSurface`.
 
@@ -559,8 +578,8 @@ cargo test -p sinomo-ui-python
 ```
 
 The Python test suite runs against the extension built by `uv sync` or
-`uv run maturin develop --uv`, from `crates/sui-python`. It includes the
-examples:
+`uv run maturin develop --uv`, from `crates/sui-python`. It checks example
+rendering and interactions through `App.start()` without opening windows:
 
 ```bash
 uv run pytest

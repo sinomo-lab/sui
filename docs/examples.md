@@ -198,13 +198,13 @@ To run them against the checkout instead, build the extension with `uv sync`
 in `crates/sui-python`, as the [Python guide](../crates/sui-python/README.md)
 describes, and prefix each command with `uv run --project crates/sui-python`.
 
-The examples use `App.start()` and render in process, so they print snapshot
-and event information instead of opening windows:
+Each example calls `App.run()` and opens a desktop window. Close the window
+to exit:
 
 - [`counter.py`](../crates/sui-python/examples/counter.py) uses binding state,
-  built-in controls, and a posted UI task;
+  built-in controls, and a live light/dark theme switch;
 - [`custom_widget.py`](../crates/sui-python/examples/custom_widget.py) defines
-  measurement, painting, semantics, and event callbacks in Python;
+  measurement, painting, semantics, and click handling for a meter in Python;
 - [`external_surface.py`](../crates/sui-python/examples/external_surface.py)
   renders the portable CPU-RGBA external-surface path.
 

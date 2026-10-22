@@ -5,7 +5,17 @@ Import the package under a short alias::
     import sinomo_ui as sui
 
     app = sui.App()
-    app.window(sui.Window("Hello").root(sui.label("Ready")))
+    app.window(
+        sui.Window("Hello").root(
+            sui.surface(
+                sui.label("Ready"),
+                role="window",
+                padding=16,
+                fill_width=True,
+                fill_height=True,
+            )
+        )
+    )
     app.run()
 """
 
