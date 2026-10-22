@@ -5,6 +5,8 @@ name: Python package
 # - pushing a `v*` release tag publishes to PyPI;
 # - running the workflow manually with `publish: testpypi` rehearses the
 #   release on TestPyPI.
+# - `publish: pypi-sdist` repairs a missing sdist from a release tag plus
+#   packaging-only changes, without building or uploading wheels.
 
 on:
   push:
@@ -16,7 +18,7 @@ on:
       publish:
         description: Publish the built artifacts
         type: choice
-        options: [none, testpypi]
+        options: [none, testpypi, pypi-sdist]
         default: none
 
 permissions:
@@ -32,6 +34,7 @@ env:
 jobs:
   wheels:
     name: Wheel (${{ matrix.platform }})
+    if: inputs.publish != 'pypi-sdist'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -81,12 +84,39 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Check recovery source against the original release
+        if: inputs.publish == 'pypi-sdist'
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          git fetch --no-tags origin "refs/tags/v$version:refs/tags/v$version"
+          git diff --exit-code "v$version" HEAD -- . \
+            ':!.github/workflows/python.yml' \
+            ':!crates/sui-python/Cargo.toml' \
+            ':!crates/sui-python/pyproject.toml' \
+            ':!crates/sui-python/LICENSE' \
+            ':!crates/sui-python/packaging' \
+            ':!crates/sui-python/README.md'
+
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
           working-directory: crates/sui-python
           command: sdist
           args: --out dist
+
+      - name: Validate sdist contents and metadata
+        run: |
+          python -m pip install 'packaging>=24.2' 'twine>=6.1'
+          python -m unittest discover -s crates/sui-python/packaging -v
+          version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          python crates/sui-python/packaging/check_sdist.py \
+            crates/sui-python/dist/*.tar.gz --version "$version" --license LICENSE
+          python -m twine check --strict crates/sui-python/dist/*.tar.gz
 
       - name: Upload sdist
         uses: actions/upload-artifact@v4
@@ -202,4 +232,24 @@ jobs:
           merge-multiple: true
 
       - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-pypi-sdist:
+    name: Publish missing sdist to PyPI
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == 'pypi-sdist'
+    needs: sdist
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/sinomo-ui
+    permissions:
+      id-token: write
+    steps:
+      - name: Download only the validated sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+      - name: Publish only the missing sdist
         uses: pypa/gh-action-pypi-publish@release/v1
