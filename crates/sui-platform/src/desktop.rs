@@ -43,6 +43,9 @@ use accesskit_winit::{
     Adapter as AccessKitAdapter, Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent,
 };
 
+#[cfg(target_os = "windows")]
+use std::collections::HashSet;
+
 #[cfg(not(target_arch = "wasm32"))]
 use winit::window::Icon as WinitIcon;
 
@@ -718,6 +721,8 @@ struct DesktopApp {
     host_lifecycle: HostLifecycle,
     windows: HashMap<WindowId, WindowState>,
     host_to_runtime: HashMap<HostWindowId, WindowId>,
+    #[cfg(target_os = "windows")]
+    closing_windows: HashSet<HostWindowId>,
     last_error: Option<Error>,
     external_wake_pending: Arc<AtomicBool>,
     reactive_wake_pending: Arc<AtomicBool>,
@@ -918,6 +923,8 @@ impl DesktopApp {
             host_lifecycle: HostLifecycle::default(),
             windows: HashMap::new(),
             host_to_runtime: HashMap::new(),
+            #[cfg(target_os = "windows")]
+            closing_windows: HashSet::new(),
             last_error: None,
             next_wake: Cell::new(None),
             #[cfg(target_arch = "wasm32")]
@@ -1061,6 +1068,10 @@ impl DesktopApp {
 
         for window_id in removed_ids {
             if let Some(mut window) = self.windows.remove(&window_id) {
+                // Winit posts window destruction to the Windows message queue.
+                // Keep pumping until Destroyed arrives, even for the last window.
+                #[cfg(target_os = "windows")]
+                self.closing_windows.insert(window.window.id());
                 release_host_cursor(&mut window);
                 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
                 crate::file_dialog::unregister_native_file_dialog_parent(window_id);
@@ -1221,11 +1232,21 @@ impl DesktopApp {
             }
         }
 
-        if self.windows.is_empty() {
-            event_loop.exit();
-        }
+        self.exit_if_windows_closed(event_loop);
 
         Ok(())
+    }
+
+    fn exit_if_windows_closed(&self, event_loop: &ActiveEventLoop) {
+        if !self.windows.is_empty() {
+            return;
+        }
+        #[cfg(target_os = "windows")]
+        if !self.closing_windows.is_empty() {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            return;
+        }
+        event_loop.exit();
     }
 
     fn drive_runtime(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
@@ -1399,7 +1420,7 @@ impl DesktopApp {
 
     fn update_control_flow(&self, event_loop: &ActiveEventLoop) -> Result<()> {
         if self.windows.is_empty() {
-            event_loop.exit();
+            self.exit_if_windows_closed(event_loop);
             return Ok(());
         }
 
@@ -1550,9 +1571,7 @@ impl DesktopApp {
             self.sync_extensions()?;
         }
 
-        if self.windows.is_empty() {
-            event_loop.exit();
-        }
+        self.exit_if_windows_closed(event_loop);
 
         Ok(handled)
     }
@@ -2819,6 +2838,11 @@ impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
         window_id: HostWindowId,
         event: WinitWindowEvent,
     ) {
+        #[cfg(target_os = "windows")]
+        if matches!(event, WinitWindowEvent::Destroyed) && self.closing_windows.remove(&window_id) {
+            self.exit_if_windows_closed(event_loop);
+            return;
+        }
         if !self.host_lifecycle.is_resumed() {
             return;
         }
