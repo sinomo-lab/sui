@@ -81,12 +81,26 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
           working-directory: crates/sui-python
           command: sdist
           args: --out dist
+
+      - name: Validate sdist contents and metadata
+        run: |
+          python -m pip install 'packaging>=24.2' 'twine>=6.1'
+          python -m unittest discover -s crates/sui-python/packaging -v
+          version=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          python crates/sui-python/packaging/check_sdist.py \
+            crates/sui-python/dist/*.tar.gz --version "$version" --license LICENSE
+          python -m twine check --strict crates/sui-python/dist/*.tar.gz
 
       - name: Upload sdist
         uses: actions/upload-artifact@v4

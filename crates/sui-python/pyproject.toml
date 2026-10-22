@@ -9,6 +9,8 @@ description = "Native, GPU-rendered desktop UI toolkit for Python, built on the 
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+# PEP 639 paths are relative to pyproject.toml, including in the sdist.
+license-files = ["LICENSE"]
 authors = [{ name = "Infinity_X", email = "Infinity_X@sinomo.net" }]
 keywords = ["ui", "gui", "widgets", "wgpu", "desktop", "accessibility"]
 classifiers = [

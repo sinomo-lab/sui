@@ -502,6 +502,26 @@ Maturin prints the resulting wheel path when the build completes. Wheels use
 the stable ABI, so the `cp310-abi3` wheel installs on every supported Python
 version.
 
+### Validate source distributions
+
+The Python package keeps a copy of the workspace `LICENSE` beside
+`pyproject.toml`. Its explicit `project.license-files` entry makes maturin
+include that file at the sdist root, where `PKG-INFO` declares it. Keep the
+two license files identical when updating the license.
+
+From the workspace root, with maturin, packaging, and twine installed:
+
+```bash
+maturin sdist --manifest-path crates/sui-python/Cargo.toml --out target/python-sdist
+python -m unittest discover -s crates/sui-python/packaging -v
+python crates/sui-python/packaging/check_sdist.py target/python-sdist/sinomo_ui-0.5.0.tar.gz --version 0.5.0 --license LICENSE
+python -m twine check --strict target/python-sdist/*.tar.gz
+```
+
+The Python workflow runs these checks on every built sdist before uploading
+the artifact. The checks read the archive's `PKG-INFO`, validate its core
+metadata and filename, and require every declared license file to exist.
+
 ### Run the examples
 
 After `uv sync`, run these commands from `crates/sui-python`:
