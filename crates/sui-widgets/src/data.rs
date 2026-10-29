@@ -5300,17 +5300,10 @@ impl Widget for VirtualTable {
         let size = constraints.clamp(Size::new(desired_width, desired_height));
         let body = self.body_rect(Rect::from_origin_size(Point::ZERO, size));
         self.resolve_column_widths(ctx, body.width());
-        self.sync_retained_scroll_state(ctx, body);
-        if let Some(state) = &self.state {
-            let offset = state.scroll.current_offset();
-            self.scroll_y = offset.y;
-            self.scroll_x = offset.x;
-        }
-        self.apply_pending_keyed_scroll(body.height());
-        self.scroll_y = self.clamp_scroll(body.height(), self.scroll_y);
-        self.scroll_x = self.clamp_horizontal_scroll(body.width(), self.scroll_x);
-        self.sync_retained_offset();
-        self.publish_retained_viewport(body);
+        // Parents may measure provisional sizes before arranging the table.
+        // Publishing those viewports notifies layout observers, which then
+        // alternate between provisional and arranged sizes forever. Retained
+        // metrics, offsets and queued scrolling belong to final arrangement.
         size
     }
 
@@ -5324,6 +5317,8 @@ impl Widget for VirtualTable {
             self.scroll_x = self.clamp_horizontal_scroll(body.width(), offset.x);
         }
         self.apply_pending_keyed_scroll(body.height());
+        self.scroll_y = self.clamp_scroll(body.height(), self.scroll_y);
+        self.scroll_x = self.clamp_horizontal_scroll(body.width(), self.scroll_x);
         self.sync_retained_offset();
         self.publish_retained_viewport(body);
         if previous != Vector::new(self.scroll_x, self.scroll_y) {

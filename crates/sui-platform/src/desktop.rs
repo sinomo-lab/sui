@@ -1368,8 +1368,11 @@ impl DesktopApp {
     fn request_redraw_if_needed(&mut self, window_id: WindowId) -> Result<()> {
         // A focused VSync window must keep presenting even when its retained UI
         // is unchanged. Otherwise windowed VRR can lower the whole monitor's
-        // refresh rate while the user is interacting with an idle view.
-        let keep_presenting = self.renderer.vsync_enabled()
+        // refresh rate while the user is interacting with an idle view. Android
+        // has no shared desktop monitor to protect; continuous presentation
+        // there wastes CPU/GPU and battery even when the scene is unchanged.
+        let keep_presenting = !cfg!(target_os = "android")
+            && self.renderer.vsync_enabled()
             && self
                 .windows
                 .get(&window_id)

@@ -1015,6 +1015,11 @@ impl Tooltip {
 impl Widget for Tooltip {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         match event {
+            // Touch motion is not hover. Keeping its tooltip open can cover
+            // the menu or action that the finger just activated.
+            Event::Pointer(pointer) if pointer.pointer_kind == sui_core::PointerKind::Touch => {
+                self.set_hovered(ctx, false);
+            }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 self.set_hovered(ctx, ctx.bounds().contains(pointer.position));
             }
@@ -3358,6 +3363,13 @@ impl Widget for ContextMenu {
         }
     }
 
+    fn measure_size(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        if self.inline {
+            return self.measure(ctx, constraints);
+        }
+        constraints.clamp(self.trigger.measure_size(ctx, constraints.loosen()))
+    }
+
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         if let Some(handle) = &self.handle {
             handle.menu.set(Some(ctx.widget_id()));
@@ -3378,7 +3390,11 @@ impl Widget for ContextMenu {
         if self.open {
             let theme = self.resolved_theme();
             let pointer_anchored = self.open_position.is_some();
-            self.panels.clear();
+            // Measurement can reach a clean menu through a wrapper's size
+            // probe after arrangement. Preserve each panel's placement until
+            // arrange computes a new one; resetting it here corrupts paint,
+            // semantics and hit testing when final bounds remain cached.
+            let previous_panels = std::mem::take(&mut self.panels);
             let mut prefix = Vec::new();
             while let Some(items) = self.items_at_prefix(&prefix).map(<[MenuItem]>::to_vec) {
                 let mut width = self.measured_menu_width_for_items(ctx, &items);
@@ -3386,11 +3402,15 @@ impl Widget for ContextMenu {
                     width = width.max(trigger_size.width);
                 }
                 let height = themed_menu_height_for_rows(&theme, self.row_height(), items.len());
+                let previous = previous_panels.iter().find(|panel| panel.prefix == prefix);
                 self.panels.push(ContextMenuPanel {
                     prefix: prefix.clone(),
                     items: items.clone(),
-                    frame_rect: Rect::from_origin_size(Point::ZERO, Size::new(width, height)),
-                    opens_left: false,
+                    frame_rect: Rect::from_origin_size(
+                        previous.map_or(Point::ZERO, |panel| panel.frame_rect.origin),
+                        Size::new(width, height),
+                    ),
+                    opens_left: previous.is_some_and(|panel| panel.opens_left),
                 });
                 if prefix.len() >= self.open_path.len() {
                     break;
@@ -3421,19 +3441,7 @@ impl Widget for ContextMenu {
             } else {
                 Size::new(estimated_width, estimated_height)
             };
-            {
-                let mut state = self.surface_state.borrow_mut();
-                state.theme = theme;
-                state.panels = self.panels.clone();
-                state.highlighted = self.highlighted.clone();
-                state.highlight_visual = self.highlight_visual.clone();
-                state.pressed = self.pressed.clone();
-                state.press_visual = self.press_visual.clone();
-                state.highlight_animation = self.highlight_animation;
-                state.press_animation = self.press_animation;
-                state.surface_rect = Rect::from_origin_size(Point::ZERO, estimated_size);
-                state.row_height = self.row_height();
-            }
+            self.sync_surface_state(ctx.bounds());
             self.surface
                 .measure(ctx, Constraints::tight(estimated_size));
             self.focus_surface
