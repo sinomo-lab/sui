@@ -18,7 +18,7 @@ use callback_errors::{
 };
 use pyo3::{
     Bound, Py, PyAny, PyErr, PyResult, Python,
-    exceptions::{PyOSError, PyRuntimeError, PyValueError},
+    exceptions::{PyOSError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyBytes, PyModule},
 };
@@ -59,9 +59,9 @@ use sui_bindings_core::{
     binding_aspect_ratio_fit_from_name, binding_button_appearance_from_name,
     binding_clipboard_text, binding_easing_from_name, binding_file_dialog_mode_from_name,
     binding_flex_justify_from_name, binding_grid_track_from_name, binding_icon_glyph_from_name,
-    binding_motion_preference_from_name, binding_safe_area_edges_from_name,
-    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
-    binding_semantics_descriptions, binding_semantics_disabled,
+    binding_motion_preference_from_name, binding_open_url_unchecked,
+    binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
+    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
     binding_semantics_nodes, binding_semantics_role_from_name, binding_semantics_roles,
@@ -69,7 +69,8 @@ use sui_bindings_core::{
     binding_simple_color_picker_mode_from_name, binding_surface_border_from_name,
     binding_surface_elevation_from_name, binding_surface_role_from_name,
     binding_table_column_alignment_from_name, binding_toggle_state_from_name,
-    binding_tooltip_placement_from_name, resolve_binding_image_slots,
+    binding_tooltip_placement_from_name, binding_url_allowed_by_default,
+    resolve_binding_image_slots,
 };
 use sui_bindings_core::{
     BindingAnimationMarker, BindingStagger, binding_loop_mode_from_name, binding_loop_mode_name,
@@ -4955,6 +4956,9 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(clipboard_text, m)?)?;
     m.add_function(wrap_pyfunction!(set_motion_preference, m)?)?;
     m.add_function(wrap_pyfunction!(set_clipboard_text, m)?)?;
+    m.add_function(wrap_pyfunction!(open_url, m)?)?;
+    m.add_function(wrap_pyfunction!(set_url_policy, m)?)?;
+    m.add_function(wrap_pyfunction!(url_allowed_by_default, m)?)?;
     Ok(())
 }
 
@@ -4986,6 +4990,48 @@ fn clipboard_text() -> Option<String> {
 #[pyfunction]
 fn set_clipboard_text(text: &str) {
     binding_set_clipboard_text(text);
+}
+
+static URL_POLICY: Mutex<Option<Py<PyAny>>> = Mutex::new(None);
+
+/// Open `url` in the default browser or the app registered for its scheme,
+/// returning whether a handler accepted it. Only `http`, `https`, and
+/// `mailto` URLs open unless `set_url_policy` installed another policy.
+#[pyfunction]
+fn open_url(py: Python<'_>, url: &str) -> PyResult<bool> {
+    let url = url.trim();
+    let policy = recover_lock(&URL_POLICY)
+        .as_ref()
+        .map(|policy| policy.clone_ref(py));
+    let allowed = match policy {
+        Some(policy) => policy
+            .call1(py, (url,))?
+            .extract::<bool>(py)
+            .map_err(|_| PyTypeError::new_err("the URL policy must return a bool"))?,
+        None => binding_url_allowed_by_default(url),
+    };
+    Ok(allowed && binding_open_url_unchecked(url))
+}
+
+/// Decide which URLs `open_url` opens: `policy(url)` returns whether `url`
+/// may open. Pass `None` to restore the default, which opens only `http`,
+/// `https`, and `mailto` URLs. Returns the previous policy.
+#[pyfunction]
+#[pyo3(signature = (policy))]
+fn set_url_policy(py: Python<'_>, policy: Option<Py<PyAny>>) -> PyResult<Option<Py<PyAny>>> {
+    if let Some(policy) = &policy
+        && !policy.bind(py).is_callable()
+    {
+        return Err(PyTypeError::new_err("URL policy must be callable or None"));
+    }
+    Ok(std::mem::replace(&mut *recover_lock(&URL_POLICY), policy))
+}
+
+/// Whether the default policy lets `url` open. Call it from a policy to
+/// extend the default instead of replacing it.
+#[pyfunction]
+fn url_allowed_by_default(url: &str) -> bool {
+    binding_url_allowed_by_default(url)
 }
 
 /// A hash of float fields that agrees with `==`, so `0.0` and `-0.0` hash

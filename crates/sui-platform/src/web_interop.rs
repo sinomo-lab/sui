@@ -12,7 +12,7 @@ use std::{cell::RefCell, collections::HashMap};
 #[cfg(target_arch = "wasm32")]
 use js_sys::{Array, Function, Reflect};
 #[cfg(target_arch = "wasm32")]
-use sui_core::{ClipboardBackend, WidgetId};
+use sui_core::{ClipboardBackend, UrlOpenerBackend, WidgetId};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -90,6 +90,26 @@ fn write_browser_clipboard(text: &str) {
         return;
     };
     let _ = write_text.call1(&clipboard, &JsValue::from_str(text));
+}
+
+/// Opens URLs in a new browser tab, used by the WebAssembly platform runner.
+///
+/// The tab opens without a reference back to the app. Browsers block tabs
+/// opened outside a user gesture, so open URLs while handling the click or
+/// key press that asked for them.
+#[cfg(target_arch = "wasm32")]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct WebUrlOpenerBackend;
+
+#[cfg(target_arch = "wasm32")]
+impl UrlOpenerBackend for WebUrlOpenerBackend {
+    fn open(&mut self, url: &str) -> bool {
+        web_sys::window().is_some_and(|window| {
+            window
+                .open_with_url_and_target_and_features(url, "_blank", "noopener,noreferrer")
+                .is_ok()
+        })
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -829,6 +829,23 @@ export interface FileDialogOptions {
 export function setMotionPreference(preference: "full" | "reduced" | "off" | null): void;
 export function clipboardText(): string | null;
 export function setClipboardText(text: string): void;
+/**
+ * Open `url` in the default browser or the app registered for its scheme,
+ * returning whether a handler accepted it. Only `http`, `https`, and
+ * `mailto` URLs open unless `setUrlPolicy` installed another policy.
+ */
+export function openUrl(url: string): boolean;
+/**
+ * Decide which URLs `openUrl` opens: `policy(url)` returns whether `url` may
+ * open. `null` restores the default, which opens only `http`, `https`, and
+ * `mailto` URLs.
+ */
+export function setUrlPolicy(policy: ((url: string) => boolean) | null): void;
+/**
+ * Whether the default policy lets `url` open. Call it from a policy to extend
+ * the default instead of replacing it.
+ */
+export function urlAllowedByDefault(url: string): boolean;
 
 /**
  * Handle errors thrown by callbacks, including rejections of async

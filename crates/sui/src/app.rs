@@ -1,7 +1,7 @@
 use crate::{
     Application, CommandController, CommandCtx, CommandKey, EmbeddedSvgImageResource, FontHandle,
-    ImageHandle, RegisteredFont, RegisteredImage, Result, Runtime, Widget, WindowBuilder,
-    WindowIcon, WindowRenderOptions,
+    ImageHandle, RegisteredFont, RegisteredImage, Result, Runtime, UrlPolicy, Widget,
+    WindowBuilder, WindowIcon, WindowRenderOptions,
 };
 
 #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
@@ -45,6 +45,14 @@ impl App {
     /// Attach an application-scoped service outside the widget tree.
     pub fn controller(mut self, controller: impl CommandController + 'static) -> Self {
         self.application = self.application.controller(controller);
+        self
+    }
+
+    /// Decide which URLs `EventCtx::open_url` hands to the platform, in place
+    /// of the default that opens only `http`, `https`, and `mailto` URLs. See
+    /// [`UrlPolicy`].
+    pub fn url_policy(mut self, policy: UrlPolicy) -> Self {
+        self.application = self.application.url_policy(policy);
         self
     }
 

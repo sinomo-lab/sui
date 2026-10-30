@@ -1525,6 +1525,11 @@ def render_widget(widget: Widget, event: Event | None = ...) -> RenderSnapshot: 
 def set_motion_preference(preference: Literal["full", "reduced", "off"] | None) -> None: ...
 def clipboard_text() -> str | None: ...
 def set_clipboard_text(text: str) -> None: ...
+def open_url(url: str) -> bool: ...
+def set_url_policy(
+    policy: Callable[[str], bool] | None,
+) -> Callable[[str], bool] | None: ...
+def url_allowed_by_default(url: str) -> bool: ...
 def set_exception_handler(
     handler: Callable[[BaseException], object] | None,
 ) -> Callable[[BaseException], object] | None: ...
@@ -2093,6 +2098,7 @@ __all__ = [
     "menu",
     "notification_host",
     "number_input",
+    "open_url",
     "overlay_host",
     "padding",
     "panel_section",
@@ -2124,6 +2130,7 @@ __all__ = [
     "set_clipboard_text",
     "set_exception_handler",
     "set_motion_preference",
+    "set_url_policy",
     "side_sheet",
     "signal_meter",
     "simple_color_picker",
@@ -2148,6 +2155,7 @@ __all__ = [
     "tooltip",
     "trailing_slot_row",
     "tree_view",
+    "url_allowed_by_default",
     "virtual_list",
     "virtual_scroll_view",
     "virtual_table",

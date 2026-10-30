@@ -284,6 +284,8 @@ target in performance-sensitive components.
   release it with `release_pointer_capture(pointer_id)`.
 - `clipboard_text()` and `set_clipboard_text(...)` use the platform clipboard
   when available and the runtime fallback otherwise.
+- `open_url(url)` hands a URL the runtime's `UrlPolicy` allows to the platform
+  to open; see [Opening links](overlays-and-desktop.md#opening-links).
 - `post_event(target, event)` delivers an event to a particular retained widget
   after the current dispatch completes.
 - `post_command(target, key, payload)` delivers a strongly typed command to a

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use sui_core::{Error, FontHandle, ImageHandle, Point, Result, Size, WindowId};
+use sui_core::{Error, FontHandle, ImageHandle, Point, Result, Size, UrlPolicy, WindowId};
 use sui_scene::RegisteredImage;
 use sui_text::RegisteredFont;
 
@@ -247,6 +247,7 @@ pub struct Application {
     windows: Vec<WindowBuilder>,
     resources: crate::resources::ResourceStore,
     command_listeners: CommandListeners,
+    url_policy: Option<UrlPolicy>,
 }
 
 impl Application {
@@ -262,6 +263,14 @@ impl Application {
     /// Attach an application-scoped non-widget controller.
     pub fn controller(mut self, controller: impl CommandController + 'static) -> Self {
         self.command_listeners.push_controller(controller);
+        self
+    }
+
+    /// Decide which URLs `EventCtx::open_url` hands to the platform, in place
+    /// of the default that opens only `http`, `https`, and `mailto` URLs. See
+    /// [`UrlPolicy`].
+    pub fn url_policy(mut self, policy: UrlPolicy) -> Self {
+        self.url_policy = Some(policy);
         self
     }
 
@@ -346,6 +355,9 @@ impl Application {
     pub fn build(self) -> Result<Runtime> {
         let mut runtime = Runtime::with_resources(self.resources);
         runtime.command_listeners = self.command_listeners;
+        if let Some(policy) = self.url_policy {
+            runtime.url_opener().set_policy(policy);
+        }
 
         for window in self.windows {
             runtime.add_window(window)?;

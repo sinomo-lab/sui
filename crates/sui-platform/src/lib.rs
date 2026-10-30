@@ -4,6 +4,9 @@ mod accessibility;
 #[cfg(target_os = "android")]
 #[allow(unsafe_code)]
 mod android_clipboard;
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+mod android_url_opener;
 mod debug_capture;
 mod desktop;
 mod display_capabilities;
@@ -13,6 +16,8 @@ mod headless;
 mod motion_preference;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod os_clipboard;
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+mod os_url_opener;
 mod present;
 #[cfg(any(target_arch = "wasm32", test))]
 mod web_interop;
@@ -68,7 +73,11 @@ pub use file_dialog::{
 pub use headless::{HeadlessPlatform, PlatformWindow};
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 pub use os_clipboard::OsClipboardBackend;
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+pub use os_url_opener::OsUrlOpenerBackend;
 pub use present::{PresentedFrame, present_window_frame};
+#[cfg(target_arch = "wasm32")]
+pub use web_interop::WebUrlOpenerBackend;
 /// The canvas element a browser app draws a window on.
 #[cfg(target_arch = "wasm32")]
 pub use web_sys::HtmlCanvasElement as WebCanvas;

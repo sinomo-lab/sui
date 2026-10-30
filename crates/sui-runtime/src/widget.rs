@@ -25,7 +25,7 @@ use sui_core::{
     AsyncWakeToken, Clipboard, Color, CursorGrabMode, DpiInfo, DragPayload, DragScopeId,
     DragSessionId, DropEffect, DropEffects, Event, ImageHandle, InvalidationKind,
     InvalidationRequest, InvalidationTarget, MotionPolicy, Path, Point, Rect, SemanticsNode, Size,
-    TimerToken, Transform, Vector, WakeEvent, WidgetId, WindowId,
+    TimerToken, Transform, UrlOpener, Vector, WakeEvent, WidgetId, WindowId,
 };
 use sui_layout::{Axis, Constraints, IntrinsicSize, LayoutContext};
 use sui_reactive::{Observable, Signal};
@@ -1767,7 +1767,7 @@ impl WidgetPod {
         current_time: f64,
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
-        clipboard: &Clipboard,
+        services: &HostServices,
         command_sender: &CommandSender,
         event: &Event,
     ) -> Option<EventDispatch> {
@@ -1778,7 +1778,7 @@ impl WidgetPod {
                 current_time,
                 phase,
                 focused_widget,
-                clipboard,
+                services,
                 command_sender,
                 event,
             )
@@ -1794,7 +1794,7 @@ impl WidgetPod {
         current_time: f64,
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
-        clipboard: &Clipboard,
+        services: &HostServices,
         command_sender: &CommandSender,
         event: &Event,
     ) -> Option<EventDispatch> {
@@ -1805,7 +1805,7 @@ impl WidgetPod {
                 current_time,
                 phase,
                 focused_widget,
-                clipboard,
+                services,
                 command_sender,
                 event,
             )
@@ -1820,7 +1820,7 @@ impl WidgetPod {
         dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
-        clipboard: &Clipboard,
+        services: &HostServices,
         command_sender: &CommandSender,
         command: &Command<'_>,
     ) -> Option<EventDispatch> {
@@ -1830,7 +1830,7 @@ impl WidgetPod {
                 dpi_info,
                 current_time,
                 focused_widget,
-                clipboard,
+                services,
                 command_sender,
                 command,
             )
@@ -1845,7 +1845,7 @@ impl WidgetPod {
         dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
-        clipboard: &Clipboard,
+        services: &HostServices,
         command_sender: &CommandSender,
         command: &Command<'_>,
     ) -> Option<EventDispatch> {
@@ -1855,7 +1855,7 @@ impl WidgetPod {
                 dpi_info,
                 current_time,
                 focused_widget,
-                clipboard,
+                services,
                 command_sender,
                 command,
             )
@@ -1870,7 +1870,7 @@ impl WidgetPod {
         dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
-        clipboard: &Clipboard,
+        services: &HostServices,
         command_sender: &CommandSender,
         focused: bool,
     ) -> Option<EventDispatch> {
@@ -1880,7 +1880,7 @@ impl WidgetPod {
                 dpi_info,
                 current_time,
                 focused_widget,
-                clipboard,
+                services,
                 command_sender,
                 focused,
             )
@@ -1895,7 +1895,7 @@ impl WidgetPod {
         dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
-        clipboard: &Clipboard,
+        services: &HostServices,
         command_sender: &CommandSender,
         focused: bool,
     ) -> Option<EventDispatch> {
@@ -1905,7 +1905,7 @@ impl WidgetPod {
                 dpi_info,
                 current_time,
                 focused_widget,
-                clipboard,
+                services,
                 command_sender,
                 focused,
             )
@@ -1920,7 +1920,7 @@ impl WidgetPod {
         current_time: f64,
         phase: EventPhase,
         focused_widget: Option<WidgetId>,
-        clipboard: &Clipboard,
+        services: &HostServices,
         command_sender: &CommandSender,
         event: &Event,
     ) -> EventDispatch {
@@ -1939,7 +1939,7 @@ impl WidgetPod {
             current_time,
             phase,
             focused_widget,
-            clipboard.clone(),
+            services.clone(),
             command_sender.clone(),
         );
         self.widget.event(&mut ctx, &local_event);
@@ -1976,7 +1976,7 @@ impl WidgetPod {
         dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
-        clipboard: &Clipboard,
+        services: &HostServices,
         command_sender: &CommandSender,
         command: &Command<'_>,
     ) -> EventDispatch {
@@ -1988,7 +1988,7 @@ impl WidgetPod {
             current_time,
             EventPhase::Target,
             focused_widget,
-            clipboard.clone(),
+            services.clone(),
             command_sender.clone(),
         );
         self.widget.command(&mut ctx, command);
@@ -2001,7 +2001,7 @@ impl WidgetPod {
         dpi_info: DpiInfo,
         current_time: f64,
         focused_widget: Option<WidgetId>,
-        clipboard: &Clipboard,
+        services: &HostServices,
         command_sender: &CommandSender,
         focused: bool,
     ) -> EventDispatch {
@@ -2013,7 +2013,7 @@ impl WidgetPod {
             current_time,
             EventPhase::Target,
             focused_widget,
-            clipboard.clone(),
+            services.clone(),
             command_sender.clone(),
         );
         self.widget.focus_changed(&mut ctx, focused);
@@ -2356,6 +2356,14 @@ pub(crate) struct EventDispatch {
     pub posted_commands: Vec<PostedCommandRequest>,
 }
 
+/// Platform services shared by every window of a runtime and handed to each
+/// event context.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct HostServices {
+    pub(crate) clipboard: Clipboard,
+    pub(crate) url_opener: UrlOpener,
+}
+
 #[derive(Debug, Clone)]
 pub struct EventCtx {
     window_id: WindowId,
@@ -2365,7 +2373,7 @@ pub struct EventCtx {
     current_time: f64,
     phase: EventPhase,
     focused_widget_id: Option<WidgetId>,
-    clipboard: Clipboard,
+    services: HostServices,
     command_sender: CommandSender,
     handled: bool,
     invalidations: Vec<InvalidationRequest>,
@@ -2389,7 +2397,7 @@ impl EventCtx {
         current_time: f64,
         phase: EventPhase,
         focused_widget_id: Option<WidgetId>,
-        clipboard: Clipboard,
+        services: HostServices,
         command_sender: CommandSender,
     ) -> Self {
         Self {
@@ -2400,7 +2408,7 @@ impl EventCtx {
             current_time,
             phase,
             focused_widget_id,
-            clipboard,
+            services,
             command_sender,
             handled: false,
             invalidations: Vec::new(),
@@ -2567,15 +2575,29 @@ impl EventCtx {
     /// when the platform installed a native backend, otherwise by in-process
     /// storage shared across the runtime.
     pub fn clipboard(&self) -> &Clipboard {
-        &self.clipboard
+        &self.services.clipboard
     }
 
     pub fn clipboard_text(&self) -> Option<String> {
-        self.clipboard.text()
+        self.services.clipboard.text()
     }
 
     pub fn set_clipboard_text(&mut self, text: impl AsRef<str>) {
-        self.clipboard.set_text(text);
+        self.services.clipboard.set_text(text);
+    }
+
+    /// Shared URL-opening service for this window. Opens URLs through the
+    /// platform when it installed a native backend, otherwise opens nothing.
+    pub fn url_opener(&self) -> &UrlOpener {
+        &self.services.url_opener
+    }
+
+    /// Hand `url` to the platform to open in the default browser or the app
+    /// registered for its scheme, returning whether a handler accepted it.
+    /// URLs the runtime's [`UrlPolicy`](sui_core::UrlPolicy) rejects are
+    /// dropped.
+    pub fn open_url(&mut self, url: impl AsRef<str>) -> bool {
+        self.services.url_opener.open(url)
     }
 
     /// Return the runtime's cloneable typed command producer.
@@ -4345,16 +4367,16 @@ mod tests {
     use crate::CommandSender;
 
     use super::{
-        ArrangeCtx, EventCtx, EventPhase, KeyedChildren, MeasureCtx, MeasureScope, PaintCtx,
-        SemanticsCtx, SingleChild, WakeRequest, Widget, WidgetChildren, WidgetPod,
+        ArrangeCtx, EventCtx, EventPhase, HostServices, KeyedChildren, MeasureCtx, MeasureScope,
+        PaintCtx, SemanticsCtx, SingleChild, WakeRequest, Widget, WidgetChildren, WidgetPod,
         WidgetPodMutVisitor, WidgetPodVisitor, relative_transform,
     };
     use std::cell::Cell;
     use std::collections::{HashMap, HashSet};
     use std::rc::Rc;
     use sui_core::{
-        Clipboard, Color, DpiInfo, ImageHandle, InvalidationKind, Point, Rect, SemanticsNode,
-        SemanticsRole, Size, Transform, Vector, WidgetId, WindowId,
+        Color, DpiInfo, ImageHandle, InvalidationKind, Point, Rect, SemanticsNode, SemanticsRole,
+        Size, Transform, Vector, WidgetId, WindowId,
     };
 
     #[test]
@@ -4452,7 +4474,7 @@ mod tests {
             0.0,
             EventPhase::Target,
             None,
-            Clipboard::new(),
+            HostServices::default(),
             CommandSender::new(),
         );
 
@@ -4558,7 +4580,7 @@ mod tests {
             0.0,
             EventPhase::Target,
             None,
-            Clipboard::new(),
+            HostServices::default(),
             CommandSender::new(),
         );
 
@@ -4600,7 +4622,7 @@ mod tests {
             16.0,
             EventPhase::Target,
             None,
-            Clipboard::new(),
+            HostServices::default(),
             CommandSender::new(),
         );
 

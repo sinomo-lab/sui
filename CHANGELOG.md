@@ -4,6 +4,34 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
+## [Unreleased]
+
+### Rust
+
+- Added `EventCtx::open_url`, which opens a URL in the default browser, mail
+  client, or app registered for its scheme. Call it from a `Link`'s
+  `on_open_with_ctx`, a `RichDocumentView`'s `on_link_with_ctx`, or any other
+  handler, such as a button's. Links still open nothing on their own.
+- `open_url` goes through a shared `UrlOpener` service like the clipboard's,
+  reached with `Runtime::url_opener` and `set_url_opener_backend`. The desktop
+  platform opens URLs through the system's registered handler (with the `open`
+  crate), the web platform in a new tab, and Android with a view activity;
+  runtimes without a platform open nothing. `LocalUrlOpenerBackend` records
+  the URLs a test asked to open.
+- A `UrlPolicy` decides which URLs open. The default opens only absolute
+  `http`, `https`, and `mailto` URLs, so links in untrusted Markdown cannot
+  launch local files, scripts, or arbitrary protocol handlers. Replace it with
+  `App::url_policy(UrlPolicy::new(...))`, extend the default from a custom
+  policy with `UrlPolicy::allows_by_default`, or turn the check off with
+  `UrlPolicy::allow_all`.
+
+### Python and JavaScript
+
+- Added `open_url(url)` (`openUrl` in JavaScript), which opens a URL under the
+  same default policy; pass it as a link's `on_open` (`onOpen`) to open the
+  link. `set_url_policy` (`setUrlPolicy`) replaces the policy with a callback,
+  and `url_allowed_by_default` (`urlAllowedByDefault`) extends the default.
+
 ## [0.6.0] - 2026-10-30
 
 This release makes the JavaScript package async and runs it in browsers on a

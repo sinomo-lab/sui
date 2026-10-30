@@ -1,11 +1,11 @@
 //! Application services that host languages reach outside of widget
-//! contexts: the clipboard and native file dialogs.
+//! contexts: the clipboard, opening URLs, and native file dialogs.
 
 use crate::support::recover_lock;
 use crate::tasks::BindingUiHandle;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use sui::ClipboardBackend;
+use sui::{ClipboardBackend, UrlOpenerBackend};
 
 /// One clipboard for the whole process, so text copied by host-language code
 /// and by widgets in any app agrees.
@@ -42,6 +42,44 @@ pub fn binding_clipboard_text() -> Option<String> {
 
 pub fn binding_set_clipboard_text(text: &str) {
     with_clipboard(|clipboard| clipboard.set_text(text));
+}
+
+/// Whether the default URL policy lets `url` open: an absolute `http`,
+/// `https`, or `mailto` URL.
+pub fn binding_url_allowed_by_default(url: &str) -> bool {
+    sui::UrlPolicy::allows_by_default(url.trim())
+}
+
+/// Open `url` in the default browser or the app registered for its scheme,
+/// returning whether a handler accepted it. It checks no policy, so each
+/// binding checks the app's URL policy first. Hosts without a platform
+/// handler open nothing.
+pub fn binding_open_url_unchecked(url: &str) -> bool {
+    platform_url_backend().open(url.trim())
+}
+
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+fn platform_url_backend() -> impl UrlOpenerBackend {
+    sui::OsUrlOpenerBackend::new()
+}
+
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+fn platform_url_backend() -> impl UrlOpenerBackend {
+    sui::WebUrlOpenerBackend
+}
+
+#[cfg(not(any(
+    all(
+        feature = "desktop",
+        any(target_os = "windows", target_os = "macos", target_os = "linux")
+    ),
+    all(feature = "web", target_arch = "wasm32")
+)))]
+fn platform_url_backend() -> impl UrlOpenerBackend {
+    sui::LocalUrlOpenerBackend::new()
 }
 
 /// A runtime clipboard backend that forwards to the process clipboard.

@@ -563,6 +563,9 @@ impl DesktopPlatform {
         runtime.set_clipboard_backend(crate::android_clipboard::AndroidClipboardBackend::new(
             android_app.clone(),
         ));
+        runtime.set_url_opener_backend(crate::android_url_opener::AndroidUrlOpenerBackend::new(
+            android_app.clone(),
+        ));
         let mut event_loop_builder = EventLoop::<DesktopUserEvent>::with_user_event();
         event_loop_builder.with_android_app(android_app);
         let event_loop = event_loop_builder.build().map_err(map_event_loop_error)?;
@@ -903,10 +906,16 @@ impl DesktopApp {
         reactive_wake_pending: Arc<AtomicBool>,
     ) -> Self {
         #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-        runtime.set_clipboard_backend(crate::os_clipboard::OsClipboardBackend::new());
+        {
+            runtime.set_clipboard_backend(crate::os_clipboard::OsClipboardBackend::new());
+            runtime.set_url_opener_backend(crate::os_url_opener::OsUrlOpenerBackend::new());
+        }
 
         #[cfg(target_arch = "wasm32")]
-        runtime.set_clipboard_backend(crate::web_interop::WebClipboardBackend::default());
+        {
+            runtime.set_clipboard_backend(crate::web_interop::WebClipboardBackend::default());
+            runtime.set_url_opener_backend(crate::web_interop::WebUrlOpenerBackend);
+        }
 
         #[cfg(not(target_os = "windows"))]
         let _ = event_loop_proxy;

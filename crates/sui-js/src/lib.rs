@@ -56,9 +56,9 @@ use sui_bindings_core::{
     binding_aspect_ratio_fit_from_name, binding_button_appearance_from_name,
     binding_clipboard_text, binding_easing_from_name, binding_file_dialog_mode_from_name,
     binding_flex_justify_from_name, binding_grid_track_from_name, binding_icon_glyph_from_name,
-    binding_motion_preference_from_name, binding_safe_area_edges_from_name,
-    binding_semantic_tone_from_name, binding_semantics_busy, binding_semantics_checked,
-    binding_semantics_descriptions, binding_semantics_disabled,
+    binding_motion_preference_from_name, binding_open_url_unchecked,
+    binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
+    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
     binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
     binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
     binding_semantics_nodes, binding_semantics_role_from_name, binding_semantics_roles,
@@ -66,7 +66,8 @@ use sui_bindings_core::{
     binding_simple_color_picker_mode_from_name, binding_surface_border_from_name,
     binding_surface_elevation_from_name, binding_surface_role_from_name,
     binding_table_column_alignment_from_name, binding_toggle_state_from_name,
-    binding_tooltip_placement_from_name, resolve_binding_image_slots,
+    binding_tooltip_placement_from_name, binding_url_allowed_by_default,
+    resolve_binding_image_slots,
 };
 use sui_bindings_core::{
     BindingAnimationMarker, BindingStagger, binding_loop_mode_from_name, binding_loop_mode_name,
@@ -3472,6 +3473,19 @@ pub fn js_set_motion_preference(preference: Option<String>) -> Result<()> {
 #[napi(js_name = "setClipboardText")]
 pub fn js_set_clipboard_text(text: String) {
     binding_set_clipboard_text(&text);
+}
+
+/// Whether the default URL policy lets `url` open.
+#[napi(js_name = "urlAllowedByDefault")]
+pub fn js_url_allowed_by_default(url: String) -> bool {
+    binding_url_allowed_by_default(&url)
+}
+
+/// Open `url` without checking a policy; the package's `openUrl` checks the
+/// app's URL policy first.
+#[napi(js_name = "openUrlUnchecked")]
+pub fn js_open_url_unchecked(url: String) -> bool {
+    binding_open_url_unchecked(&url)
 }
 
 impl From<BindingUiHandle> for JsUiHandle {

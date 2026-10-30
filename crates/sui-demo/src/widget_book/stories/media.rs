@@ -30,8 +30,8 @@ pub(super) const STORIES: [Story; 10] = [
         id: "link",
         title: "Link and rich text",
         api: "Link, RichText",
-        summary: "Inline links with URL semantics and styled, wrapping text runs.",
-        keywords: "hyperlink url rich text",
+        summary: "Inline links with URL semantics, browser opening, and styled, wrapping text runs.",
+        keywords: "hyperlink url browser open rich text",
         category: Category::Media,
         build: link,
     },
@@ -177,6 +177,16 @@ fn link(ctx: &StoryCtx) -> Vec<Section> {
             (
                 "Link",
                 boxed(Link::new("Read the SUI docs", "https://example.invalid/sui").theme(theme)),
+            ),
+            (
+                "Opens in the browser",
+                boxed(
+                    Link::new("SUI on GitHub", "https://github.com/sinomo-lab/sui")
+                        .on_open_with_ctx(|ctx, url| {
+                            ctx.open_url(url);
+                        })
+                        .theme(theme),
+                ),
             ),
             (
                 "Disabled link",

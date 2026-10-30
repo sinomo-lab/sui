@@ -640,6 +640,20 @@ pub fn js_set_clipboard_text(text: String) {
     binding_set_clipboard_text(&text);
 }
 
+/// Whether the default URL policy lets `url` open.
+#[wasm_bindgen(js_name = urlAllowedByDefault)]
+pub fn js_url_allowed_by_default(url: String) -> bool {
+    binding_url_allowed_by_default(&url)
+}
+
+/// Open `url` in a new browser tab without checking a policy; the package's
+/// `openUrl` checks the app's URL policy first. Browsers block tabs opened
+/// outside a click or key press.
+#[wasm_bindgen(js_name = openUrlUnchecked)]
+pub fn js_open_url_unchecked(url: String) -> bool {
+    binding_open_url_unchecked(&url)
+}
+
 impl From<BindingUiHandle> for JsUiHandle {
     fn from(value: BindingUiHandle) -> Self {
         Self { inner: value }

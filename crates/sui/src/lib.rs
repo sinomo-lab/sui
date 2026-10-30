@@ -68,13 +68,13 @@ pub use sui_core::{
     DirtyRegion, DpiInfo, DragDropScope, DragEvent, DragEventKind, DragOutcome, DragPayload,
     DragPreview, DragScopeId, DragSessionId, DropEffect, DropEffects, Error, Event, FontHandle,
     ImageHandle, ImeEvent, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState,
-    KeyboardEvent, LocalClipboardBackend, Modifiers, MotionPolicy, MotionPreference, Oklch, Path,
-    PathBuilder, PathElement, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-    PointerKind, RawMouseMotionEvent, Rect, Result, SafeAreaInsets, ScrollDelta, SemanticsAction,
-    SemanticsActionRequest, SemanticsEvent, SemanticsLiveRegion, SemanticsNode, SemanticsPopupKind,
-    SemanticsRelations, SemanticsRole, SemanticsState, SemanticsTextRange, SemanticsValue, Size,
-    SurfaceId, TimerToken, ToggleState, Transform, Vector, WakeEvent, WidgetId, WindowEvent,
-    WindowId,
+    KeyboardEvent, LocalClipboardBackend, LocalUrlOpenerBackend, Modifiers, MotionPolicy,
+    MotionPreference, Oklch, Path, PathBuilder, PathElement, Point, PointerButton, PointerButtons,
+    PointerEvent, PointerEventKind, PointerKind, RawMouseMotionEvent, Rect, Result, SafeAreaInsets,
+    ScrollDelta, SemanticsAction, SemanticsActionRequest, SemanticsEvent, SemanticsLiveRegion,
+    SemanticsNode, SemanticsPopupKind, SemanticsRelations, SemanticsRole, SemanticsState,
+    SemanticsTextRange, SemanticsValue, Size, SurfaceId, TimerToken, ToggleState, Transform,
+    UrlOpener, UrlOpenerBackend, UrlPolicy, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 pub use sui_layout::Padding as Insets;
 pub use sui_layout::{
@@ -85,14 +85,11 @@ pub use sui_layout::{
 };
 #[cfg(all(target_os = "android", feature = "mobile"))]
 pub use sui_platform::AndroidApp;
-#[cfg(all(
-    feature = "desktop",
-    any(target_os = "windows", target_os = "macos", target_os = "linux")
-))]
-pub use sui_platform::OsClipboardBackend;
 /// The canvas element a browser app draws a window on.
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 pub use sui_platform::WebCanvas;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+pub use sui_platform::WebUrlOpenerBackend;
 #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
 pub use sui_platform::{
     DesktopExtension, DesktopExtensionContext, DesktopPlatform, DesktopWindow, FileDialogFilter,
@@ -104,6 +101,11 @@ pub use sui_platform::{
     any(target_os = "windows", target_os = "macos", target_os = "linux")
 ))]
 pub use sui_platform::{DesktopPumpStatus, PumpedDesktop};
+#[cfg(all(
+    feature = "desktop",
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+pub use sui_platform::{OsClipboardBackend, OsUrlOpenerBackend};
 pub use sui_reactive::{
     Change as ObservableChange, Changed, Observable, Observer, Selector, Signal, SourceId,
     Subscription, Task, TaskHandle, TaskState, WeakObserver, Zip, batch, combine, combine_named,
@@ -438,6 +440,14 @@ impl Application {
     /// Attach an application-scoped controller outside the widget tree.
     pub fn controller(mut self, controller: impl CommandController + 'static) -> Self {
         self.inner = self.inner.controller(controller);
+        self
+    }
+
+    /// Decide which URLs `EventCtx::open_url` hands to the platform, in place
+    /// of the default that opens only `http`, `https`, and `mailto` URLs. See
+    /// [`UrlPolicy`].
+    pub fn url_policy(mut self, policy: UrlPolicy) -> Self {
+        self.inner = self.inner.url_policy(policy);
         self
     }
 
@@ -832,7 +842,7 @@ pub mod prelude {
         Timeline, TimelineMarker, TimelinePlayer, TimelineSnap, TimelineTick, TimerToken,
         ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment, TooltipPlacement, Track,
         TrailingSlotRow, Transform, TransientNotification, Transition, TreeItem, TreeView,
-        VirtualCollectionModel, VirtualCollectionSource, VirtualList, VirtualListChrome,
+        UrlPolicy, VirtualCollectionModel, VirtualCollectionSource, VirtualList, VirtualListChrome,
         VirtualListSelectionMode, VirtualListState, VirtualScrollView, VirtualTable,
         VirtualTableColumn, VirtualTableRowActivationKind, VirtualTableRowContext,
         VirtualTableSortDirection, VirtualTableState, VirtualViewportSnapshot, WakeEvent,

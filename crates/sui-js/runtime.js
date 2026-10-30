@@ -455,6 +455,29 @@ export function createApi(native, host) {
     });
   };
 
+  // ---- Opening URLs ---------------------------------------------------
+
+  let urlPolicy = null;
+
+  function setUrlPolicy(policy) {
+    if (policy != null && typeof policy !== "function") {
+      throw new TypeError("setUrlPolicy() expects a function or null");
+    }
+    urlPolicy = policy ?? null;
+  }
+
+  function openUrl(url) {
+    if (typeof url !== "string") {
+      throw new TypeError("openUrl() expects a string");
+    }
+    const target = url.trim();
+    const allowed = urlPolicy === null ? native.urlAllowedByDefault(target) : urlPolicy(target);
+    if (typeof allowed !== "boolean") {
+      throw new TypeError("the URL policy must return a boolean");
+    }
+    return allowed && native.openUrlUnchecked(target);
+  }
+
   // ---- Headless runs --------------------------------------------------
 
   RunningApp.prototype.idle = async function () {
@@ -483,6 +506,8 @@ export function createApi(native, host) {
     Widget,
     Subscription,
     setErrorHandler,
+    openUrl,
+    setUrlPolicy,
     version: native.nativeVersion(),
   };
   const api = {};

@@ -156,7 +156,13 @@ call `runningApp.advanceTime(seconds)`,
 `settleAnimations()`, and `screenshotPng()`, set `setMotionPreference(...)`,
 and scope `find`/`getOne` queries with `within: node.id`.
 `FocusController` and `focusScope(child, { controller })` move keyboard focus
-from code. `clipboardText()` and `setClipboardText()` reach the clipboard. Pass a
+from code. `clipboardText()` and `setClipboardText()` reach the clipboard.
+`openUrl(url)` opens a URL in the default browser or the app registered for
+its scheme, so `link("Docs", url, { onOpen: openUrl })` opens the link when
+activated. By default only `http`, `https`, and `mailto` URLs open;
+`setUrlPolicy((url) => boolean)` replaces that check (call
+`urlAllowedByDefault(url)` from it to extend the default), and
+`setUrlPolicy(null)` restores it. Pass a
 `ScrollController` as `controller` to `scrollView` or `virtualScrollView` to
 scroll from code with `scrollTo` and `scrollToItem`. Labels take typography
 options, `listView` accepts `ListItem` objects beside strings, and `grid`

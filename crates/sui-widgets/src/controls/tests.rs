@@ -18,10 +18,10 @@ use crate::{
     text_command::{TEXT_COMMAND, TextCommand},
 };
 use sui_core::{
-    Color, CustomEvent, Event, ImeEvent, KeyState, KeyboardEvent, Modifiers, Point, PointerButton,
-    PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsAction,
-    SemanticsActionRequest, SemanticsRole, SemanticsTextRange, SemanticsValue, Size, ToggleState,
-    Vector, WidgetId, WindowEvent,
+    Color, CustomEvent, Event, ImeEvent, KeyState, KeyboardEvent, LocalUrlOpenerBackend, Modifiers,
+    Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind, Rect,
+    Result, SemanticsAction, SemanticsActionRequest, SemanticsRole, SemanticsTextRange,
+    SemanticsValue, Size, ToggleState, Vector, WidgetId, WindowEvent,
 };
 use sui_layout::{Alignment, Constraints, Padding as TestPadding};
 use sui_reactive::Signal;
@@ -1166,6 +1166,51 @@ fn link_exposes_link_semantics_and_activates_on_click() -> Result<()> {
         opened.borrow().as_deref(),
         Some("https://example.test/device")
     );
+    Ok(())
+}
+
+#[test]
+fn link_callbacks_open_urls_through_the_platform() -> Result<()> {
+    let open = |ctx: &mut EventCtx, url: &str| {
+        ctx.open_url(url);
+    };
+    let (mut runtime, window_id) = build_runtime(
+        Stack::vertical()
+            .with_child(Link::new("Inert", "https://example.test/inert"))
+            .with_child(
+                Link::new("External", "https://example.test/external").on_open_with_ctx(open),
+            )
+            .with_child(Link::new("Local file", "file:///etc/passwd").on_open_with_ctx(open)),
+    );
+    let opened = LocalUrlOpenerBackend::new();
+    runtime.set_url_opener_backend(opened.clone());
+
+    let output = runtime.render(window_id)?;
+    let link = |name: &str| {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Link && node.name.as_deref() == Some(name))
+            .expect("link semantics present")
+            .clone()
+    };
+    // Clicking External last leaves it focused for the keyboard check below.
+    for name in ["Inert", "Local file", "External"] {
+        let bounds = link(name).bounds;
+        let start = Point::new(bounds.x() + 4.0, bounds.y() + bounds.height() * 0.5);
+        click(&mut runtime, window_id, start)?;
+    }
+    // A link without a callback opens nothing, and the policy refuses `file:`.
+    assert_eq!(opened.opened(), ["https://example.test/external"]);
+
+    // Keyboard and assistive activation run the same callback.
+    runtime.handle_event(window_id, key_without_text("Enter"))?;
+    runtime.handle_semantics_action(
+        window_id,
+        link("External").id,
+        SemanticsActionRequest::Activate,
+    )?;
+    assert_eq!(opened.opened(), ["https://example.test/external"; 3]);
     Ok(())
 }
 

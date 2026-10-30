@@ -226,6 +226,83 @@ simply storing it for later is insufficient. The free
 `show_file_dialog(request)` async helper defers setup until first poll, so use
 it only when that poll already occurs on the required UI/user-activation path.
 
+## Opening Links
+
+Activating a `Link`, or a link in a `RichDocumentView`, only runs the
+application's callback; SUI never opens a URL on its own. To open one in the
+default browser, mail client, or the app registered for its scheme, call
+`EventCtx::open_url` from the callback. A button that opens a page works the
+same way:
+
+```rust,no_run
+use sui::prelude::*;
+
+let docs = Link::new("Read the docs", "https://example.com/docs").on_open_with_ctx(|ctx, url| {
+    ctx.open_url(url);
+});
+
+let document = RichDocumentModel::from_markdown("See [the guide](https://example.com/guide).");
+let view = RichDocumentView::new(document).on_link_with_ctx(|ctx, destination| {
+    ctx.open_url(destination);
+});
+
+let release_notes = Button::new("Release notes").on_press_with_ctx(|ctx| {
+    ctx.open_url("https://example.com/releases");
+});
+# let _ = (docs, view, release_notes);
+```
+
+Because the callback decides, it can also open some URLs inside the app and
+pass the rest on:
+
+```rust,no_run
+# use sui::prelude::*;
+# fn navigate(_route: &str) {}
+let settings = Link::new("Settings", "app://settings").on_open_with_ctx(|ctx, url| {
+    match url.strip_prefix("app://") {
+        Some(route) => navigate(route),
+        None => {
+            ctx.open_url(url);
+        }
+    }
+});
+# let _ = settings;
+```
+
+`open_url` returns whether a platform handler accepted the URL. A `UrlPolicy`
+decides which URLs it hands to the platform. The default opens only absolute
+`http`, `https`, and `mailto` URLs, so a link in untrusted content, such as
+Markdown from the network or a model, cannot launch a local file, a script, or
+an arbitrary protocol handler, and relative Markdown destinations never open.
+
+An application that needs more replaces the policy with its own check, or
+turns the check off:
+
+```rust,no_run
+# use sui::prelude::*;
+// Also open the application's own scheme.
+let app = App::new().url_policy(UrlPolicy::new(|url| {
+    url.starts_with("myapp:") || UrlPolicy::allows_by_default(url)
+}));
+
+// Open every URL. Use this only when the app trusts every URL it opens.
+let trusting = App::new().url_policy(UrlPolicy::allow_all());
+# let _ = (app, trusting);
+```
+
+The policy belongs to the runtime. `App::url_policy` sets it before the app
+starts; to change it later, call `set_policy` on the `UrlOpener` that
+`Runtime::url_opener` and `EventCtx::url_opener` return, and pass
+`UrlPolicy::default()` to restore the default.
+
+The desktop platform opens URLs on Linux, macOS, and Windows through the
+system's registered handler, the web platform opens them in a new tab, and
+Android starts a view activity for them. Browsers block tabs opened outside a
+user gesture, so open URLs while handling the click or key press that asked
+for them. Runtimes without a platform, such as headless tests, open nothing;
+install a `LocalUrlOpenerBackend` with `Runtime::set_url_opener_backend` and
+read its `opened()` list to check what a test asked to open.
+
 ## Platform File Drag and Drop
 
 Desktop window events normalize file hover, cancellation, and drop. Wrap the

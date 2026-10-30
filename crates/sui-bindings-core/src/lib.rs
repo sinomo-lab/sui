@@ -183,7 +183,8 @@ pub use scrolling::BindingFocusController;
 pub use scrolling::BindingScrollController;
 pub use services::{
     BindingFileDialogMode, BindingFileDialogRequest, BindingFileDialogResult,
-    binding_clipboard_text, binding_file_dialog_mode_from_name, binding_set_clipboard_text,
+    binding_clipboard_text, binding_file_dialog_mode_from_name, binding_open_url_unchecked,
+    binding_set_clipboard_text, binding_url_allowed_by_default,
 };
 pub use shader::BindingShader;
 pub use state::BindingState;

@@ -3091,6 +3091,65 @@ fn runtime_clipboard_is_shared_with_window_event_contexts() {
     assert_eq!(runtime.clipboard().text(), None);
 }
 
+struct OpenUrlsOnPress;
+
+impl Widget for OpenUrlsOnPress {
+    fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        if matches!(event, Event::Pointer(pointer) if pointer.kind == PointerEventKind::Down) {
+            ctx.open_url("https://example.com/docs");
+            ctx.open_url("file:///etc/passwd");
+            ctx.open_url("myapp://settings");
+        }
+    }
+
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(Size::new(120.0, 80.0))
+    }
+}
+
+#[test]
+fn application_url_policy_applies_to_the_built_runtime() {
+    let runtime = Application::new()
+        .url_policy(sui_core::UrlPolicy::allow_all())
+        .window(WindowBuilder::new().title("Links").root(OpenUrlsOnPress))
+        .build()
+        .unwrap();
+    assert!(runtime.url_opener().allows("file:///etc/passwd"));
+
+    let default = Application::new().build().unwrap();
+    assert!(!default.url_opener().allows("file:///etc/passwd"));
+}
+
+#[test]
+fn runtime_url_opener_is_shared_with_window_event_contexts() {
+    let mut runtime = Application::new()
+        .window(WindowBuilder::new().title("Links").root(OpenUrlsOnPress))
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    let _ = runtime.render(window_id).unwrap();
+
+    let opened = sui_core::LocalUrlOpenerBackend::new();
+    runtime.set_url_opener_backend(opened.clone());
+    runtime
+        .url_opener()
+        .set_policy(sui_core::UrlPolicy::new(|url| {
+            url.starts_with("myapp:") || sui_core::UrlPolicy::allows_by_default(url)
+        }));
+
+    let mut down = PointerEvent::new(PointerEventKind::Down, Point::new(20.0, 20.0));
+    down.button = Some(PointerButton::Primary);
+    down.buttons = PointerButtons::new(1);
+    runtime
+        .handle_event(window_id, Event::Pointer(down))
+        .unwrap();
+
+    assert_eq!(
+        opened.opened(),
+        ["https://example.com/docs", "myapp://settings"]
+    );
+}
+
 #[test]
 fn explicit_paint_boundary_direct_child_remains_a_stack_surface() {
     let (mut runtime, window_id, _, _) = build_cached_move_runtime();

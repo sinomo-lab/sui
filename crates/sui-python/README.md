@@ -391,6 +391,15 @@ schedules work on the UI thread from any thread:
 clipboard on desktops with a display, and process memory otherwise; widget
 copy and paste in the same process use the same clipboard.
 
+Activating a link only calls its `on_open` callback. `sui.open_url(url)`
+opens a URL in the default browser or the app registered for its scheme, so
+`link("Docs", url, on_open=sui.open_url)` opens the link, and a button can
+call it from `on_press`. By default only `http`, `https`, and `mailto` URLs
+open. `sui.set_url_policy(policy)` replaces that check with
+`policy(url) -> bool`; call `sui.url_allowed_by_default(url)` from it to extend
+the default, return `True` to open everything, or pass `None` to restore the
+default.
+
 Wrap part of a window in `focus_scope(child, controller=FocusController())`
 and call `controller.focus()` to move keyboard focus to the scope's last
 focused control, or its first focusable one, at the next frame.

@@ -32,7 +32,8 @@ use sui_core::{
     DropEffects, Error, Event, FontHandle, ImageHandle, InvalidationKind, InvalidationRequest,
     InvalidationTarget, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
     PointerEvent, PointerEventKind, Rect, Result, SemanticsActionRequest, SemanticsEvent,
-    SemanticsNode, Size, TimerToken, Transform, Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
+    SemanticsNode, Size, TimerToken, Transform, UrlOpener, UrlOpenerBackend, Vector, WakeEvent,
+    WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{
@@ -98,7 +99,7 @@ pub use widget::{
 use widget::{ArrangeScope, MeasureScope};
 use widget::{
     BeginDragRequest, CursorRequest, DragRequest, DropAcceptanceRequest, FocusRequest,
-    PaintImageResource, PointerCaptureRequest, WakeRequest,
+    HostServices, PaintImageResource, PointerCaptureRequest, WakeRequest,
 };
 
 /// Internal typed notification delivered to widgets whose observable
@@ -121,7 +122,7 @@ pub const EXTERNAL_WAKE_KIND: &str = "sui.external.wake";
 pub struct Runtime {
     resources: ResourceStore,
     text_system: Arc<TextSystem>,
-    clipboard: Clipboard,
+    services: HostServices,
     windows: Vec<WindowState>,
     external_waker: Option<Arc<dyn Fn() + Send + Sync>>,
     command_sender: CommandSender,
@@ -145,7 +146,7 @@ impl Runtime {
         Self {
             resources,
             text_system: Arc::new(TextSystem::new()),
-            clipboard: Clipboard::new(),
+            services: HostServices::default(),
             windows: Vec::new(),
             external_waker: None,
             command_sender: CommandSender::new(),
@@ -156,7 +157,7 @@ impl Runtime {
     pub fn add_window(&mut self, builder: WindowBuilder) -> Result<WindowId> {
         let window_id = self.alloc_window_id();
         let mut window = builder.build(window_id, self.command_sender.clone())?;
-        window.clipboard = self.clipboard.clone();
+        window.services = self.services.clone();
         window.reactive_hub.set_waker(self.external_waker.clone());
         self.windows.push(window);
         Ok(window_id)
@@ -243,13 +244,25 @@ impl Runtime {
 
     /// Shared clipboard handle used by every window in this runtime.
     pub fn clipboard(&self) -> Clipboard {
-        self.clipboard.clone()
+        self.services.clipboard.clone()
     }
 
     /// Install a clipboard storage driver (for example an OS-clipboard bridge
     /// provided by the platform). Existing windows pick it up immediately.
     pub fn set_clipboard_backend(&self, backend: impl ClipboardBackend + 'static) {
-        self.clipboard.set_backend(backend);
+        self.services.clipboard.set_backend(backend);
+    }
+
+    /// Shared URL-opening service used by every window in this runtime. Set
+    /// its [`UrlPolicy`](sui_core::UrlPolicy) here to open other URLs.
+    pub fn url_opener(&self) -> UrlOpener {
+        self.services.url_opener.clone()
+    }
+
+    /// Install a URL-opening driver (for example the platform's bridge to the
+    /// default browser). Existing windows pick it up immediately.
+    pub fn set_url_opener_backend(&self, backend: impl UrlOpenerBackend + 'static) {
+        self.services.url_opener.set_backend(backend);
     }
 
     pub fn remove_window(&mut self, window_id: WindowId) -> Result<()> {
@@ -1349,7 +1362,7 @@ struct WindowState {
     pending_animation_wake_count: usize,
     ime_composition_rect: Option<Rect>,
     last_tick_time: f64,
-    clipboard: Clipboard,
+    services: HostServices,
     command_sender: CommandSender,
     command_listeners: CommandListeners,
     pending_command_diagnostics: Vec<CommandDispatchSample>,
@@ -1443,7 +1456,7 @@ impl WindowState {
             pending_animation_wake_count: 0,
             ime_composition_rect: None,
             last_tick_time: 0.0,
-            clipboard: Clipboard::new(),
+            services: HostServices::default(),
             command_sender,
             command_listeners,
             pending_command_diagnostics: Vec::new(),
@@ -2089,7 +2102,7 @@ impl WindowState {
                 self.last_tick_time,
                 EventPhase::Target,
                 self.focus.focused_widget,
-                &self.clipboard,
+                &self.services,
                 &self.command_sender,
                 event,
             )
@@ -2101,7 +2114,7 @@ impl WindowState {
                     self.last_tick_time,
                     EventPhase::Target,
                     self.focus.focused_widget,
-                    &self.clipboard,
+                    &self.services,
                     &self.command_sender,
                     event,
                 )
@@ -2128,7 +2141,7 @@ impl WindowState {
                 dpi_info,
                 self.last_tick_time,
                 self.focus.focused_widget,
-                &self.clipboard,
+                &self.services,
                 &self.command_sender,
                 &command,
             )
@@ -2139,7 +2152,7 @@ impl WindowState {
                     dpi_info,
                     self.last_tick_time,
                     self.focus.focused_widget,
-                    &self.clipboard,
+                    &self.services,
                     &self.command_sender,
                     &command,
                 )
@@ -3164,7 +3177,7 @@ impl WindowState {
                         self.last_tick_time,
                         EventPhase::Capture,
                         self.focus.focused_widget,
-                        &self.clipboard,
+                        &self.services,
                         &self.command_sender,
                         event,
                     )
@@ -3199,7 +3212,7 @@ impl WindowState {
                     self.last_tick_time,
                     EventPhase::Target,
                     self.focus.focused_widget,
-                    &self.clipboard,
+                    &self.services,
                     &self.command_sender,
                     event,
                 )
@@ -3211,7 +3224,7 @@ impl WindowState {
                         self.last_tick_time,
                         EventPhase::Target,
                         self.focus.focused_widget,
-                        &self.clipboard,
+                        &self.services,
                         &self.command_sender,
                         event,
                     )
@@ -3244,7 +3257,7 @@ impl WindowState {
                         self.last_tick_time,
                         EventPhase::Bubble,
                         self.focus.focused_widget,
-                        &self.clipboard,
+                        &self.services,
                         &self.command_sender,
                         event,
                     )
@@ -3389,7 +3402,7 @@ impl WindowState {
                         dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
-                        &self.clipboard,
+                        &self.services,
                         &self.command_sender,
                         false,
                     )
@@ -3401,7 +3414,7 @@ impl WindowState {
                         dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
-                        &self.clipboard,
+                        &self.services,
                         &self.command_sender,
                         false,
                     )
@@ -3425,7 +3438,7 @@ impl WindowState {
                         dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
-                        &self.clipboard,
+                        &self.services,
                         &self.command_sender,
                         true,
                     )
@@ -3437,7 +3450,7 @@ impl WindowState {
                         dpi_info,
                         self.last_tick_time,
                         self.focus.focused_widget,
-                        &self.clipboard,
+                        &self.services,
                         &self.command_sender,
                         true,
                     )

@@ -73,7 +73,9 @@ is also available from `RichDocumentViewState::selected_text`.
 
 Links and images are inert until the application supplies `on_link` or
 `on_image`; SUI never opens an external URL by itself. Both pointer activation
-and accessibility activation use the same callbacks.
+and accessibility activation use the same callbacks. To open a link in the
+browser, call `ctx.open_url(destination)` from `on_link_with_ctx`; see
+[Opening links](overlays-and-desktop.md#opening-links) for the URL policy.
 
 Markdown image sources are strings rather than network requests. Use
 `image_resolver` to map a `RichInlineImage` to an `ImageHandle` already

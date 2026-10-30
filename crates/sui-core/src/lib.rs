@@ -11,6 +11,7 @@ mod id;
 mod invalidation;
 mod motion;
 mod semantics;
+mod url_opener;
 
 pub use clipboard::{Clipboard, ClipboardBackend, LocalClipboardBackend};
 pub use color::{Color, ColorSpace, Oklch};
@@ -34,3 +35,4 @@ pub use semantics::{
     SemanticsNode, SemanticsPopupKind, SemanticsRelations, SemanticsRole, SemanticsState,
     SemanticsTextRange, SemanticsValue, ToggleState,
 };
+pub use url_opener::{LocalUrlOpenerBackend, UrlOpener, UrlOpenerBackend, UrlPolicy};
