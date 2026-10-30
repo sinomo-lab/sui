@@ -27,7 +27,7 @@ package; the npm package and prebuilt binaries are not published yet.
 - for the browser build: the `wasm32-unknown-unknown` Rust target
   (`rustup target add wasm32-unknown-unknown`) and the `wasm-bindgen` CLI
   matching the workspace's `wasm-bindgen` crate
-  (`cargo install wasm-bindgen-cli --version 0.2.129`).
+  (`cargo install wasm-bindgen-cli --version 0.2.130`).
 
 ## Build
 

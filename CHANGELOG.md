@@ -24,6 +24,9 @@ Versioning, with the usual expectation that the API may change during the
   `App::url_policy(UrlPolicy::new(...))`, extend the default from a custom
   policy with `UrlPolicy::allows_by_default`, or turn the check off with
   `UrlPolicy::allow_all`.
+- Updated dependencies, including PyO3 0.30, napi 3.16, resvg 0.49, and
+  wasm-bindgen 0.2.130; building the browser package needs
+  `wasm-bindgen-cli` 0.2.130.
 
 ### Python and JavaScript
 

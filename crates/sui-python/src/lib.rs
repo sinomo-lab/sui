@@ -187,7 +187,7 @@ impl From<PyModifiers> for BindingModifiers {
     }
 }
 
-#[pyclass(name = "Event", frozen, module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "Event", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyEvent {
     inner: BindingEvent,
@@ -574,7 +574,7 @@ impl PyEvent {
     }
 }
 
-#[pyclass(name = "EventContext", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "EventContext", module = "sinomo_ui")]
 #[derive(Clone)]
 pub struct PyEventContext {
     inner: Arc<Mutex<BindingEventContext>>,
@@ -787,7 +787,7 @@ impl From<PyRect> for Rect {
     }
 }
 
-#[pyclass(name = "Path", frozen, module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "Path", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyPath {
     inner: Path,
@@ -853,7 +853,7 @@ impl Default for PyPath {
     }
 }
 
-#[pyclass(name = "PathBuilder", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "PathBuilder", module = "sinomo_ui")]
 #[derive(Debug, Clone, Default)]
 pub struct PyPathBuilder {
     inner: PathBuilder,
@@ -1084,12 +1084,7 @@ fn py_easing(value: &str) -> PyResult<sui_crate::Easing> {
     })
 }
 
-#[pyclass(
-    name = "AnimationValue",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "AnimationValue", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAnimationValue {
     inner: BindingAnimationValue,
@@ -1195,7 +1190,7 @@ impl From<BindingAnimationValue> for PyAnimationValue {
     }
 }
 
-#[pyclass(name = "Transition", frozen, module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "Transition", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyTransition {
     inner: BindingTransition,
@@ -1240,7 +1235,7 @@ impl PyTransition {
     }
 }
 
-#[pyclass(name = "Spring", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "Spring", module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PySpring {
     inner: BindingSpring,
@@ -1285,7 +1280,7 @@ impl PySpring {
     }
 }
 
-#[pyclass(name = "AnimatedValue", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "AnimatedValue", module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAnimatedValue {
     inner: BindingAnimatedValue,
@@ -1347,7 +1342,7 @@ impl PyAnimatedValue {
     }
 }
 
-#[pyclass(name = "Keyframe", frozen, module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "Keyframe", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyAnimationKeyframe {
     inner: BindingAnimationKeyframe,
@@ -1374,7 +1369,7 @@ impl PyAnimationKeyframe {
     }
 }
 
-#[pyclass(name = "AnimationTrack", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "AnimationTrack", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyAnimationTrack {
     inner: BindingAnimationTrack,
@@ -1417,7 +1412,7 @@ impl PyAnimationTrack {
     }
 }
 
-#[pyclass(name = "AnimationClip", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "AnimationClip", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyAnimationClip {
     inner: BindingAnimationClip,
@@ -1461,12 +1456,7 @@ impl PyAnimationClip {
     }
 }
 
-#[pyclass(
-    name = "AnimationSample",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "AnimationSample", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyAnimationSample {
     #[pyo3(get)]
@@ -1493,12 +1483,7 @@ impl From<BindingAnimationSample> for PyAnimationSample {
     }
 }
 
-#[pyclass(
-    name = "AnimationMarker",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "AnimationMarker", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyAnimationMarker {
     #[pyo3(get)]
@@ -1516,7 +1501,7 @@ impl From<BindingAnimationMarker> for PyAnimationMarker {
     }
 }
 
-#[pyclass(name = "Stagger", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "Stagger", module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyStagger {
     inner: BindingStagger,
@@ -1544,7 +1529,7 @@ impl PyStagger {
     }
 }
 
-#[pyclass(name = "AnimationTimeline", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "AnimationTimeline", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyAnimationTimeline {
     inner: BindingAnimationTimeline,
@@ -1591,7 +1576,7 @@ impl PyAnimationTimeline {
     }
 }
 
-#[pyclass(name = "AnimationPlayer", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "AnimationPlayer", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyAnimationPlayer {
     inner: BindingAnimationPlayer,
@@ -1683,12 +1668,7 @@ impl PyAnimationPlayer {
     }
 }
 
-#[pyclass(
-    name = "AnimationDocument",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "AnimationDocument", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyAnimationDocument {
     inner: BindingAnimationDocument,
@@ -1727,7 +1707,7 @@ impl PyAnimationDocument {
     }
 }
 
-#[pyclass(name = "AnimationEditor", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "AnimationEditor", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyAnimationEditor {
     inner: BindingAnimationEditor,
@@ -1989,7 +1969,7 @@ impl From<Constraints> for PyConstraints {
     }
 }
 
-#[pyclass(name = "FontHandle", frozen, module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "FontHandle", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyFontHandle {
     inner: BindingFontHandle,
@@ -2045,12 +2025,7 @@ include!("generated_widgets.rs");
 
 mod callback_errors;
 
-#[pyclass(
-    name = "ImageHandle",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "ImageHandle", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyImageHandle {
     inner: BindingImageHandle,
@@ -2101,7 +2076,7 @@ struct PendingPaintImage {
     image: RegisteredImage,
 }
 
-#[pyclass(name = "Paint", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "Paint", module = "sinomo_ui")]
 #[derive(Clone)]
 pub struct PyPaint {
     builder: Arc<Mutex<PaintCommandBuilder>>,
@@ -2335,7 +2310,7 @@ enum PySemanticsCommand {
     Child(usize),
 }
 
-#[pyclass(name = "Semantics", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "Semantics", module = "sinomo_ui")]
 #[derive(Clone)]
 pub struct PySemantics {
     widget_id: WidgetId,
@@ -2441,7 +2416,7 @@ impl PySemantics {
     }
 }
 
-#[pyclass(name = "Shader", frozen, module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "Shader", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyShader {
     inner: BindingShader,
@@ -2690,7 +2665,7 @@ impl PyState {
     }
 }
 
-#[pyclass(name = "StateSubscription", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "StateSubscription", module = "sinomo_ui")]
 pub struct PyStateSubscription {
     inner: Mutex<Option<BindingStateSubscription>>,
 }
@@ -3224,12 +3199,7 @@ impl Default for PyApp {
     }
 }
 
-#[pyclass(
-    name = "WindowHandle",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "WindowHandle", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyWindowHandle {
     inner: BindingWindowId,
@@ -3269,7 +3239,7 @@ impl From<BindingWindowId> for PyWindowHandle {
 }
 
 /// A callback scheduled with `UiHandle.call_later` or `UiHandle.call_every`.
-#[pyclass(name = "Timer", module = "sinomo_ui", frozen, skip_from_py_object)]
+#[pyclass(name = "Timer", module = "sinomo_ui", frozen)]
 pub struct PyTimer {
     inner: BindingTimer,
 }
@@ -3301,7 +3271,7 @@ fn timer_duration(seconds: f64, name: &str) -> PyResult<std::time::Duration> {
     Ok(std::time::Duration::from_secs_f64(seconds))
 }
 
-#[pyclass(name = "UiHandle", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "UiHandle", module = "sinomo_ui")]
 #[derive(Clone)]
 pub struct PyUiHandle {
     inner: BindingUiHandle,
@@ -3419,22 +3389,12 @@ impl From<BindingUiHandle> for PyUiHandle {
     }
 }
 
-#[pyclass(
-    name = "RunningApp",
-    module = "sinomo_ui",
-    unsendable,
-    skip_from_py_object
-)]
+#[pyclass(name = "RunningApp", module = "sinomo_ui", unsendable)]
 pub struct PyRunningApp {
     inner: RefCell<BindingRuntime>,
 }
 
-#[pyclass(
-    name = "FrameTiming",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "FrameTiming", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyFrameTiming {
     #[pyo3(get)]
@@ -3452,12 +3412,7 @@ impl From<BindingFrameTiming> for PyFrameTiming {
     }
 }
 
-#[pyclass(
-    name = "WidgetTiming",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "WidgetTiming", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyWidgetTiming {
     #[pyo3(get)]
@@ -3484,12 +3439,7 @@ impl From<BindingWidgetTiming> for PyWidgetTiming {
     }
 }
 
-#[pyclass(
-    name = "EventRouteTrace",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "EventRouteTrace", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyEventRouteTrace {
     #[pyo3(get)]
@@ -3516,12 +3466,7 @@ impl From<BindingEventRouteTrace> for PyEventRouteTrace {
     }
 }
 
-#[pyclass(
-    name = "ReactiveInvalidationTrace",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "ReactiveInvalidationTrace", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyReactiveInvalidationTrace {
     #[pyo3(get)]
@@ -3548,12 +3493,7 @@ impl From<BindingReactiveInvalidationTrace> for PyReactiveInvalidationTrace {
     }
 }
 
-#[pyclass(
-    name = "CommandDispatchTrace",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "CommandDispatchTrace", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyCommandDispatchTrace {
     #[pyo3(get)]
@@ -3589,12 +3529,7 @@ impl From<BindingCommandDispatchTrace> for PyCommandDispatchTrace {
     }
 }
 
-#[pyclass(
-    name = "InvalidationTrace",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "InvalidationTrace", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyInvalidationTrace {
     #[pyo3(get)]
@@ -3618,12 +3553,7 @@ impl From<BindingInvalidationTrace> for PyInvalidationTrace {
     }
 }
 
-#[pyclass(
-    name = "WidgetRebuildTrace",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "WidgetRebuildTrace", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyWidgetRebuildTrace {
     #[pyo3(get)]
@@ -3644,12 +3574,7 @@ impl From<BindingWidgetRebuildTrace> for PyWidgetRebuildTrace {
     }
 }
 
-#[pyclass(
-    name = "InspectorSnapshot",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "InspectorSnapshot", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyInspectorSnapshot {
     #[pyo3(get)]
@@ -3990,12 +3915,7 @@ impl PyRunningApp {
     }
 }
 
-#[pyclass(
-    name = "RendererInteropCapabilities",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "RendererInteropCapabilities", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyRendererInteropCapabilities {
     inner: RendererInteropCapabilities,
@@ -4053,12 +3973,7 @@ impl PyRendererInteropCapabilities {
     }
 }
 
-#[pyclass(
-    name = "ExternalBackendHandle",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "ExternalBackendHandle", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyExternalBackendHandle {
     inner: ExternalBackendHandle,
@@ -4084,12 +3999,7 @@ impl PyExternalBackendHandle {
     }
 }
 
-#[pyclass(
-    name = "ExternalSync",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "ExternalSync", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone, Copy)]
 pub struct PyExternalSync {
     inner: ExternalSync,
@@ -4141,12 +4051,7 @@ impl PyExternalSync {
     }
 }
 
-#[pyclass(
-    name = "ExternalTextureDescriptor",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "ExternalTextureDescriptor", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyExternalTextureDescriptor {
     inner: ExternalTextureDescriptor,
@@ -4483,7 +4388,7 @@ impl ForeignWidgetCallbacks for PyWidgetCallbacks {
     }
 }
 
-#[pyclass(name = "UiTaskQueue", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "UiTaskQueue", module = "sinomo_ui")]
 #[derive(Clone)]
 pub struct PyUiTaskQueue {
     inner: UiTaskQueue,
@@ -4523,12 +4428,7 @@ impl Default for PyUiTaskQueue {
     }
 }
 
-#[pyclass(
-    name = "SemanticNode",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "SemanticNode", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PySemanticNode {
     inner: BindingSemanticNode,
@@ -4629,12 +4529,7 @@ impl From<BindingSemanticNode> for PySemanticNode {
     }
 }
 
-#[pyclass(
-    name = "RenderSnapshot",
-    frozen,
-    module = "sinomo_ui",
-    skip_from_py_object
-)]
+#[pyclass(name = "RenderSnapshot", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyRenderSnapshot {
     #[pyo3(get)]

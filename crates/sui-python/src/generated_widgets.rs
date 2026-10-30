@@ -3,7 +3,7 @@
 
 // Python widget bindings.
 
-#[pyclass(name = "RichDocumentUpdate", frozen, module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "RichDocumentUpdate", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyRichDocumentUpdate {
     inner: BindingRichDocumentUpdate,
@@ -132,7 +132,7 @@ impl PyRichDocument {
     }
 }
 
-#[pyclass(name = "TextSpan", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "TextSpan", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyTextSpan {
     inner: BindingTextSpan,
@@ -170,7 +170,7 @@ impl PyTextSpan {
     }
 }
 
-#[pyclass(name = "StatusBarSegment", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "StatusBarSegment", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyStatusBarSegment {
     inner: BindingStatusBarSegment,
@@ -201,7 +201,7 @@ impl PyStatusBarSegment {
     }
 }
 
-#[pyclass(name = "SegmentedControlItem", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "SegmentedControlItem", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PySegmentedControlItem {
     inner: BindingSegmentedControlItem,
@@ -227,7 +227,7 @@ impl PySegmentedControlItem {
     }
 }
 
-#[pyclass(name = "TableColumn", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "TableColumn", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyTableColumn {
     inner: BindingTableColumn,
@@ -260,7 +260,7 @@ impl PyTableColumn {
     }
 }
 
-#[pyclass(name = "TableRow", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "TableRow", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyTableRow {
     inner: BindingTableRow,
@@ -280,7 +280,7 @@ impl PyTableRow {
     }
 }
 
-#[pyclass(name = "ListItem", module = "sinomo_ui", frozen, skip_from_py_object)]
+#[pyclass(name = "ListItem", module = "sinomo_ui", frozen)]
 #[derive(Debug, Clone)]
 pub struct PyListItem {
     inner: BindingListItem,
@@ -320,7 +320,7 @@ impl PyListItem {
     }
 }
 
-#[pyclass(name = "TreeItem", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "TreeItem", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyTreeItem {
     inner: BindingTreeItem,
@@ -348,7 +348,7 @@ impl PyTreeItem {
     }
 }
 
-#[pyclass(name = "LayerListItem", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "LayerListItem", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyLayerListItem {
     inner: BindingLayerListItem,
@@ -375,7 +375,7 @@ impl PyLayerListItem {
     }
 }
 
-#[pyclass(name = "MenuItem", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "MenuItem", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyMenuItem {
     inner: BindingMenuItem,
@@ -414,7 +414,7 @@ impl PyMenuItem {
     }
 }
 
-#[pyclass(name = "ToolPaletteItem", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "ToolPaletteItem", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyToolPaletteItem {
     inner: BindingToolPaletteItem,
@@ -435,7 +435,7 @@ impl PyToolPaletteItem {
     }
 }
 
-#[pyclass(name = "ColorPaletteSwatch", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "ColorPaletteSwatch", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyColorPaletteSwatch {
     inner: BindingColorPaletteSwatch,
@@ -465,7 +465,7 @@ impl PyColorPaletteSwatch {
     }
 }
 
-#[pyclass(name = "BrushPreviewSpec", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "BrushPreviewSpec", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyBrushPreviewSpec {
     inner: BindingBrushPreviewSpec,
@@ -523,7 +523,7 @@ impl PyBrushPreviewSpec {
     }
 }
 
-#[pyclass(name = "FloatingStackWindow", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "FloatingStackWindow", module = "sinomo_ui")]
 #[derive(Clone)]
 pub struct PyFloatingStackWindow {
     inner: BindingFloatingStackWindow,
@@ -543,7 +543,7 @@ impl PyFloatingStackWindow {
     }
 }
 
-#[pyclass(name = "FloatingView", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "FloatingView", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyFloatingView {
     inner: BindingFloatingView,
@@ -594,7 +594,7 @@ impl PyFloatingView {
     }
 }
 
-#[pyclass(name = "FloatingViewSnapshot", frozen, module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "FloatingViewSnapshot", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyFloatingViewSnapshot {
     inner: BindingFloatingViewSnapshot,
@@ -681,7 +681,7 @@ fn extract_floating_views(views: &Bound<'_, PyAny>) -> PyResult<Vec<BindingFloat
         .collect())
 }
 
-#[pyclass(name = "DockNode", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "DockNode", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyDockNode {
     inner: BindingDockNode,
@@ -722,7 +722,7 @@ impl PyDockNode {
     }
 }
 
-#[pyclass(name = "DockFloatingGroup", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "DockFloatingGroup", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyDockFloatingGroup {
     inner: BindingDockFloatingGroup,
@@ -758,7 +758,7 @@ impl PyDockFloatingGroup {
     }
 }
 
-#[pyclass(name = "DockLayout", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "DockLayout", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyDockLayout {
     inner: BindingDockLayout,
@@ -876,7 +876,7 @@ impl PyDockState {
     }
 }
 
-#[pyclass(name = "DockPanelSpec", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "DockPanelSpec", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyDockPanelSpec {
     inner: BindingDockPanel,
@@ -902,7 +902,7 @@ impl PyDockPanelSpec {
     }
 }
 
-#[pyclass(name = "ConstraintCase", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "ConstraintCase", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyConstraintCase {
     inner: BindingConstraintCase,
@@ -942,7 +942,7 @@ impl PyConstraintCase {
 }
 
 /// Moves keyboard focus into a `focus_scope` from Python, from any thread.
-#[pyclass(name = "FocusController", module = "sinomo_ui", frozen, skip_from_py_object)]
+#[pyclass(name = "FocusController", module = "sinomo_ui", frozen)]
 #[derive(Debug, Clone, Default)]
 pub struct PyFocusController {
     inner: BindingFocusController,
@@ -969,7 +969,7 @@ impl PyFocusController {
 /// Scrolls a `scroll_view` or `virtual_scroll_view` from Python. Requests are
 /// applied on the UI thread at the view's next layout; the offset and
 /// extents reflect the latest layout.
-#[pyclass(name = "ScrollController", module = "sinomo_ui", frozen, skip_from_py_object)]
+#[pyclass(name = "ScrollController", module = "sinomo_ui", frozen)]
 #[derive(Debug, Clone, Default)]
 pub struct PyScrollController {
     inner: BindingScrollController,
@@ -1144,7 +1144,7 @@ impl PyNotificationCenter {
     }
 }
 
-#[pyclass(name = "VirtualListItem", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "VirtualListItem", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyVirtualListItem {
     inner: BindingVirtualListItem,
@@ -1246,7 +1246,7 @@ fn py_sort_direction(value: &str) -> PyResult<sui_crate::VirtualTableSortDirecti
 
 /// A column of a `virtual_table`. The key identifies the column in
 /// callbacks and in `TableModel.set_sort`.
-#[pyclass(name = "VirtualTableColumn", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "VirtualTableColumn", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyVirtualTableColumn {
     inner: sui_bindings_core::BindingVirtualTableColumn,
@@ -1297,7 +1297,7 @@ impl PyVirtualTableColumn {
 }
 
 /// A keyed row of text cells for a `TableModel`. Keys are non-zero.
-#[pyclass(name = "VirtualTableRow", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "VirtualTableRow", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyVirtualTableRow {
     inner: sui_bindings_core::BindingVirtualTableRow,
@@ -1339,7 +1339,7 @@ fn extract_virtual_table_rows(
 
 /// The thread-safe, keyed rows of a `virtual_table`. Any thread may change
 /// it; the table re-reads only the rows it shows.
-#[pyclass(name = "TableModel", module = "sinomo_ui", frozen, skip_from_py_object)]
+#[pyclass(name = "TableModel", module = "sinomo_ui", frozen)]
 #[derive(Debug, Clone)]
 pub struct PyTableModel {
     inner: sui_bindings_core::BindingTableModel,
@@ -1469,7 +1469,7 @@ impl PyCanvasStroke {
     }
 }
 
-#[pyclass(name = "CanvasShape", module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "CanvasShape", module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyCanvasShape {
     inner: BindingCanvasShape,
@@ -1538,7 +1538,7 @@ impl PyCanvasShape {
     }
 }
 
-#[pyclass(name = "PixelCanvasExport", frozen, module = "sinomo_ui", skip_from_py_object)]
+#[pyclass(name = "PixelCanvasExport", frozen, module = "sinomo_ui")]
 #[derive(Debug, Clone)]
 pub struct PyPixelCanvasExport {
     inner: BindingPixelCanvasExport,

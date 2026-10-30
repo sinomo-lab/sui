@@ -107,7 +107,7 @@ pub fn register_classes(namespace: &JsValue) -> Result<()> {
     Ok(())
 }
 
-/// The ABI wasm-bindgen 0.2.129 uses for exported classes: a pointer to the
+/// The ABI wasm-bindgen 0.2.130 uses for exported classes: a pointer to the
 /// reference-counted cell holding the Rust value.
 type ClassAbi<T> = wasm_bindgen::__rt::WasmPtr<wasm_bindgen::__rt::WasmRefCell<T>>;
 

@@ -23,7 +23,7 @@ sui-runtime = { workspace = true }
 sui-scene = { workspace = true }
 
 [build-dependencies]
-roxmltree = "0.21.1"
+roxmltree = "0.21.2"
 svgtypes = "0.16.1"
 
 [dev-dependencies]
