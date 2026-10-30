@@ -1,0 +1,90 @@
+name: GitHub release
+
+# Publishes a GitHub release for each `v*` tag, titled "SUI <version>" with
+# that version's CHANGELOG.md section as its notes:
+# - pushing a `v*` release tag creates the release;
+# - running the workflow manually with an existing tag creates the release
+#   for it, or updates its title and notes when it already exists.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, such as v0.6.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - name: Check that the tag matches the package version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match workspace version $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Extract the release notes from the changelog
+        run: |
+          awk -v heading="## [$VERSION]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && (/^## \[/ || /^\[[^]]+\]: /) { exit }
+            found { lines[++count] = $0 }
+            END {
+              first = 1
+              while (first <= count && lines[first] == "") first++
+              last = count
+              while (last >= first && lines[last] == "") last--
+              for (i = first; i <= last; i++) print lines[i]
+            }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "::error::CHANGELOG.md has no section for $VERSION"
+            exit 1
+          fi
+
+      - name: Publish the release
+        run: |
+          # Prerelease tags (v0.7.0-rc.1) never become the latest release, and
+          # a release published for an older tag must not replace a newer one.
+          prerelease=false
+          case "$VERSION" in *-*) prerelease=true ;; esac
+          newest=$(git ls-remote --tags --refs origin 'v*' \
+            | sed 's|.*refs/tags/||' | grep -v -e - | sort -V | tail -n 1)
+          latest=false
+          if [ "$prerelease" = false ] && [ "$TAG" = "$newest" ]; then
+            latest=true
+          fi
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --title "SUI $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md" \
+              --prerelease="$prerelease" --latest="$latest"
+          else
+            gh release create "$TAG" --verify-tag --title "SUI $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md" \
+              --prerelease="$prerelease" --latest="$latest"
+          fi
