@@ -1,6 +1,7 @@
 //! Public exports for the feature modules below.
 
 mod composition;
+mod damage;
 mod geometry;
 mod gradients;
 mod images;

@@ -34,11 +34,24 @@ pub(crate) struct FrameResources {
         HashMap<sui_core::WindowId, HashMap<crate::retained::RetainedPacketId, FragmentBuffers>>,
     pub(crate) output_transforms: HashMap<sui_core::WindowId, crate::output::CachedOutputTransform>,
     pub(crate) fragment_translations: HashMap<sui_core::WindowId, FragmentTranslationBuffer>,
+    /// What each window's persistent scene target shows, so the next frame
+    /// can redraw only what changed.
+    pub(crate) target_contents: HashMap<sui_core::WindowId, crate::damage::TargetContents>,
+    /// Each packet's normalized-device bounds, kept until its geometry
+    /// changes.
+    pub(crate) packet_bounds: HashMap<sui_core::WindowId, PacketBounds>,
     pub(crate) fragment_groups: HashMap<
         sui_core::WindowId,
         HashMap<crate::retained::RetainedPacketId, crate::submission::FragmentGroup>,
     >,
 }
+
+/// A window's packets' normalized-device bounds, each with the geometry it
+/// was measured from.
+pub(crate) type PacketBounds = rustc_hash::FxHashMap<
+    crate::retained::RetainedPacketId,
+    (Arc<crate::draw::DrawOpArena>, [f32; 4]),
+>;
 
 /// Bytes of one fragment translation uniform: an NDC offset and the same
 /// offset in framebuffer pixels.

@@ -4706,6 +4706,7 @@ dependencies = [
  "lyon_tessellation",
  "naga",
  "pollster 1.0.1",
+ "rustc-hash 2.1.3",
  "sinomo-ui-core",
  "sinomo-ui-scene",
  "sinomo-ui-text",

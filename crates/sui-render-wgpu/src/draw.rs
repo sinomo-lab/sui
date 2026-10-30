@@ -205,6 +205,9 @@ pub(crate) struct PreparedSceneSubmission {
     pub(crate) image_bind_groups: HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     pub(crate) text_atlas_bind_group: Option<wgpu::BindGroup>,
     pub(crate) analytic_path_resources: Option<PreparedAnalyticPathResources>,
+    /// What this frame shows, for redrawing only what changed in a target
+    /// that keeps the previous frame's pixels.
+    pub(crate) contents: crate::damage::TargetContents,
     pub(crate) frame_stats: RendererFrameStats,
 }
 

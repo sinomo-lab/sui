@@ -1035,6 +1035,7 @@ fn transform_on_gpu(
             intermediate_format,
             &intermediate_view,
             &mut encoder,
+            Some(window_id),
         )
         .unwrap();
     renderer

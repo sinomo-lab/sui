@@ -61,6 +61,9 @@ pub(crate) struct SharedRenderer {
     pub(crate) image_nearest_sampler: wgpu::Sampler,
     pub(crate) text_atlas_sampler: wgpu::Sampler,
     pub(crate) text_quad_buffer: wgpu::Buffer,
+    /// One transparent triangle covering the whole target, drawn by the
+    /// damage clear pipeline under a scissor.
+    pub(crate) clear_triangle_buffer: wgpu::Buffer,
     pub(crate) dual_source_blending_enabled: bool,
 }
 
@@ -78,6 +81,15 @@ impl SharedRenderer {
 
     pub(crate) fn clip_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
         self.pipeline_for(format, PipelineKind::ClipMask)
+    }
+
+    /// Writes transparent black over its scissor, for clearing a damaged
+    /// region of a target that keeps its other pixels.
+    pub(crate) fn clear_rect_pipeline(
+        &mut self,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
+        self.pipeline_for(format, PipelineKind::ClearRect)
     }
 
     pub(crate) fn image_pipeline(&mut self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
@@ -175,6 +187,7 @@ impl SharedRenderer {
     ) -> &wgpu::RenderPipeline {
         let fit = if kind == PipelineKind::OutputTransform
             || kind == PipelineKind::ClipMask
+            || kind == PipelineKind::ClearRect
             || target_keeps_extended_range(format)
         {
             SdrFit::None
@@ -188,9 +201,10 @@ impl SharedRenderer {
             let fit_constants = [("SDR_FIT", f64::from(fit.shader_value()))];
             let started = self.collect_pipeline_timings.then(web_time::Instant::now);
             let shader_label = match kind {
-                PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
-                    "SUI solid scene shader"
-                }
+                PipelineKind::Solid
+                | PipelineKind::Clipped
+                | PipelineKind::ClipMask
+                | PipelineKind::ClearRect => "SUI solid scene shader",
                 PipelineKind::Textured | PipelineKind::TexturedClipped => {
                     "SUI textured scene shader"
                 }
@@ -210,9 +224,10 @@ impl SharedRenderer {
                 PipelineKind::OutputTransform => "SUI output transform shader",
             };
             let shader_source = match kind {
-                PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
-                    SHADER_SOURCE
-                }
+                PipelineKind::Solid
+                | PipelineKind::Clipped
+                | PipelineKind::ClipMask
+                | PipelineKind::ClearRect => SHADER_SOURCE,
                 PipelineKind::Textured | PipelineKind::TexturedClipped => TEXTURED_SHADER_SOURCE,
                 PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped
                     if self.dual_source_blending_enabled =>
@@ -251,6 +266,7 @@ impl SharedRenderer {
                 | PipelineKind::WidgetShader
                 | PipelineKind::RoundedRect
                 | PipelineKind::GradientRect
+                | PipelineKind::ClearRect
                 | PipelineKind::OutputTransform => None,
                 PipelineKind::Clipped
                 | PipelineKind::TexturedClipped
@@ -332,7 +348,9 @@ impl SharedRenderer {
                         operation: wgpu::BlendOperation::Add,
                     },
                 },
-                PipelineKind::OutputTransform => wgpu::BlendState::REPLACE,
+                PipelineKind::OutputTransform | PipelineKind::ClearRect => {
+                    wgpu::BlendState::REPLACE
+                }
                 PipelineKind::Solid
                 | PipelineKind::Clipped
                 | PipelineKind::Textured
@@ -414,7 +432,8 @@ impl SharedRenderer {
                 | PipelineKind::RoundedRectClipped
                 | PipelineKind::GradientRect
                 | PipelineKind::GradientRectClipped
-                | PipelineKind::ClipMask => Some(self.device.create_pipeline_layout(
+                | PipelineKind::ClipMask
+                | PipelineKind::ClearRect => Some(self.device.create_pipeline_layout(
                     &wgpu::PipelineLayoutDescriptor {
                         label: Some("SUI scene pipeline layout"),
                         bind_group_layouts: &[Some(&self.fragment_translation_bind_group_layout)],
@@ -441,9 +460,10 @@ impl SharedRenderer {
                     &text_vertex_layouts[..]
                 }
                 PipelineKind::OutputTransform => &[][..],
-                PipelineKind::Solid | PipelineKind::Clipped | PipelineKind::ClipMask => {
-                    &solid_vertex_layouts[..]
-                }
+                PipelineKind::Solid
+                | PipelineKind::Clipped
+                | PipelineKind::ClipMask
+                | PipelineKind::ClearRect => &solid_vertex_layouts[..],
                 PipelineKind::AnalyticPath | PipelineKind::AnalyticPathClipped => {
                     &analytic_vertex_layouts[..]
                 }
@@ -473,6 +493,7 @@ impl SharedRenderer {
                         PipelineKind::GradientRect => "SUI gradient rect pipeline",
                         PipelineKind::GradientRectClipped => "SUI clipped gradient rect pipeline",
                         PipelineKind::ClipMask => "SUI clip mask pipeline",
+                        PipelineKind::ClearRect => "SUI damage clear pipeline",
                         PipelineKind::OutputTransform => "SUI output transform pipeline",
                     }),
                     layout: layout.as_ref(),
@@ -501,6 +522,7 @@ impl SharedRenderer {
                         | PipelineKind::GradientRect
                         | PipelineKind::GradientRectClipped
                         | PipelineKind::ClipMask
+                        | PipelineKind::ClearRect
                         | PipelineKind::OutputTransform => Some(wgpu::FragmentState {
                             module: &shader,
                             entry_point: Some("fs_main"),
@@ -548,6 +570,7 @@ pub(crate) enum PipelineKind {
     GradientRect,
     GradientRectClipped,
     ClipMask,
+    ClearRect,
     OutputTransform,
 }
 

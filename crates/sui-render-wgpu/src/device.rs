@@ -100,6 +100,20 @@ impl SharedRenderer {
             contents: bytemuck::cast_slice(&TextAtlasQuadVertex::unit_quad()),
             usage: wgpu::BufferUsages::VERTEX,
         });
+        let clear_vertex = |x: f32, y: f32| crate::gpu::SolidVertex {
+            position: [x, y],
+            color: [0.0; 4],
+            clip: crate::gpu::NO_CLIP,
+        };
+        let clear_triangle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("SUI damage clear triangle"),
+            contents: bytemuck::cast_slice(&[
+                clear_vertex(-1.0, -1.0),
+                clear_vertex(3.0, -1.0),
+                clear_vertex(-1.0, 3.0),
+            ]),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
         let analytic_path_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("SUI analytic path bind group layout"),
@@ -202,6 +216,7 @@ impl SharedRenderer {
             image_nearest_sampler,
             text_atlas_sampler,
             text_quad_buffer,
+            clear_triangle_buffer,
             dual_source_blending_enabled,
         }
     }

@@ -2,6 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod capture;
+mod damage;
 mod device;
 mod diagnostics;
 mod draw;

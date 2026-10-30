@@ -150,6 +150,15 @@ Versioning, with the usual expectation that the API may change during the
   from 647 to 22 draw calls per frame, which matters most in browsers, where
   each GPU call goes through JavaScript. Vertex and instance formats grow by
   16 bytes each.
+- Partial redraw: when a window renders through its persistent intermediate
+  target (always in browsers, and for HDR and wide-gamut output), a frame
+  clears and redraws only the region where its packets changed, and redraws
+  nothing when none did. Reordered packets, a resized target, a different
+  image registry, external images, frames drawn straight to the swapchain,
+  and damage over half the target fall back to a full redraw. With one cell
+  of a 1,200-cell 4K grid changing per frame, GPU-inclusive frame time drops
+  from about 1.6 ms to 0.85 ms. Native SDR windows, which draw straight to
+  the swapchain, still redraw everything.
 
 ## [0.5.0] - 2026-10-08
 

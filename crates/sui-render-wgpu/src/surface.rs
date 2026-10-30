@@ -106,6 +106,7 @@ impl WgpuRenderer {
                 intermediate_format,
                 &intermediate_view,
                 &mut encoder,
+                Some(frame.window_id),
             )?;
             self.encode_output_transform_pass(
                 frame.window_id,
@@ -126,6 +127,11 @@ impl WgpuRenderer {
                 .as_mut()
                 .expect("renderer shared state initialized")
                 .sdr_fit = crate::output::SdrFit::for_tone_mapping(tone_mapping);
+            // The swapchain does not keep pixels between frames, and the
+            // persistent target no longer shows the latest frame.
+            self.frame_resources
+                .target_contents
+                .remove(&frame.window_id);
             self.submit_prepared_scene(prepared, format, &view)?
         };
         frame_stats.surface_acquire_time_us = surface_acquire_time_us;

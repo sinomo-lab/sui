@@ -1,4 +1,8 @@
 use crate::WgpuRenderer;
+use crate::damage::{
+    FragmentPlacement, FrameInputs, PixelRect, RedrawRegion, TargetContents, fragment_pixel_bounds,
+    plan_redraw,
+};
 use crate::diagnostics::RendererFrameStats;
 use crate::draw::CachedDrawBatch;
 use crate::draw::CachedPassBatch;
@@ -199,6 +203,46 @@ impl WgpuRenderer {
             .fragments
             .entry(frame.window_id)
             .or_default();
+        // Damage is tracked per packet: a group's bounds can span the
+        // whole frame even when one small packet in it changed.
+        let packet_bounds = self
+            .frame_resources
+            .packet_bounds
+            .entry(frame.window_id)
+            .or_default();
+        let live: HashSet<_> = submission
+            .fragments
+            .iter()
+            .map(|fragment| fragment.id)
+            .collect();
+        packet_bounds.retain(|id, _| live.contains(id));
+        let placements = submission
+            .fragments
+            .iter()
+            .map(|fragment| {
+                let ndc_bounds = match packet_bounds.get(&fragment.id) {
+                    Some((source, bounds)) if Arc::ptr_eq(source, &fragment.draw_ops) => *bounds,
+                    _ => {
+                        let bounds = draw_ops_ndc_bounds(&fragment.draw_ops);
+                        packet_bounds.insert(fragment.id, (Arc::clone(&fragment.draw_ops), bounds));
+                        bounds
+                    }
+                };
+                FragmentPlacement {
+                    id: fragment.id,
+                    source: Arc::clone(&fragment.draw_ops),
+                    translation: fragment.translation,
+                    clip: fragment.clip,
+                    bounds: fragment_pixel_bounds(
+                        ndc_bounds,
+                        fragment.translation,
+                        fragment.clip,
+                        frame.viewport,
+                        framebuffer_size,
+                    ),
+                }
+            })
+            .collect::<Vec<_>>();
         let fragments = group_fragments(
             submission.fragments,
             self.frame_resources
@@ -424,7 +468,22 @@ impl WgpuRenderer {
         frame_stats.gpu_upload_time_us = gpu_upload_time_us;
         frame_stats.prepared_fragment_cache_hits = prepared_fragment_cache_hits;
         frame_stats.prepared_fragment_build_count = prepared_fragment_build_count;
+        let contents = TargetContents {
+            inputs: FrameInputs {
+                viewport: frame.viewport,
+                framebuffer_size,
+                sdr_fit: self
+                    .shared
+                    .as_ref()
+                    .expect("renderer shared state initialized")
+                    .sdr_fit,
+                image_registry: Arc::clone(&frame.image_registry),
+                has_external_images: frame.image_registry.iter_external().next().is_some(),
+            },
+            placements,
+        };
         Ok(PreparedSceneSubmission {
+            contents,
             framebuffer_size,
             encodable_passes,
             fragment_translations,
@@ -472,20 +531,76 @@ impl WgpuRenderer {
         view: &wgpu::TextureView,
     ) -> Result<RendererFrameStats> {
         let mut encoder = self.frame_encoder();
-        let mut stats = self.encode_prepared_scene(prepared, format, view, &mut encoder)?;
+        let mut stats = self.encode_prepared_scene(prepared, format, view, &mut encoder, None)?;
         self.submit_frame_encoder(encoder, &mut stats);
         Ok(stats)
     }
 
     pub(crate) fn encode_prepared_scene(
         &mut self,
-        prepared: PreparedSceneSubmission,
+        mut prepared: PreparedSceneSubmission,
         target_format: wgpu::TextureFormat,
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
+        persistent_target: Option<sui_core::WindowId>,
     ) -> Result<RendererFrameStats> {
         let pass_encode_started = self.runtime_diagnostics_enabled.then(Instant::now);
-        let pass_count = if prepared.encodable_passes.is_empty() {
+        // A target that keeps its pixels between frames only needs what
+        // changed since the frame it shows.
+        let region = match persistent_target {
+            Some(window) => {
+                let region = plan_redraw(
+                    self.frame_resources.target_contents.get(&window),
+                    &prepared.contents,
+                );
+                let contents = crate::damage::TargetContents {
+                    inputs: prepared.contents.inputs.clone(),
+                    placements: std::mem::take(&mut prepared.contents.placements),
+                };
+                self.frame_resources
+                    .target_contents
+                    .insert(window, contents);
+                region
+            }
+            None => RedrawRegion::Full,
+        };
+        #[cfg(test)]
+        LAST_REDRAW_REGION.with(|last| last.set(Some(region)));
+        let pass_count = if region == RedrawRegion::Nothing {
+            0
+        } else if let RedrawRegion::Partial(damage) = region {
+            let shared = self
+                .shared
+                .as_mut()
+                .expect("renderer shared state initialized");
+            encode_damage_clear(
+                shared,
+                encoder,
+                view,
+                target_format,
+                damage,
+                &prepared.fragment_translations,
+            );
+            let stencil_view = self
+                .frame_resources
+                .stencil
+                .as_ref()
+                .map(|target| &target.view);
+            1 + encode_fragment_passes(
+                shared,
+                encoder,
+                view,
+                target_format,
+                prepared.framebuffer_size,
+                &prepared.encodable_passes,
+                &prepared.fragment_translations.bind_group,
+                stencil_view,
+                &prepared.image_bind_groups,
+                prepared.text_atlas_bind_group.as_ref(),
+                prepared.analytic_path_resources.as_ref(),
+                Some(damage),
+            )?
+        } else if prepared.encodable_passes.is_empty() {
             let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SUI scene clear pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -529,6 +644,7 @@ impl WgpuRenderer {
                 &prepared.image_bind_groups,
                 prepared.text_atlas_bind_group.as_ref(),
                 prepared.analytic_path_resources.as_ref(),
+                None,
             )?
         };
         let pass_encode_time_us = pass_encode_started
@@ -686,6 +802,9 @@ pub(crate) fn cache_draw_ops(draw_ops: &DrawOpArena) -> Vec<CachedPassBatch> {
 
 #[cfg(test)]
 thread_local! {
+    /// The region the last encoded frame redrew, for tests.
+    pub(crate) static LAST_REDRAW_REGION: std::cell::Cell<Option<RedrawRegion>> =
+        const { std::cell::Cell::new(None) };
     /// Lets tests render the same frame with and without batch reordering.
     pub(crate) static BATCH_REORDER_DISABLED: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
@@ -872,6 +991,27 @@ pub(crate) fn reorder_draw_ops_for_batching(
     draw_ops.draw_ops = ops;
     draw_ops.scene_vertices = scene_vertices;
     draw_ops.text_instances = text_instances;
+}
+
+/// The normalized-device bounds of everything `draw_ops` draws.
+pub(crate) fn draw_ops_ndc_bounds(draw_ops: &DrawOpArena) -> [f32; 4] {
+    draw_ops.draw_ops.iter().fold(
+        [
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ],
+        |bounds, op| {
+            let op = draw_op_ndc_bounds(draw_ops, op);
+            [
+                bounds[0].min(op[0]),
+                bounds[1].min(op[1]),
+                bounds[2].max(op[2]),
+                bounds[3].max(op[3]),
+            ]
+        },
+    )
 }
 
 /// The normalized-device-coordinate bounds `[min_x, min_y, max_x, max_y]` of
@@ -1322,8 +1462,10 @@ pub(crate) fn encode_fragment_passes(
     image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
+    damage: Option<PixelRect>,
 ) -> Result<usize> {
-    let mut cleared = false;
+    // Redrawing a damaged region keeps the rest of the target.
+    let mut cleared = damage.is_some();
     let mut index = 0;
     let mut render_pass_count = 0;
 
@@ -1344,6 +1486,7 @@ pub(crate) fn encode_fragment_passes(
                 image_bind_groups,
                 text_atlas_bind_group,
                 analytic_path_resources,
+                damage,
                 &mut cleared,
             )?;
             render_pass_count += 1;
@@ -1360,6 +1503,7 @@ pub(crate) fn encode_fragment_passes(
                 image_bind_groups,
                 text_atlas_bind_group,
                 analytic_path_resources,
+                damage,
                 &mut cleared,
             )?;
             render_pass_count += 1;
@@ -1381,6 +1525,7 @@ pub(crate) fn encode_unclipped_pass_run(
     image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
+    damage: Option<PixelRect>,
     cleared: &mut bool,
 ) -> Result<()> {
     let load_op = next_pass_load_op(cleared);
@@ -1419,6 +1564,7 @@ pub(crate) fn encode_unclipped_pass_run(
             image_bind_groups,
             text_atlas_bind_group,
             analytic_path_resources,
+            damage,
             &mut state,
         )?;
     }
@@ -1438,6 +1584,7 @@ pub(crate) fn encode_clipped_pass(
     image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
+    damage: Option<PixelRect>,
     cleared: &mut bool,
 ) -> Result<()> {
     let load_op = next_pass_load_op(cleared);
@@ -1467,7 +1614,10 @@ pub(crate) fn encode_clipped_pass(
 
     let clip_pipeline = shared.clip_pipeline(target_format);
     render_pass.set_pipeline(clip_pipeline);
-    render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1);
+    match damage {
+        Some(damage) => set_pixel_scissor(&mut render_pass, damage),
+        None => render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1),
+    }
     // Clip paths are part of the fragment, so they move with it.
     render_pass.set_bind_group(0, translation_bind_group, &[batch.translation_offset]);
     let clip_buffer = batch
@@ -1501,10 +1651,71 @@ pub(crate) fn encode_clipped_pass(
         image_bind_groups,
         text_atlas_bind_group,
         analytic_path_resources,
+        damage,
         &mut state,
     )?;
 
     Ok(())
+}
+
+/// Clear `damage` to transparent black in a target that keeps its other
+/// pixels; WebGPU can only clear a whole attachment.
+pub(crate) fn encode_damage_clear(
+    shared: &mut SharedRenderer,
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    target_format: wgpu::TextureFormat,
+    damage: PixelRect,
+    translations: &PreparedFragmentTranslations,
+) {
+    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("SUI scene damage clear pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        occlusion_query_set: None,
+        timestamp_writes: None,
+        multiview_mask: None,
+    });
+    render_pass.set_pipeline(shared.clear_rect_pipeline(target_format));
+    render_pass.set_bind_group(
+        0,
+        &translations.bind_group,
+        &[translations.offset(Vector::ZERO)],
+    );
+    set_pixel_scissor(&mut render_pass, damage);
+    render_pass.set_vertex_buffer(0, shared.clear_triangle_buffer.slice(..));
+    render_pass.draw(0..3, 0..1);
+}
+
+fn pixel_rect_scissor(rect: PixelRect) -> ScissorRect {
+    ScissorRect {
+        x: rect.min_x,
+        y: rect.min_y,
+        width: rect.max_x - rect.min_x,
+        height: rect.max_y - rect.min_y,
+    }
+}
+
+fn scissor_pixel_rect(scissor: ScissorRect) -> PixelRect {
+    PixelRect {
+        min_x: scissor.x,
+        min_y: scissor.y,
+        max_x: scissor.x + scissor.width,
+        max_y: scissor.y + scissor.height,
+    }
+}
+
+fn set_pixel_scissor(render_pass: &mut wgpu::RenderPass<'_>, rect: PixelRect) {
+    let scissor = pixel_rect_scissor(rect);
+    render_pass.set_scissor_rect(scissor.x, scissor.y, scissor.width, scissor.height);
 }
 
 pub(crate) fn next_pass_load_op(cleared: &mut bool) -> wgpu::LoadOp<wgpu::Color> {
@@ -1548,6 +1759,7 @@ pub(crate) fn encode_draws_for_pass(
     image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
+    damage: Option<PixelRect>,
     state: &mut RenderPassState,
 ) -> Result<()> {
     // Every scene pipeline reads its translation from group 0, and bind
@@ -1561,8 +1773,17 @@ pub(crate) fn encode_draws_for_pass(
     }
 
     for draw in &pass.draws {
-        if state.scissor != Some(draw.clip_rect) {
-            match draw.clip_rect {
+        // A damaged redraw draws only inside the damage.
+        let scissor = match (draw.clip_rect, damage) {
+            (clip, None) => clip,
+            (None, Some(damage)) => Some(pixel_rect_scissor(damage)),
+            (Some(clip), Some(damage)) => match damage.intersection(scissor_pixel_rect(clip)) {
+                Some(rect) => Some(pixel_rect_scissor(rect)),
+                None => continue,
+            },
+        };
+        if state.scissor != Some(scissor) {
+            match scissor {
                 Some(scissor) => render_pass.set_scissor_rect(
                     scissor.x,
                     scissor.y,
@@ -1571,7 +1792,7 @@ pub(crate) fn encode_draws_for_pass(
                 ),
                 None => render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1),
             }
-            state.scissor = Some(draw.clip_rect);
+            state.scissor = Some(scissor);
         }
 
         let pipeline_kind = draw.kind.pipeline_kind();
