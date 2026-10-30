@@ -5,3 +5,10 @@ xtask = "run -p xtask --"
 # which tiny-skia, swash, and lyon use for rasterization and path math.
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "target-feature=+simd128"]
+
+# Print a backtrace with every panic in programs Cargo runs, including tests,
+# so rare failures (such as a crash inside the DX12 backend) can be traced
+# from the run that hit them. A RUST_BACKTRACE already set in the
+# environment takes precedence.
+[env]
+RUST_BACKTRACE = { value = "1", force = false }
