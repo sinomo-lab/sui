@@ -4,17 +4,23 @@
 //! two at half strength.
 
 use crate::ControlMetrics;
-use sui_core::{Color, Path, Rect};
+use sui_core::{Color, DpiInfo, Path, Rect};
 use sui_runtime::PaintCtx;
 use sui_scene::StrokeStyle;
 
 /// A length given in physical pixels, such as a theme's border or focus ring
 /// width, in logical pixels.
 pub(crate) fn physical_pixels(ctx: &PaintCtx, value: f32) -> f32 {
+    physical_pixels_at(ctx.dpi(), value)
+}
+
+/// [`physical_pixels`] at `dpi`, for layout and events that must agree with
+/// what paint draws.
+pub(crate) fn physical_pixels_at(dpi: DpiInfo, value: f32) -> f32 {
     if value <= 0.0 {
         return 0.0;
     }
-    ctx.dpi().physical_pixels_to_logical(value)
+    dpi.physical_pixels_to_logical(value)
 }
 
 /// `rect` with each edge moved to the nearest physical pixel. Under a

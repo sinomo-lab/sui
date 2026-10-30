@@ -40,6 +40,14 @@ Versioning, with the usual expectation that the API may change during the
   Chromium browsers provide, while other browsers return an error. Code that
   builds a `FileDialogSelection` itself, such as a test's `FileDialogService`,
   must now set `folders` or use `..Default::default()`.
+- A `TextInput` whose text is wider than the field scrolls it sideways,
+  keeping the caret and the text just typed in view, where it used to pin the
+  caret to the field's edge over hidden text. Clicks, drag selection,
+  selection highlights, and the IME candidate window follow the scrolled text,
+  editable semantics report the offset as `scroll_x`, and `PasswordInput` and
+  `DateTimeInput` scroll the same way. Entered text now starts where the caret
+  measures it from rather than at its first glyph's ink, and read-only text
+  keeps the field's `text_style`, muted.
 - Updated dependencies, including PyO3 0.30, napi 3.16, resvg 0.49, and
   wasm-bindgen 0.2.130; building the browser package needs
   `wasm-bindgen-cli` 0.2.130.

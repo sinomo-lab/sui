@@ -4596,6 +4596,328 @@ fn text_input_click_positions_caret_for_insertion() -> Result<()> {
     Ok(())
 }
 
+const LONG_TEXT: &str = "The quick brown fox jumps over the lazy dog";
+
+/// A text input far narrower than [`LONG_TEXT`].
+fn narrow_text_input(field: impl Widget + 'static) -> (Runtime, sui_core::WindowId) {
+    build_runtime(Stack::vertical().with_child(SizedBox::new().width(160.0).child(field)))
+}
+
+fn text_input_semantics(output: &RenderOutput) -> &sui_core::SemanticsNode {
+    output
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::TextInput)
+        .expect("text input semantics")
+}
+
+fn text_input_scroll_x(output: &RenderOutput) -> f32 {
+    text_input_semantics(output)
+        .editable_text
+        .as_ref()
+        .expect("text input should expose editable semantics")
+        .scroll_x
+}
+
+/// The part of a default-themed text input that shows its text.
+fn text_input_content(output: &RenderOutput) -> Rect {
+    let bounds = text_input_semantics(output).bounds;
+    let padding = DefaultTheme::default().metrics.text_input_padding;
+    Rect::new(
+        bounds.x() + padding.left,
+        bounds.y() + padding.top,
+        bounds.width() - padding.left - padding.right,
+        bounds.height() - padding.top - padding.bottom,
+    )
+}
+
+fn shaped_text_origin_for(output: &RenderOutput, text: &str) -> Point {
+    let mut found = None;
+    output.frame.scene.visit_commands(&mut |command| {
+        if let SceneCommand::DrawShapedText(run) = command
+            && found.is_none()
+            && run
+                .resolve(output.frame.text_layout_registry.as_ref())
+                .is_some_and(|layout| layout.text() == text)
+        {
+            found = Some(run.origin);
+        }
+    });
+    found.expect("shaped text draw command present")
+}
+
+fn solid_fill_rects(output: &RenderOutput, color: Color) -> Vec<Rect> {
+    let mut rects = Vec::new();
+    output.frame.scene.visit_commands(&mut |command| {
+        if let SceneCommand::FillRect {
+            rect,
+            brush: Brush::Solid(fill),
+        } = command
+            && *fill == color
+        {
+            rects.push(*rect);
+        }
+    });
+    rects
+}
+
+/// Clicks the start of the only text input, focusing it.
+fn focus_text_input(runtime: &mut Runtime, window_id: sui_core::WindowId) -> Result<()> {
+    let output = runtime.render(window_id)?;
+    let content = text_input_content(&output);
+    let start = Point::new(content.x() + 1.0, super::rect_center(content).y);
+    runtime.handle_event(
+        window_id,
+        primary_pointer(PointerEventKind::Down, start, true),
+    )?;
+    runtime.handle_event(
+        window_id,
+        primary_pointer(PointerEventKind::Up, start, false),
+    )?;
+    Ok(())
+}
+
+/// Types `text` a key at a time, showing a frame after each key.
+fn type_text(runtime: &mut Runtime, window_id: sui_core::WindowId, text: &str) -> Result<()> {
+    for character in text.chars() {
+        runtime.handle_event(
+            window_id,
+            Event::Keyboard(KeyboardEvent::new(character.to_string(), KeyState::Pressed)),
+        )?;
+        let _ = runtime.render(window_id)?;
+    }
+    Ok(())
+}
+
+fn shift_key(key: &str) -> Event {
+    let mut event = KeyboardEvent::new(key, KeyState::Pressed);
+    event.modifiers.shift = true;
+    Event::Keyboard(event)
+}
+
+fn assert_close(actual: f32, expected: f32, what: &str) {
+    assert!(
+        (actual - expected).abs() < 0.01,
+        "{what}: expected {expected}, got {actual}"
+    );
+}
+
+#[test]
+fn text_input_scrolls_typed_text_to_keep_the_caret_in_view() -> Result<()> {
+    let (mut runtime, window_id) = narrow_text_input(TextInput::new("Name"));
+    focus_text_input(&mut runtime, window_id)?;
+    type_text(&mut runtime, window_id, LONG_TEXT)?;
+
+    let output = runtime.render(window_id)?;
+    let content = text_input_content(&output);
+    let layout = shaped_text_layout_for(&output, LONG_TEXT);
+    let origin = shaped_text_origin_for(&output, LONG_TEXT);
+    let caret = output
+        .ime_composition_rect
+        .expect("focused text input caret");
+    let scroll_x = text_input_scroll_x(&output);
+
+    assert!(layout.measurement().width > content.width() * 2.0);
+    assert_rect_approx_eq(draw_clip_rect_for(&output, LONG_TEXT), content);
+    assert!(scroll_x > 0.0, "the text should scroll");
+    assert_close(origin.x, content.x() - scroll_x, "text origin");
+    // The caret ends the field, right after the last character typed.
+    assert_close(caret.max_x(), content.max_x(), "caret right edge");
+    assert_close(
+        caret.x(),
+        origin.x + layout.measurement().width,
+        "caret after the text",
+    );
+    Ok(())
+}
+
+#[test]
+fn text_input_scrolls_to_the_caret_wherever_it_moves() -> Result<()> {
+    let (mut runtime, window_id) = narrow_text_input(TextInput::new("Name"));
+    focus_text_input(&mut runtime, window_id)?;
+    type_text(&mut runtime, window_id, LONG_TEXT)?;
+
+    runtime.handle_event(window_id, key_without_text("Home"))?;
+    let home = runtime.render(window_id)?;
+    let content = text_input_content(&home);
+    assert_eq!(text_input_scroll_x(&home), 0.0);
+    assert_close(
+        shaped_text_origin_for(&home, LONG_TEXT).x,
+        content.x(),
+        "text origin at the start",
+    );
+    assert_close(
+        home.ime_composition_rect.expect("caret").x(),
+        content.x(),
+        "caret at the start",
+    );
+
+    // A step right of the field's end scrolls just far enough.
+    for _ in 0..LONG_TEXT.len() / 2 {
+        runtime.handle_event(window_id, key_without_text("ArrowRight"))?;
+    }
+    let middle = runtime.render(window_id)?;
+    let layout = shaped_text_layout_for(&middle, LONG_TEXT);
+    let caret = middle.ime_composition_rect.expect("caret");
+    assert_close(caret.max_x(), content.max_x(), "caret right edge");
+    assert_close(
+        caret.x(),
+        shaped_text_origin_for(&middle, LONG_TEXT).x + layout.caret_rect(LONG_TEXT.len() / 2).x(),
+        "caret on its character boundary",
+    );
+
+    runtime.handle_event(window_id, key_without_text("End"))?;
+    let end = runtime.render(window_id)?;
+    assert_close(
+        end.ime_composition_rect.expect("caret").max_x(),
+        content.max_x(),
+        "caret at the end",
+    );
+    Ok(())
+}
+
+#[test]
+fn scrolled_text_input_hit_tests_and_selects_the_text_shown() -> Result<()> {
+    let theme = DefaultTheme::default();
+    let (mut runtime, window_id) = narrow_text_input(TextInput::new("Name"));
+    focus_text_input(&mut runtime, window_id)?;
+    type_text(&mut runtime, window_id, LONG_TEXT)?;
+    let output = runtime.render(window_id)?;
+    let content = text_input_content(&output);
+    let layout = shaped_text_layout_for(&output, LONG_TEXT);
+    let origin = shaped_text_origin_for(&output, LONG_TEXT);
+
+    let point = super::rect_center(content);
+    let shown = layout
+        .hit_test_point(Point::new(point.x - origin.x, 0.0))
+        .utf8_offset;
+    assert_ne!(
+        shown,
+        layout
+            .hit_test_point(Point::new(point.x - content.x(), 0.0))
+            .utf8_offset,
+        "the click should land on different text once scrolled"
+    );
+    runtime.handle_event(
+        window_id,
+        primary_pointer(PointerEventKind::Down, point, true),
+    )?;
+    runtime.handle_event(
+        window_id,
+        primary_pointer(PointerEventKind::Up, point, false),
+    )?;
+    let clicked = runtime.render(window_id)?;
+    let editable = text_input_semantics(&clicked)
+        .editable_text
+        .clone()
+        .expect("editable semantics");
+    assert_eq!(editable.caret_offset, shown);
+    // Clicking text in view leaves it where it is.
+    assert_eq!(editable.scroll_x, text_input_scroll_x(&output));
+
+    for _ in 0..3 {
+        runtime.handle_event(window_id, shift_key("ArrowLeft"))?;
+    }
+    let selected = runtime.render(window_id)?;
+    let selection = solid_fill_rects(&selected, theme.palette.selection);
+    assert_eq!(selection.len(), 1);
+    assert_close(
+        selection[0].x(),
+        origin.x + layout.caret_rect(shown - 3).x(),
+        "selection start",
+    );
+    assert_close(
+        selection[0].max_x(),
+        origin.x + layout.caret_rect(shown).x(),
+        "selection end",
+    );
+    Ok(())
+}
+
+#[test]
+fn text_input_scrolls_back_when_its_text_gets_shorter() -> Result<()> {
+    let (mut runtime, window_id) = narrow_text_input(TextInput::new("Name"));
+    focus_text_input(&mut runtime, window_id)?;
+    type_text(&mut runtime, window_id, LONG_TEXT)?;
+
+    runtime.handle_event(window_id, command_key("a"))?;
+    type_text(&mut runtime, window_id, "Ada")?;
+    let output = runtime.render(window_id)?;
+
+    assert_eq!(text_input_scroll_x(&output), 0.0);
+    assert_close(
+        shaped_text_origin_for(&output, "Ada").x,
+        text_input_content(&output).x(),
+        "text origin",
+    );
+    Ok(())
+}
+
+#[test]
+fn text_input_keeps_a_long_composition_and_its_caret_in_view() -> Result<()> {
+    let (mut runtime, window_id) = narrow_text_input(TextInput::new("Name"));
+    focus_text_input(&mut runtime, window_id)?;
+
+    let preedit = "にほんごをにゅうりょくしています";
+    runtime.handle_event(window_id, Event::Ime(ImeEvent::CompositionStart))?;
+    runtime.handle_event(
+        window_id,
+        Event::Ime(ImeEvent::CompositionUpdate {
+            text: preedit.to_string(),
+            cursor_range: Some(preedit.len()..preedit.len()),
+        }),
+    )?;
+    let output = runtime.render(window_id)?;
+    let content = text_input_content(&output);
+    let layout = shaped_text_layout_for(&output, preedit);
+    let caret = output.ime_composition_rect.expect("caret");
+
+    assert!(layout.measurement().width > content.width());
+    assert_close(caret.max_x(), content.max_x(), "caret right edge");
+    assert_close(
+        caret.x(),
+        shaped_text_origin_for(&output, preedit).x + layout.measurement().width,
+        "caret after the composition",
+    );
+    Ok(())
+}
+
+#[test]
+fn password_input_scrolls_its_masked_text_like_a_text_input() -> Result<()> {
+    let (mut runtime, window_id) = narrow_text_input(PasswordInput::new("Password"));
+    focus_text_input(&mut runtime, window_id)?;
+    type_text(&mut runtime, window_id, LONG_TEXT)?;
+
+    let output = runtime.render(window_id)?;
+    let content = text_input_content(&output);
+    let masked = super::PASSWORD_MASK.repeat(LONG_TEXT.len());
+    let layout = shaped_text_layout_for(&output, &masked);
+    let caret = output.ime_composition_rect.expect("caret");
+
+    assert!(text_input_scroll_x(&output) > 0.0, "the text should scroll");
+    assert_close(caret.max_x(), content.max_x(), "caret right edge");
+    assert_close(
+        caret.x(),
+        shaped_text_origin_for(&output, &masked).x + layout.measurement().width,
+        "caret after the text",
+    );
+    Ok(())
+}
+
+#[test]
+fn unfocused_text_input_shows_the_start_of_a_long_value() -> Result<()> {
+    let (mut runtime, window_id) = narrow_text_input(TextInput::new("Name").value(LONG_TEXT));
+    let output = runtime.render(window_id)?;
+
+    assert_eq!(text_input_scroll_x(&output), 0.0);
+    assert_close(
+        shaped_text_origin_for(&output, LONG_TEXT).x,
+        text_input_content(&output).x(),
+        "text origin",
+    );
+    Ok(())
+}
+
 #[test]
 fn text_input_ignores_process_key_without_text() -> Result<()> {
     let changes = Rc::new(RefCell::new(Vec::new()));

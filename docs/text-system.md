@@ -264,7 +264,9 @@ state.
 The application-facing controls are:
 
 - `TextInput`: single-line text. Initial, pasted, and programmatic newlines
-  are removed.
+  are removed. Text wider than the field scrolls sideways inside it: a
+  focused field keeps its caret in view, and pointer hits, selection, and the
+  IME candidate window follow the scrolled text.
 - `TextArea`: multiline text, with an optional `on_submit` policy for plain
   Enter.
 - `PasswordInput`: a `TextInput` wrapper that masks graphemes visually and

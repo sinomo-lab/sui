@@ -12,7 +12,9 @@ use crate::{
         keyboard_text, single_line_text,
     },
     editor::{EditorCommand, EditorCommandResult, selection_range},
-    frame::{draw_control_shape, draw_focus_ring, physical_pixels, snap_to_pixels},
+    frame::{
+        draw_control_shape, draw_focus_ring, physical_pixels, physical_pixels_at, snap_to_pixels,
+    },
     overlay::{OverlayPlacement, OverlayPlacementRequest, place_overlay},
     paint_theme_glow, paint_theme_shadow, resolve_luminance_role, resolve_widget_hdr_style,
     selection::{SelectionChange, SelectionClipboardBehavior, SelectionOwnerId, SelectionScope},
@@ -27,7 +29,7 @@ pub use interaction::InteractionPreview;
 use interaction::PressInteraction;
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 use sui_core::{
-    Color, EditableTextSemantics, Event, ImeEvent, InvalidationKind, InvalidationRequest,
+    Color, DpiInfo, EditableTextSemantics, Event, ImeEvent, InvalidationKind, InvalidationRequest,
     InvalidationTarget, KeyState, Path, PathBuilder, Point, PointerButton, PointerEventKind, Rect,
     SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsPopupKind, SemanticsRole,
     SemanticsTextRange, SemanticsValue, Size, ToggleState, Vector, WidgetId,
@@ -7839,6 +7841,8 @@ impl Widget for Select {
 
 const PASSWORD_MASK: &str = "•";
 
+/// A single-line text field. Text wider than the field scrolls sideways
+/// inside it, keeping the caret in view while the field has focus.
 pub struct TextInput {
     theme: Box<DefaultTheme>,
     theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -7857,6 +7861,9 @@ pub struct TextInput {
     hovered: bool,
     focused: bool,
     dragging_selection: bool,
+    /// Whether the next arrange scrolls the caret into view: an edit moved
+    /// it, but the text it moved through is only shaped by measuring.
+    reveal_caret: bool,
     hover_animation: AnimatedScalar,
     focus_animation: AnimatedScalar,
     caret: CaretBlink,
@@ -7892,6 +7899,7 @@ impl TextInput {
             hovered: false,
             focused: false,
             dragging_selection: false,
+            reveal_caret: false,
             hover_animation: AnimatedScalar::new(0.0),
             focus_animation: AnimatedScalar::new(0.0),
             preview: InteractionPreview::None,
@@ -8180,13 +8188,24 @@ impl TextInput {
         if self.input_text().is_empty() {
             theme.placeholder_text_style()
         } else if self.read_only {
-            theme.text_style(theme.palette.text_muted)
+            self.read_only_text_style(&theme)
         } else {
             self.resolved_text_style()
         }
     }
 
+    /// The text style muted, so read-only text still lines up with the
+    /// caret positions and hits measured in the text style.
+    fn read_only_text_style(&self, theme: &DefaultTheme) -> TextStyle {
+        TextStyle {
+            color: theme.palette.text_muted,
+            ..self.resolved_text_style()
+        }
+    }
+
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, result: EditorCommandResult) {
+        let moved = result.text_changed || result.selection_changed || result.composition_changed;
+        let reshaped = result.layout_changed();
         self.editor.apply_field_result(
             ctx,
             result,
@@ -8195,6 +8214,20 @@ impl TextInput {
             self.focused,
             self.read_only,
         );
+        if moved && reshaped {
+            self.reveal_caret = true;
+        } else if moved {
+            self.scroll_caret_into_view(ctx);
+        }
+    }
+
+    /// Scrolls the caret into view now, unless the text changed since it was
+    /// last shaped: then arranging after the next measure reveals it.
+    fn scroll_caret_into_view(&mut self, ctx: &mut EventCtx) {
+        if !self.reveal_caret && self.update_scroll(ctx.bounds(), ctx.dpi(), true) {
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
     }
 
     fn execute_editor_command(&mut self, ctx: &mut EventCtx, command: EditorCommand) {
@@ -8250,13 +8283,52 @@ impl TextInput {
             .map(|layout| {
                 layout
                     .hit_test_point(Point::new(
-                        position.x - content.x(),
+                        position.x - self.text_x(content),
                         position.y - content.y(),
                     ))
                     .utf8_offset
             })
             .unwrap_or(self.rendered_input_text().len());
         self.editor_offset(&self.input_text(), rendered_offset)
+    }
+
+    /// Where the entered text starts: the content's left edge, less however
+    /// far the text has scrolled.
+    fn text_x(&self, content: Rect) -> f32 {
+        content.x() - self.editor.scroll_x()
+    }
+
+    fn caret_width(&self, dpi: DpiInfo) -> f32 {
+        physical_pixels_at(dpi, self.resolved_theme().metrics.caret_width)
+    }
+
+    /// Scrolls the text within the field's `bounds`, so the caret shows when
+    /// `reveal_caret` is set and the text fills the field when it is wider.
+    /// Returns whether the text moved.
+    fn update_scroll(&mut self, bounds: Rect, dpi: DpiInfo, reveal_caret: bool) -> bool {
+        let previous = self.editor.scroll_x();
+        let viewport = self.text_content_rect(bounds).width();
+        let caret_width = self.caret_width(dpi);
+        let (text_width, caret_x) = self.input_layout.as_ref().map_or((0.0, 0.0), |layout| {
+            (
+                layout.measurement().width,
+                layout.caret_rect(self.display_caret_offset()).x(),
+            )
+        });
+        let mut scroll = previous;
+        if reveal_caret {
+            if caret_x + caret_width > scroll + viewport {
+                scroll = caret_x + caret_width - viewport;
+            }
+            // In a field narrower than the caret, its leading edge wins.
+            if caret_x < scroll {
+                scroll = caret_x;
+            }
+        }
+        // The caret after the last character needs room too.
+        let max_scroll = (text_width + caret_width - viewport).max(0.0);
+        self.editor.set_scroll(scroll.clamp(0.0, max_scroll), 0.0);
+        self.editor.scroll_x() != previous
     }
 
     fn set_caret_from_position(
@@ -8621,6 +8693,17 @@ impl Widget for TextInput {
         constraints.clamp(Size::new(width, height))
     }
 
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        // Measuring reshaped the text, or the field changed size: keep the
+        // caret of an edit or a focused field in view, and any text filling
+        // the field.
+        let reveal_caret = std::mem::take(&mut self.reveal_caret) || self.focused;
+        if self.update_scroll(bounds, ctx.dpi(), reveal_caret) {
+            ctx.request_paint();
+            ctx.request_semantics();
+        }
+    }
+
     fn paint(&self, ctx: &mut PaintCtx) {
         self.enabled.observe(|source| {
             ctx.observe(source);
@@ -8675,10 +8758,17 @@ impl Widget for TextInput {
         }
         ctx.push_clip_rect(content_rect);
         if let Some(layout) = &self.display_layout {
-            let layout_bounds = layout.measurement().bounds;
             let layout_rect =
                 self.single_line_layout_rect(ctx, content_rect, layout, layout.style().line_height);
-            let layout_origin = Point::new(layout_rect.x() - layout_bounds.x(), layout_rect.y());
+            // Entered text scrolls with the caret, and its advances line up
+            // with it. The placeholder never scrolls, so its ink starts at
+            // the content edge.
+            let layout_x = if placeholder {
+                layout_rect.x() - layout.measurement().bounds.x()
+            } else {
+                self.text_x(content_rect)
+            };
+            let layout_origin = Point::new(layout_x, layout_rect.y());
             if !placeholder {
                 let input = self.input_text();
                 let selection = self.rendered_selection_range(&input);
@@ -8701,7 +8791,7 @@ impl Widget for TextInput {
             let display_style = if placeholder {
                 theme.placeholder_text_style()
             } else if self.read_only {
-                theme.text_style(palette.text_muted)
+                self.read_only_text_style(&theme)
             } else {
                 text_style.clone()
             };
@@ -8716,7 +8806,7 @@ impl Widget for TextInput {
         ctx.pop_clip();
 
         if self.focused && !self.read_only {
-            let caret_width = physical_pixels(ctx, metrics.caret_width);
+            let caret_width = self.caret_width(ctx.dpi());
             let input_text = self.rendered_input_text();
             let input_text_rect = self
                 .input_layout
@@ -8733,13 +8823,15 @@ impl Widget for TextInput {
                         text_style.line_height,
                     )
                 });
+            // Scrolling keeps the caret inside the content, so it shows where
+            // it is, and input methods place their windows beside it.
             let caret_rect = self
                 .input_layout
                 .as_ref()
                 .map(|layout| {
                     layout
                         .caret_rect(self.display_caret_offset())
-                        .translate(input_text_rect.origin.to_vector())
+                        .translate(Vector::new(self.text_x(content_rect), input_text_rect.y()))
                 })
                 .unwrap_or(Rect::new(
                     input_text_rect.x()
@@ -8752,10 +8844,7 @@ impl Widget for TextInput {
                     input_text_rect.height().max(text_style.line_height),
                 ));
             let caret_rect = Rect::new(
-                caret_rect
-                    .x()
-                    .min((content_rect.max_x() - caret_width).max(content_rect.x()))
-                    .max(content_rect.x()),
+                caret_rect.x(),
                 caret_rect.y(),
                 caret_width,
                 caret_rect.height().max(text_style.line_height),
@@ -8788,7 +8877,7 @@ impl Widget for TextInput {
             multiline: false,
             password: self.password,
             readonly: self.read_only,
-            scroll_x: 0.0,
+            scroll_x: self.editor.scroll_x(),
             scroll_y: 0.0,
         });
         node.state.disabled = !self.enabled.get();
@@ -8814,6 +8903,7 @@ impl Widget for TextInput {
         }
         if focused {
             self.caret.reset(ctx, self.focused, self.read_only);
+            self.scroll_caret_into_view(ctx);
         } else {
             self.caret.stop(ctx);
         }
@@ -9031,6 +9121,10 @@ impl Widget for PasswordInput {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.inner.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.inner.arrange(ctx, bounds);
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
@@ -9251,6 +9345,10 @@ impl Widget for DateTimeInput {
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
         self.inner.measure(ctx, constraints)
+    }
+
+    fn arrange(&mut self, ctx: &mut ArrangeCtx, bounds: Rect) {
+        self.inner.arrange(ctx, bounds);
     }
 
     fn paint(&self, ctx: &mut PaintCtx) {
