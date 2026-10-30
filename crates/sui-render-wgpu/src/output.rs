@@ -483,10 +483,10 @@ impl WgpuRenderer {
 
         if output_transform_requires_intermediate(strategy) {
             let intermediate_view = self.ensure_intermediate_target(frame.window_id, size)?;
-            let intermediate_format = self
+            let (intermediate_format, intermediate_texture) = self
                 .intermediate_targets
                 .get(&frame.window_id)
-                .map(|target| target.format)
+                .map(|target| (target.format, target.texture.clone()))
                 .ok_or_else(|| Error::new("missing HDR intermediate target after allocation"))?;
             let mut encoder = self.frame_encoder();
             let mut frame_stats = self.encode_prepared_scene(
@@ -494,7 +494,7 @@ impl WgpuRenderer {
                 intermediate_format,
                 &intermediate_view,
                 &mut encoder,
-                Some(frame.window_id),
+                Some((frame.window_id, &intermediate_texture)),
             )?;
             self.encode_output_transform_pass(
                 frame.window_id,
@@ -539,10 +539,10 @@ impl WgpuRenderer {
         let prepared = self.prepare_scene_submission(frame)?;
         let target_started = self.runtime_diagnostics_enabled.then(Instant::now);
         let intermediate_view = self.ensure_intermediate_target(frame.window_id, size)?;
-        let intermediate_format = self
+        let (intermediate_format, intermediate_texture) = self
             .intermediate_targets
             .get(&frame.window_id)
-            .map(|target| target.format)
+            .map(|target| (target.format, target.texture.clone()))
             .ok_or_else(|| Error::new("missing HDR intermediate target after allocation"))?;
         target_us += target_started.map_or(0, |started| started.elapsed().as_micros() as u64);
         let mut encoder = self.frame_encoder();
@@ -551,7 +551,7 @@ impl WgpuRenderer {
             intermediate_format,
             &intermediate_view,
             &mut encoder,
-            Some(frame.window_id),
+            Some((frame.window_id, &intermediate_texture)),
         )?;
         self.encode_output_transform_pass(
             frame.window_id,
@@ -571,6 +571,54 @@ impl WgpuRenderer {
         self.submit_frame_encoder(encoder, &mut frame_stats);
         frame_stats.target_prepare_time_us = target_us;
         Ok(frame_stats)
+    }
+
+    /// The persistent frame a native SDR window redraws partially before
+    /// copying it to its swapchain, in the swapchain's format.
+    pub(crate) fn ensure_swapchain_frame(
+        &mut self,
+        window_id: WindowId,
+        size: (u32, u32),
+        format: wgpu::TextureFormat,
+    ) -> Result<(wgpu::TextureView, wgpu::Texture)> {
+        let recreate = self
+            .swapchain_frames
+            .get(&window_id)
+            .is_none_or(|target| target.size != size || target.format != format);
+        if recreate {
+            // A new target shows nothing yet.
+            self.frame_resources.target_contents.remove(&window_id);
+            let texture = self
+                .shared
+                .as_ref()
+                .expect("renderer shared state initialized")
+                .device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("SUI persistent swapchain frame"),
+                    size: wgpu::Extent3d {
+                        width: size.0,
+                        height: size.1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                });
+            self.swapchain_frames.insert(
+                window_id,
+                OffscreenTarget {
+                    view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+                    texture,
+                    format,
+                    size,
+                },
+            );
+        }
+        let target = &self.swapchain_frames[&window_id];
+        Ok((target.view.clone(), target.texture.clone()))
     }
 
     pub(crate) fn ensure_offscreen_target(

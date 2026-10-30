@@ -157,8 +157,14 @@ Versioning, with the usual expectation that the API may change during the
   image registry, external images, frames drawn straight to the swapchain,
   and damage over half the target fall back to a full redraw. With one cell
   of a 1,200-cell 4K grid changing per frame, GPU-inclusive frame time drops
-  from about 1.6 ms to 0.85 ms. Native SDR windows, which draw straight to
-  the swapchain, still redraw everything.
+  from about 1.6 ms to 0.85 ms.
+- Desktop SDR windows (Windows, macOS, and Linux) redraw partially too: they
+  draw into a persistent frame in the swapchain's format and copy it to the
+  swapchain, when the swapchain accepts copies. With one cell of a 4K grid
+  changing per frame, GPU-inclusive frame time drops by up to 56%; frames
+  that change everything pay a copy of about 0.07 ms. Android and iOS keep
+  drawing straight to the swapchain, where reading the kept frame back and
+  copying it can cost more than redrawing on tile-based GPUs.
 
 ## [0.5.0] - 2026-10-08
 

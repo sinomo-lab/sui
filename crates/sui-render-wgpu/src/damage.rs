@@ -114,9 +114,23 @@ impl FrameInputs {
 /// What a persistent target last showed.
 #[derive(Debug, Clone)]
 pub(crate) struct TargetContents {
+    /// The texture drawn into; state from one target never describes
+    /// another, such as after a window switches between SDR and HDR output.
+    pub(crate) target: Option<wgpu::Texture>,
     pub(crate) inputs: FrameInputs,
     pub(crate) placements: Vec<FragmentPlacement>,
 }
+
+/// Whether native windows on this platform redraw only what changed, into a
+/// persistent texture copied to the swapchain. Desktop GPUs copy a frame in
+/// a fraction of a millisecond; on tile-based mobile GPUs reading the kept
+/// frame back and copying it can cost more than redrawing, so they redraw
+/// everything until measured on devices.
+pub(crate) const PERSISTENT_SWAPCHAIN_REDRAW: bool = cfg!(not(any(
+    target_os = "android",
+    target_os = "ios",
+    target_arch = "wasm32"
+)));
 
 /// The region of a target showing `previous` that must be redrawn to show
 /// `current` instead.
@@ -127,6 +141,9 @@ pub(crate) fn plan_redraw(
     let Some(previous) = previous else {
         return RedrawRegion::Full;
     };
+    if previous.target.is_none() || previous.target != current.target {
+        return RedrawRegion::Full;
+    }
     if !previous.inputs.same_as(&current.inputs) {
         return RedrawRegion::Full;
     }

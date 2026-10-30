@@ -469,6 +469,7 @@ impl WgpuRenderer {
         frame_stats.prepared_fragment_cache_hits = prepared_fragment_cache_hits;
         frame_stats.prepared_fragment_build_count = prepared_fragment_build_count;
         let contents = TargetContents {
+            target: None,
             inputs: FrameInputs {
                 viewport: frame.viewport,
                 framebuffer_size,
@@ -542,18 +543,20 @@ impl WgpuRenderer {
         target_format: wgpu::TextureFormat,
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
-        persistent_target: Option<sui_core::WindowId>,
+        persistent_target: Option<(sui_core::WindowId, &wgpu::Texture)>,
     ) -> Result<RendererFrameStats> {
         let pass_encode_started = self.runtime_diagnostics_enabled.then(Instant::now);
         // A target that keeps its pixels between frames only needs what
         // changed since the frame it shows.
         let region = match persistent_target {
-            Some(window) => {
+            Some((window, texture)) => {
+                prepared.contents.target = Some(texture.clone());
                 let region = plan_redraw(
                     self.frame_resources.target_contents.get(&window),
                     &prepared.contents,
                 );
                 let contents = crate::damage::TargetContents {
+                    target: prepared.contents.target.clone(),
                     inputs: prepared.contents.inputs.clone(),
                     placements: std::mem::take(&mut prepared.contents.placements),
                 };

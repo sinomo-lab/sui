@@ -1027,6 +1027,7 @@ fn transform_on_gpu(
         .ensure_intermediate_target(window_id, size)
         .unwrap();
     let intermediate_format = renderer.intermediate_targets[&window_id].format;
+    let intermediate_texture = renderer.intermediate_targets[&window_id].texture.clone();
     let prepared = renderer.prepare_scene_submission(&frame).unwrap();
     let mut encoder = renderer.frame_encoder();
     let mut stats = renderer
@@ -1035,7 +1036,7 @@ fn transform_on_gpu(
             intermediate_format,
             &intermediate_view,
             &mut encoder,
-            Some(window_id),
+            Some((window_id, &intermediate_texture)),
         )
         .unwrap();
     renderer

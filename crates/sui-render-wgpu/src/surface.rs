@@ -55,6 +55,7 @@ impl WgpuRenderer {
         self.surfaces.insert(window_id, state);
         self.offscreen_targets.remove(&window_id);
         self.intermediate_targets.remove(&window_id);
+        self.swapchain_frames.remove(&window_id);
         Ok(())
     }
 
@@ -95,10 +96,10 @@ impl WgpuRenderer {
 
         let mut frame_stats = if output_transform_requires_intermediate(strategy) {
             let intermediate_view = self.ensure_intermediate_target(frame.window_id, size)?;
-            let intermediate_format = self
+            let (intermediate_format, intermediate_texture) = self
                 .intermediate_targets
                 .get(&frame.window_id)
-                .map(|target| target.format)
+                .map(|target| (target.format, target.texture.clone()))
                 .ok_or_else(|| Error::new("missing HDR intermediate target after allocation"))?;
             let mut encoder = self.frame_encoder();
             let mut frame_stats = self.encode_prepared_scene(
@@ -106,7 +107,7 @@ impl WgpuRenderer {
                 intermediate_format,
                 &intermediate_view,
                 &mut encoder,
-                Some(frame.window_id),
+                Some((frame.window_id, &intermediate_texture)),
             )?;
             self.encode_output_transform_pass(
                 frame.window_id,
@@ -120,6 +121,39 @@ impl WgpuRenderer {
                 &mut frame_stats,
                 &mut encoder,
             )?;
+            self.submit_frame_encoder(encoder, &mut frame_stats);
+            frame_stats
+        } else if crate::damage::PERSISTENT_SWAPCHAIN_REDRAW
+            && frame_texture
+                .texture
+                .usage()
+                .contains(wgpu::TextureUsages::COPY_DST)
+        {
+            // The swapchain does not keep pixels between frames, so redraw
+            // only what changed in a persistent frame and copy it over.
+            self.shared
+                .as_mut()
+                .expect("renderer shared state initialized")
+                .sdr_fit = crate::output::SdrFit::for_tone_mapping(tone_mapping);
+            let (persistent_view, persistent_texture) =
+                self.ensure_swapchain_frame(frame.window_id, size, format)?;
+            let mut encoder = self.frame_encoder();
+            let mut frame_stats = self.encode_prepared_scene(
+                prepared,
+                format,
+                &persistent_view,
+                &mut encoder,
+                Some((frame.window_id, &persistent_texture)),
+            )?;
+            encoder.copy_texture_to_texture(
+                persistent_texture.as_image_copy(),
+                frame_texture.texture.as_image_copy(),
+                wgpu::Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
+            );
             self.submit_frame_encoder(encoder, &mut frame_stats);
             frame_stats
         } else {
@@ -344,6 +378,12 @@ pub(crate) fn configure_surface_for_strategy(
         .contains(&wgpu::CompositeAlphaMode::Opaque)
     {
         config.alpha_mode = wgpu::CompositeAlphaMode::Opaque;
+    }
+    // Lets a frame redrawn partially in a persistent texture be copied in.
+    if crate::damage::PERSISTENT_SWAPCHAIN_REDRAW
+        && capabilities.usages.contains(wgpu::TextureUsages::COPY_DST)
+    {
+        config.usage |= wgpu::TextureUsages::COPY_DST;
     }
     surface.configure(device, &config);
     configure_native_hdr_surface_color_space(surface, strategy)?;

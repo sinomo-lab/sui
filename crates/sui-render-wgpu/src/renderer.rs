@@ -410,6 +410,7 @@ impl WgpuRenderer {
         self.offscreen_outputs.remove(&window_id);
         self.offscreen_targets.remove(&window_id);
         self.intermediate_targets.remove(&window_id);
+        self.swapchain_frames.remove(&window_id);
         self.last_frames.remove(&window_id);
         self.last_frame_stats.remove(&window_id);
         self.compositors.remove(&window_id);
@@ -526,6 +527,7 @@ impl Default for WgpuRenderer {
             surfaces: HashMap::new(),
             offscreen_targets: HashMap::new(),
             intermediate_targets: HashMap::new(),
+            swapchain_frames: HashMap::new(),
             offscreen_outputs: HashMap::new(),
             frame_resources: FrameResources::default(),
             debug_captures_in_flight: Vec::new(),

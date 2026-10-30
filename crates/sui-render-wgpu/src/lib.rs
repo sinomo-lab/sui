@@ -125,6 +125,9 @@ pub struct WgpuRenderer {
     offscreen_outputs: HashMap<WindowId, output::OffscreenOutput>,
     offscreen_targets: HashMap<WindowId, OffscreenTarget>,
     intermediate_targets: HashMap<WindowId, OffscreenTarget>,
+    /// Per native SDR window, the persistent frame copied to its swapchain,
+    /// so a frame redraws only what changed.
+    swapchain_frames: HashMap<WindowId, OffscreenTarget>,
     frame_resources: FrameResources,
     /// Debug captures whose pixels are being copied back.
     debug_captures_in_flight: Vec<capture::InFlightCapture>,
