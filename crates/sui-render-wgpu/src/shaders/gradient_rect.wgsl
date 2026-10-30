@@ -11,7 +11,7 @@ fn vs_main(@location(0) corner: vec2<f32>, @location(1) ndc_min: vec2<f32>,
     @location(4) local_max: vec2<f32>, @location(5) stop0: vec4<f32>,
     @location(6) p0: vec4<f32>, @location(7) radii: vec4<f32>,
     @location(8) axis: vec4<f32>, @location(9) stop1: vec4<f32>) -> VsOut {
-    var out: VsOut; out.position = vec4<f32>(mix(ndc_min, ndc_max, corner), 0.0, 1.0);
+    var out: VsOut; out.position = translate_fragment(vec4<f32>(mix(ndc_min, ndc_max, corner), 0.0, 1.0));
     out.stop0 = stop0; out.local = mix(local_min, local_max, corner); out.p0 = p0;
     out.radii = radii; out.axis = axis; out.stop1 = stop1;
     return out;

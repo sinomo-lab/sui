@@ -614,6 +614,11 @@ impl Transform {
         if rect.is_empty() {
             return rect;
         }
+        // Rebuilding the size from translated corners rounds it differently at
+        // different offsets, so a moved rectangle would look resized.
+        if self.xx == 1.0 && self.yx == 0.0 && self.xy == 0.0 && self.yy == 1.0 {
+            return rect.translate(Vector::new(self.dx, self.dy));
+        }
 
         let top_left = self.transform_point(rect.origin);
         let top_right = self.transform_point(Point::new(rect.max_x(), rect.y()));

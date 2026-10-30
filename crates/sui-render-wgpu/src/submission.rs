@@ -30,8 +30,8 @@ use crate::gpu::SolidVertex;
 use crate::gpu::TextAtlasInstance;
 #[cfg(test)]
 use crate::gpu::Vertex;
+use crate::resources::PreparedFragmentTranslations;
 use crate::retained::RetainedFrameFragment;
-use crate::scene::translation_to_viewport_origin;
 use crate::surface::normalize_framebuffer_size;
 use crate::text::TextFrameStats;
 use crate::text_engine::TextEngine;
@@ -205,7 +205,12 @@ impl WgpuRenderer {
         buffers.retain(|id, _| live_packets.contains(id));
         let mut shadow_budget = crate::uploads::MAX_WINDOW_VERTEX_SHADOW_BYTES;
         for fragment in submission.fragments {
-            let RetainedFrameFragment { id, draw_ops } = fragment;
+            let RetainedFrameFragment {
+                id,
+                draw_ops,
+                translation,
+                clip,
+            } = fragment;
             let slots = analytic_path_resources
                 .as_ref()
                 .map(|resources| &resources.slots);
@@ -228,7 +233,13 @@ impl WgpuRenderer {
                     .passes
                     .iter()
                     .any(|pass| !pass.clip_paths.is_empty());
-                prepared_fragments.push(cached.submission.clone());
+                prepared_fragments.push(place_fragment_submission(
+                    &cached.submission,
+                    translation,
+                    clip,
+                    frame.viewport,
+                    framebuffer_size,
+                ));
                 buffers.limit_shadows(&mut shadow_budget);
                 continue;
             }
@@ -327,14 +338,20 @@ impl WgpuRenderer {
                 ),
                 translation: Vector::ZERO,
             };
+            prepared_fragments.push(place_fragment_submission(
+                &prepared_submission,
+                translation,
+                clip,
+                frame.viewport,
+                framebuffer_size,
+            ));
             buffers.prepared = Some(crate::uploads::PreparedFragmentCache {
                 source: draw_ops,
                 viewport: frame.viewport,
                 framebuffer_size,
                 analytic_slots,
-                submission: prepared_submission.clone(),
+                submission: prepared_submission,
             });
-            prepared_fragments.push(prepared_submission);
             buffers.limit_shadows(&mut shadow_budget);
             if let Some(started) = gpu_upload_started {
                 gpu_upload_time_us += started.elapsed().as_micros() as u64;
@@ -354,8 +371,19 @@ impl WgpuRenderer {
             }
         }
 
+        let fragment_translations = PreparedFragmentTranslations::prepare(
+            self.shared
+                .as_ref()
+                .expect("renderer shared state initialized"),
+            &mut self.frame_resources.fragment_translations,
+            frame.window_id,
+            prepared_fragments
+                .iter()
+                .map(|fragment| fragment.translation),
+            frame.viewport,
+        );
         let batch_prepare_started = diagnostics_enabled.then(Instant::now);
-        let encodable_passes = flatten_fragment_passes(&prepared_fragments);
+        let encodable_passes = flatten_fragment_passes(&prepared_fragments, &fragment_translations);
         if let Some(started) = batch_prepare_started {
             batch_prepare_time_us += started.elapsed().as_micros() as u64;
         }
@@ -391,9 +419,9 @@ impl WgpuRenderer {
         frame_stats.prepared_fragment_cache_hits = prepared_fragment_cache_hits;
         frame_stats.prepared_fragment_build_count = prepared_fragment_build_count;
         Ok(PreparedSceneSubmission {
-            viewport: frame.viewport,
             framebuffer_size,
             encodable_passes,
+            fragment_translations,
             image_bind_groups,
             text_atlas_bind_group,
             analytic_path_resources,
@@ -488,9 +516,9 @@ impl WgpuRenderer {
                 encoder,
                 view,
                 target_format,
-                prepared.viewport,
                 prepared.framebuffer_size,
                 &prepared.encodable_passes,
+                &prepared.fragment_translations.bind_group,
                 stencil_view,
                 &prepared.image_bind_groups,
                 prepared.text_atlas_bind_group.as_ref(),
@@ -733,6 +761,7 @@ pub(crate) fn prepare_cached_passes(
                     Some(PreparedDrawBatch {
                         kind: draw.kind,
                         clip_rect,
+                        logical_clip: draw.clip_rect,
                         vertices: match draw.kind {
                             PreparedDrawKind::TextAtlas => {
                                 draw.vertices.offset(text_instance_offset)
@@ -835,11 +864,60 @@ pub(crate) fn stamp_draw_op_analytic_path_slots(
     }
 }
 
+/// `submission` offset by `translation` and scissored to the window-space
+/// `clip`. Only the per-draw scissors change; vertex buffers are shared.
+pub(crate) fn place_fragment_submission(
+    submission: &PreparedFragmentSubmission,
+    translation: Vector,
+    clip: Option<Rect>,
+    viewport: Size,
+    framebuffer_size: (u32, u32),
+) -> PreparedFragmentSubmission {
+    if translation == Vector::ZERO && clip.is_none() {
+        return submission.clone();
+    }
+    let passes = submission
+        .passes
+        .iter()
+        .map(|pass| PreparedPassBatch {
+            clip_paths: pass.clip_paths.clone(),
+            draws: pass
+                .draws
+                .iter()
+                .filter_map(|draw| {
+                    let clip_rect = resolve_submission_clip_rect(
+                        draw.logical_clip.map(|rect| rect.translate(translation)),
+                        clip,
+                    )?;
+                    let clip_rect = match clip_rect {
+                        // A clip outside the framebuffer leaves nothing visible.
+                        Some(rect) => clip_scissor(rect, viewport, framebuffer_size)?,
+                        None => None,
+                    };
+                    Some(PreparedDrawBatch { clip_rect, ..*draw })
+                })
+                .collect(),
+        })
+        .collect();
+    PreparedFragmentSubmission {
+        passes,
+        solid_buffer: submission.solid_buffer.clone(),
+        scene_buffer: submission.scene_buffer.clone(),
+        analytic_buffer: submission.analytic_buffer.clone(),
+        extended_buffer: submission.extended_buffer.clone(),
+        clip_buffer: submission.clip_buffer.clone(),
+        text_instance_buffer: submission.text_instance_buffer.clone(),
+        translation,
+    }
+}
+
 pub(crate) fn flatten_fragment_passes(
     fragments: &[PreparedFragmentSubmission],
+    translations: &PreparedFragmentTranslations,
 ) -> Vec<EncodablePassBatch> {
     let mut flattened = Vec::new();
     for fragment in fragments {
+        let translation_offset = translations.offset(fragment.translation);
         for pass in &fragment.passes {
             flattened.push(EncodablePassBatch {
                 pass: pass.clone(),
@@ -849,7 +927,7 @@ pub(crate) fn flatten_fragment_passes(
                 extended_buffer: fragment.extended_buffer.clone(),
                 clip_buffer: fragment.clip_buffer.clone(),
                 text_instance_buffer: fragment.text_instance_buffer.clone(),
-                translation: fragment.translation,
+                translation_offset,
             });
         }
     }
@@ -861,9 +939,9 @@ pub(crate) fn encode_fragment_passes(
     encoder: &mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
     target_format: wgpu::TextureFormat,
-    viewport: Size,
     framebuffer_size: (u32, u32),
     passes: &[EncodablePassBatch],
+    translation_bind_group: &wgpu::BindGroup,
     stencil_view: Option<&wgpu::TextureView>,
     image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
@@ -884,9 +962,9 @@ pub(crate) fn encode_fragment_passes(
                 encoder,
                 view,
                 target_format,
-                viewport,
                 framebuffer_size,
                 &passes[start..index],
+                translation_bind_group,
                 image_bind_groups,
                 text_atlas_bind_group,
                 analytic_path_resources,
@@ -899,9 +977,9 @@ pub(crate) fn encode_fragment_passes(
                 encoder,
                 view,
                 target_format,
-                viewport,
                 framebuffer_size,
                 &passes[index],
+                translation_bind_group,
                 stencil_view,
                 image_bind_groups,
                 text_atlas_bind_group,
@@ -921,9 +999,9 @@ pub(crate) fn encode_unclipped_pass_run(
     encoder: &mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
     target_format: wgpu::TextureFormat,
-    viewport: Size,
     framebuffer_size: (u32, u32),
     passes: &[EncodablePassBatch],
+    translation_bind_group: &wgpu::BindGroup,
     image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
@@ -952,7 +1030,6 @@ pub(crate) fn encode_unclipped_pass_run(
             &mut render_pass,
             shared,
             target_format,
-            viewport,
             framebuffer_size,
             &batch.pass,
             batch.solid_buffer.as_ref(),
@@ -960,7 +1037,8 @@ pub(crate) fn encode_unclipped_pass_run(
             batch.analytic_buffer.as_ref(),
             batch.extended_buffer.as_ref(),
             batch.text_instance_buffer.as_ref(),
-            batch.translation,
+            translation_bind_group,
+            batch.translation_offset,
             false,
             image_bind_groups,
             text_atlas_bind_group,
@@ -977,9 +1055,9 @@ pub(crate) fn encode_clipped_pass(
     encoder: &mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
     target_format: wgpu::TextureFormat,
-    viewport: Size,
     framebuffer_size: (u32, u32),
     batch: &EncodablePassBatch,
+    translation_bind_group: &wgpu::BindGroup,
     stencil_view: Option<&wgpu::TextureView>,
     image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
@@ -1014,16 +1092,8 @@ pub(crate) fn encode_clipped_pass(
     let clip_pipeline = shared.clip_pipeline(target_format);
     render_pass.set_pipeline(clip_pipeline);
     render_pass.set_scissor_rect(0, 0, framebuffer_size.0, framebuffer_size.1);
-    let (viewport_x, viewport_y) =
-        translation_to_viewport_origin(batch.translation, viewport, framebuffer_size);
-    render_pass.set_viewport(
-        viewport_x,
-        viewport_y,
-        framebuffer_size.0 as f32,
-        framebuffer_size.1 as f32,
-        0.0,
-        1.0,
-    );
+    // Clip paths are part of the fragment, so they move with it.
+    render_pass.set_bind_group(0, translation_bind_group, &[batch.translation_offset]);
     let clip_buffer = batch
         .clip_buffer
         .as_ref()
@@ -1042,7 +1112,6 @@ pub(crate) fn encode_clipped_pass(
         &mut render_pass,
         shared,
         target_format,
-        viewport,
         framebuffer_size,
         &batch.pass,
         batch.solid_buffer.as_ref(),
@@ -1050,7 +1119,8 @@ pub(crate) fn encode_clipped_pass(
         batch.analytic_buffer.as_ref(),
         batch.extended_buffer.as_ref(),
         batch.text_instance_buffer.as_ref(),
-        batch.translation,
+        translation_bind_group,
+        batch.translation_offset,
         true,
         image_bind_groups,
         text_atlas_bind_group,
@@ -1080,7 +1150,7 @@ pub(crate) fn next_pass_load_op(cleared: &mut bool) -> wgpu::LoadOp<wgpu::Color>
 #[derive(Default)]
 pub(crate) struct RenderPassState {
     kind: Option<PreparedDrawPipelineKind>,
-    translation: Option<Vector>,
+    translation_offset: Option<u32>,
     scissor: Option<Option<ScissorRect>>,
     shared_quad_bound: bool,
 }
@@ -1089,7 +1159,6 @@ pub(crate) fn encode_draws_for_pass(
     render_pass: &mut wgpu::RenderPass<'_>,
     shared: &mut SharedRenderer,
     target_format: wgpu::TextureFormat,
-    viewport: Size,
     framebuffer_size: (u32, u32),
     pass: &PreparedPassBatch,
     solid_buffer: Option<&wgpu::Buffer>,
@@ -1097,25 +1166,19 @@ pub(crate) fn encode_draws_for_pass(
     analytic_buffer: Option<&wgpu::Buffer>,
     extended_buffer: Option<&wgpu::Buffer>,
     text_instance_buffer: Option<&wgpu::Buffer>,
-    translation: Vector,
+    translation_bind_group: &wgpu::BindGroup,
+    translation_offset: u32,
     clipped: bool,
     image_bind_groups: &HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     text_atlas_bind_group: Option<&wgpu::BindGroup>,
     analytic_path_resources: Option<&PreparedAnalyticPathResources>,
     state: &mut RenderPassState,
 ) -> Result<()> {
-    if state.translation != Some(translation) {
-        let (viewport_x, viewport_y) =
-            translation_to_viewport_origin(translation, viewport, framebuffer_size);
-        render_pass.set_viewport(
-            viewport_x,
-            viewport_y,
-            framebuffer_size.0 as f32,
-            framebuffer_size.1 as f32,
-            0.0,
-            1.0,
-        );
-        state.translation = Some(translation);
+    // Every scene pipeline reads its translation from group 0, and bind
+    // groups stay bound across pipeline changes within a pass.
+    if state.translation_offset != Some(translation_offset) {
+        render_pass.set_bind_group(0, translation_bind_group, &[translation_offset]);
+        state.translation_offset = Some(translation_offset);
     }
     if clipped {
         render_pass.set_stencil_reference(pass.clip_paths.len() as u32);
@@ -1180,7 +1243,7 @@ pub(crate) fn encode_draws_for_pass(
                 let bind_group = &analytic_path_resources
                     .expect("analytic path resources prepared before retained render pass")
                     .bind_group;
-                render_pass.set_bind_group(0, bind_group, &[]);
+                render_pass.set_bind_group(1, bind_group, &[]);
             }
             state.kind = Some(pipeline_kind);
         }
@@ -1199,12 +1262,12 @@ pub(crate) fn encode_draws_for_pass(
                         raster_size,
                     })
                     .expect("image bind group prepared before retained render pass");
-                render_pass.set_bind_group(0, bind_group, &[]);
+                render_pass.set_bind_group(1, bind_group, &[]);
             }
             PreparedDrawKind::TextAtlas => {
                 let bind_group = text_atlas_bind_group
                     .expect("text atlas bind group prepared before retained render pass");
-                render_pass.set_bind_group(0, bind_group, &[]);
+                render_pass.set_bind_group(1, bind_group, &[]);
             }
             PreparedDrawKind::AnalyticPath { .. } => {}
             PreparedDrawKind::WidgetShader => {}
@@ -1335,6 +1398,16 @@ pub(crate) fn rect_to_scissor(
     viewport: Size,
     framebuffer_size: (u32, u32),
 ) -> Option<ScissorRect> {
+    clip_scissor(rect, viewport, framebuffer_size).flatten()
+}
+
+/// The scissor for `rect`: `Some(None)` when it covers the whole
+/// framebuffer, `None` when it leaves no pixel visible.
+pub(crate) fn clip_scissor(
+    rect: Rect,
+    viewport: Size,
+    framebuffer_size: (u32, u32),
+) -> Option<Option<ScissorRect>> {
     if rect.is_empty() || viewport.is_empty() {
         return None;
     }
@@ -1370,9 +1443,9 @@ pub(crate) fn rect_to_scissor(
         && scissor.width == framebuffer_width
         && scissor.height == framebuffer_height
     {
-        None
+        Some(None)
     } else {
-        Some(scissor)
+        Some(Some(scissor))
     }
 }
 

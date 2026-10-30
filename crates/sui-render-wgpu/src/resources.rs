@@ -33,6 +33,106 @@ pub(crate) struct FrameResources {
     pub(crate) fragments:
         HashMap<sui_core::WindowId, HashMap<crate::retained::RetainedPacketId, FragmentBuffers>>,
     pub(crate) output_transforms: HashMap<sui_core::WindowId, crate::output::CachedOutputTransform>,
+    pub(crate) fragment_translations: HashMap<sui_core::WindowId, FragmentTranslationBuffer>,
+}
+
+/// Bytes of one fragment translation uniform: an NDC offset padded to a vec4.
+pub(crate) const FRAGMENT_TRANSLATION_SIZE: u64 = 16;
+
+/// A window's fragment translations, one uniform slot per distinct offset in
+/// a frame. Each window keeps its own buffer, so preparing one window cannot
+/// overwrite offsets another window has not submitted yet.
+pub(crate) struct FragmentTranslationBuffer {
+    buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    capacity: usize,
+}
+
+/// The translations of one prepared frame: the bind group and each distinct
+/// translation's dynamic offset into it.
+#[derive(Clone)]
+pub(crate) struct PreparedFragmentTranslations {
+    pub(crate) bind_group: wgpu::BindGroup,
+    slots: Vec<(sui_core::Vector, u32)>,
+}
+
+impl PreparedFragmentTranslations {
+    /// The dynamic offset of `translation`, which `prepare` recorded.
+    pub(crate) fn offset(&self, translation: sui_core::Vector) -> u32 {
+        self.slots
+            .iter()
+            .find(|(slot, _)| *slot == translation)
+            .map_or(0, |(_, offset)| *offset)
+    }
+
+    /// Write `translations` (in logical pixels) into `window`'s uniform
+    /// buffer. Slot 0 always holds no translation.
+    pub(crate) fn prepare(
+        shared: &SharedRenderer,
+        buffers: &mut HashMap<sui_core::WindowId, FragmentTranslationBuffer>,
+        window: sui_core::WindowId,
+        translations: impl IntoIterator<Item = sui_core::Vector>,
+        viewport: sui_core::Size,
+    ) -> Self {
+        let stride = (shared.device.limits().min_uniform_buffer_offset_alignment as u64)
+            .max(FRAGMENT_TRANSLATION_SIZE);
+        let mut slots = vec![(sui_core::Vector::ZERO, 0_u32)];
+        for translation in translations {
+            if slots.iter().all(|(slot, _)| *slot != translation) {
+                slots.push((translation, (slots.len() as u64 * stride) as u32));
+            }
+        }
+        if buffers
+            .get(&window)
+            .is_none_or(|buffer| buffer.capacity < slots.len())
+        {
+            let capacity = slots.len().next_power_of_two().max(4);
+            let buffer = shared.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("SUI fragment translations"),
+                size: capacity as u64 * stride,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bind_group = shared.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("SUI fragment translations"),
+                layout: &shared.fragment_translation_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(FRAGMENT_TRANSLATION_SIZE),
+                    }),
+                }],
+            });
+            buffers.insert(
+                window,
+                FragmentTranslationBuffer {
+                    buffer,
+                    bind_group,
+                    capacity,
+                },
+            );
+        }
+        let buffer = &buffers[&window];
+        let mut contents = vec![0_u8; slots.len() * stride as usize];
+        for (translation, offset) in &slots {
+            let ndc = [
+                translation.x * 2.0 / viewport.width.max(1.0),
+                -translation.y * 2.0 / viewport.height.max(1.0),
+                0.0_f32,
+                0.0,
+            ];
+            let start = *offset as usize;
+            contents[start..start + FRAGMENT_TRANSLATION_SIZE as usize]
+                .copy_from_slice(bytemuck::cast_slice(&ndc));
+        }
+        shared.queue.write_buffer(&buffer.buffer, 0, &contents);
+        Self {
+            bind_group: buffer.bind_group.clone(),
+            slots,
+        }
+    }
 }
 
 #[derive(Default)]

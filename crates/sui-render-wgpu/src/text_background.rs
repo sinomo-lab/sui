@@ -51,6 +51,38 @@ impl TextBackground {
         }
     }
 
+    /// Keep only what `color_under` can return for rectangles inside
+    /// `bounds`. Regions are clipped to `bounds`, regions outside it are
+    /// dropped, and a topmost region covering all of `bounds` becomes the
+    /// clear color. A packet that moves over a uniform backdrop then keeps an
+    /// equal background, so its raster can be reused.
+    pub(crate) fn restrict_to(&mut self, bounds: Rect) {
+        if let Some(index) = self
+            .regions
+            .iter()
+            .rposition(|(rect, _)| contains(*rect, bounds))
+        {
+            self.clear = self.regions[index].1;
+            self.regions = Arc::new(
+                self.regions[index + 1..]
+                    .iter()
+                    .filter_map(|(rect, color)| Some((rect.intersection(bounds)?, *color)))
+                    .collect(),
+            );
+            return;
+        }
+        // Avoid copying a shared region list that needs no clipping.
+        if self.regions.iter().all(|(rect, _)| contains(bounds, *rect)) {
+            return;
+        }
+        self.regions = Arc::new(
+            self.regions
+                .iter()
+                .filter_map(|(rect, color)| Some((rect.intersection(bounds)?, *color)))
+                .collect(),
+        );
+    }
+
     pub(crate) fn transform(&mut self, transform: Transform) {
         if transform.xy.abs() > f32::EPSILON || transform.yx.abs() > f32::EPSILON {
             // A rotated bounding box does not establish an opaque rectangle.
@@ -179,6 +211,43 @@ impl TextBackground {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restricting_to_a_covered_area_keeps_the_same_colors() {
+        let mut background = TextBackground::default();
+        background.observe(
+            &SceneCommand::Clear(Color::WHITE),
+            Transform::IDENTITY,
+            None,
+            true,
+        );
+        for (rect, color) in [
+            (Rect::new(0.0, 0.0, 400.0, 4000.0), Color::BLACK),
+            (Rect::new(500.0, 0.0, 40.0, 40.0), Color::WHITE),
+        ] {
+            background.observe(
+                &SceneCommand::FillRect {
+                    rect,
+                    brush: color.into(),
+                },
+                Transform::IDENTITY,
+                None,
+                true,
+            );
+        }
+        let bounds = Rect::new(10.0, 100.0, 300.0, 200.0);
+        let query = Rect::new(20.0, 120.0, 30.0, 10.0);
+        let expected = background.color_under(query);
+
+        let mut near = background.clone();
+        near.restrict_to(bounds);
+        let mut moved = background.clone();
+        moved.transform(Transform::translation(0.0, -48.0));
+        moved.restrict_to(bounds);
+
+        assert_eq!(near.color_under(query), expected);
+        assert_eq!(near, moved);
+    }
 
     #[test]
     fn solid_backdrops_do_not_leak_through_unknown_or_clipped_paint() {

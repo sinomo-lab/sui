@@ -26,7 +26,7 @@ fn vs_main(
     @location(3) params: vec4<f32>,
 ) -> VsOut {
     var out: VsOut;
-    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.position = translate_fragment(vec4<f32>(position, 0.0, 1.0));
     out.metadata = metadata;
     out.uv = uv;
     out.params = params;

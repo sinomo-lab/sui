@@ -321,11 +321,13 @@ pub(crate) fn renderer_frame_stats_count_passes_draws_and_uploaded_vertices() {
                 }],
                 draws: vec![
                     PreparedDrawBatch {
+                        logical_clip: None,
                         kind: PreparedDrawKind::Solid,
                         clip_rect: None,
                         vertices: PreparedVertices { start: 0, len: 3 },
                     },
                     PreparedDrawBatch {
+                        logical_clip: None,
                         kind: PreparedDrawKind::Solid,
                         clip_rect: Some(ScissorRect {
                             x: 0,
@@ -340,6 +342,7 @@ pub(crate) fn renderer_frame_stats_count_passes_draws_and_uploaded_vertices() {
             PreparedPassBatch {
                 clip_paths: Vec::new(),
                 draws: vec![PreparedDrawBatch {
+                    logical_clip: None,
                     kind: PreparedDrawKind::Image {
                         handle: ImageHandle::new(1),
                         sampling: ImageSampling::Linear,

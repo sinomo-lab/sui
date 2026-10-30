@@ -288,6 +288,22 @@ pub fn build(config: &Config, input: Input) -> Result<(AppBuilder, Fixture), Str
                 SizedBox::new().width(config.width - 8.0).child(stack),
             ))
         }
+        "scroll-flat" | "scroll-retained" => {
+            let mut stack = Stack::vertical().gap(4.0);
+            for text in &labels {
+                stack.push(
+                    Label::new("")
+                        .text_from(text.clone())
+                        .text_style(style.clone()),
+                );
+            }
+            let scroll = ScrollView::vertical(stack);
+            if config.fixture == "scroll-retained" {
+                boxed(scroll.retain_content_layer())
+            } else {
+                boxed(scroll)
+            }
+        }
         "keyed-collection" | "virtual-collection" => boxed(
             VirtualList::new("Benchmark rows", collection.clone(), {
                 let style = style.clone();
@@ -395,7 +411,7 @@ impl Fixture {
         let default = match config.fixture.as_str() {
             "scrollbar-thresholds" => "resize",
             "keyed-collection" => "reorder",
-            "virtual-collection" => "scroll",
+            "virtual-collection" | "scroll-flat" | "scroll-retained" => "scroll",
             "scene-properties" => "paint",
             _ => "local",
         };

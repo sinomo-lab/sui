@@ -180,6 +180,9 @@ pub(crate) struct CachedDrawBatch {
 pub(crate) struct PreparedDrawBatch {
     pub(crate) kind: PreparedDrawKind,
     pub(crate) clip_rect: Option<ScissorRect>,
+    /// The logical clip `clip_rect` was made from, before any fragment
+    /// translation or window clip, so a moved fragment can recompute it.
+    pub(crate) logical_clip: Option<Rect>,
     pub(crate) vertices: PreparedVertices,
 }
 
@@ -196,9 +199,9 @@ pub(crate) struct PreparedFragmentSubmission {
 }
 
 pub(crate) struct PreparedSceneSubmission {
-    pub(crate) viewport: Size,
     pub(crate) framebuffer_size: (u32, u32),
     pub(crate) encodable_passes: Vec<EncodablePassBatch>,
+    pub(crate) fragment_translations: crate::resources::PreparedFragmentTranslations,
     pub(crate) image_bind_groups: HashMap<ImageBindGroupKey, wgpu::BindGroup>,
     pub(crate) text_atlas_bind_group: Option<wgpu::BindGroup>,
     pub(crate) analytic_path_resources: Option<PreparedAnalyticPathResources>,
@@ -218,7 +221,9 @@ pub(crate) struct EncodablePassBatch {
     pub(crate) extended_buffer: Option<wgpu::Buffer>,
     pub(crate) clip_buffer: Option<wgpu::Buffer>,
     pub(crate) text_instance_buffer: Option<wgpu::Buffer>,
-    pub(crate) translation: Vector,
+    /// Dynamic offset of this batch's translation in the frame's
+    /// fragment translation uniform.
+    pub(crate) translation_offset: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

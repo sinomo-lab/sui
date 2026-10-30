@@ -7291,6 +7291,41 @@ mod tests {
     }
 
     #[test]
+    fn scroll_view_keeps_retained_content_far_from_the_origin() {
+        // Row heights that f32 cannot represent exactly make absolute
+        // positions round differently after each scroll step.
+        const ROWS: usize = 200;
+        let counts = Rc::new(RefCell::new(vec![0usize; ROWS]));
+        let mut stack = Stack::vertical();
+        for index in 0..ROWS {
+            stack.push(PaintCounterBox::new(
+                Size::new(80.0, 21.792),
+                Color::rgba(0.8, 0.2, 0.2, 1.0),
+                Rc::clone(&counts),
+                index,
+            ));
+        }
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new()
+                .size(Size::new(80.0, 60.0))
+                .child(ScrollView::vertical(stack).retain_content_layer()),
+        );
+
+        let _ = runtime.render(window_id).unwrap();
+        let initial = counts.borrow().clone();
+        for _ in 0..80 {
+            let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(20.0, 20.0));
+            scroll.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(0.0, -48.0)));
+            runtime
+                .handle_event(window_id, Event::Pointer(scroll))
+                .unwrap();
+            let _ = runtime.render(window_id).unwrap();
+        }
+
+        assert_eq!(*counts.borrow(), initial);
+    }
+
+    #[test]
     fn scroll_view_repaints_content_by_default_after_scroll_input() {
         let counts = Rc::new(RefCell::new(vec![0usize; 2]));
         let (mut runtime, window_id) = build_runtime(

@@ -10,15 +10,15 @@ struct VsOut {
     @location(6) @interpolate(flat) atlas_kind: u32,
 };
 
-@group(0) @binding(0)
+@group(1) @binding(0)
 var text_atlas_sampler: sampler;
 
 // Single-channel coverage for grayscale glyphs.
-@group(0) @binding(1)
+@group(1) @binding(1)
 var text_atlas_mask: texture_2d_array<f32>;
 
 // RGBA for color glyphs and LCD subpixel masks.
-@group(0) @binding(2)
+@group(1) @binding(2)
 var text_atlas_color: texture_2d_array<f32>;
 
 @vertex
@@ -35,7 +35,7 @@ fn vs_main(
     @location(9) layer: u32,
 ) -> VsOut {
     var out: VsOut;
-    out.position = vec4<f32>(top_left + local_pos.x * x_axis + local_pos.y * y_axis, 0.0, 1.0);
+    out.position = translate_fragment(vec4<f32>(top_left + local_pos.x * x_axis + local_pos.y * y_axis, 0.0, 1.0));
     out.color = color;
     out.glyph_coords = local_pos;
     out.metadata = vec4<f32>(

@@ -33,8 +33,6 @@ use sui_core::Color;
 use sui_core::Error;
 use sui_core::Rect;
 use sui_core::Result;
-use sui_core::Size;
-use sui_core::Vector;
 use sui_scene::Brush;
 use sui_scene::Scene;
 use sui_scene::SceneCommand;
@@ -60,20 +58,6 @@ pub(crate) fn build_vertices(
         }
     }
     Ok(vertices)
-}
-
-pub(crate) fn translation_to_viewport_origin(
-    translation: Vector,
-    viewport: Size,
-    framebuffer_size: (u32, u32),
-) -> (f32, f32) {
-    if translation == Vector::ZERO || viewport.is_empty() {
-        return (0.0, 0.0);
-    }
-
-    let scale_x = framebuffer_size.0 as f32 / viewport.width.max(1.0);
-    let scale_y = framebuffer_size.1 as f32 / viewport.height.max(1.0);
-    (translation.x * scale_x, translation.y * scale_y)
 }
 
 #[derive(Debug, Clone, Copy, Default)]

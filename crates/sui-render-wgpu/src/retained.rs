@@ -174,6 +174,12 @@ pub(crate) struct RetainedFrameSubmission {
 pub(crate) struct RetainedFrameFragment {
     pub(crate) id: RetainedPacketId,
     pub(crate) draw_ops: Arc<DrawOpArena>,
+    /// Logical offset the GPU applies to `draw_ops`, so a layer that only
+    /// moved can reuse its composed geometry and vertex buffers.
+    pub(crate) translation: Vector,
+    /// Window-space clip applied as a scissor at submission. It does not
+    /// move with `translation`.
+    pub(crate) clip: Option<Rect>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -189,6 +195,86 @@ struct CompositionKey {
 struct ComposedPacket {
     key: CompositionKey,
     draw_ops: Arc<DrawOpArena>,
+    /// Whether composition snapped an image to physical pixels, which only a
+    /// whole-pixel translation preserves.
+    snaps_images: bool,
+}
+
+impl ComposedPacket {
+    fn compose(source: &Arc<DrawOpArena>, key: CompositionKey) -> Result<Self> {
+        let mut current =
+            if key.transform.is_identity() && key.clips.is_empty() && key.opacity == 1.0 {
+                Arc::clone(source)
+            } else {
+                let mut current = DrawOpArena::default();
+                current.append_transformed_fragment(
+                    source,
+                    key.transform,
+                    key.opacity,
+                    &key.clips,
+                    key.viewport,
+                )?;
+                Arc::new(current)
+            };
+        let snaps_images = current.draw_ops.iter().any(|op| {
+            op.image
+                .as_ref()
+                .is_some_and(|image| image.pixel_snap == sui_scene::ImagePixelSnap::Physical)
+        });
+        if current.draw_ops.iter().any(|op| op.image.is_some()) {
+            Arc::make_mut(&mut current).finalize_image_draws(key.viewport, key.surface_size);
+        }
+        Ok(Self {
+            key,
+            draw_ops: current,
+            snaps_images,
+        })
+    }
+
+    /// The translation that turns this composition into one for `key`, when
+    /// the two differ only in where the packet is placed.
+    fn translation_to(&self, key: &CompositionKey) -> Option<Vector> {
+        let base = &self.key;
+        if !base.clips.is_empty()
+            || !key.clips.is_empty()
+            || base.opacity != key.opacity
+            || base.viewport != key.viewport
+            || base.surface_size != key.surface_size
+            || base.transform.xx != key.transform.xx
+            || base.transform.yx != key.transform.yx
+            || base.transform.xy != key.transform.xy
+            || base.transform.yy != key.transform.yy
+        {
+            return None;
+        }
+        let delta = Vector::new(
+            key.transform.dx - base.transform.dx,
+            key.transform.dy - base.transform.dy,
+        );
+        if self.snaps_images && delta != Vector::ZERO {
+            let scale_x = key.surface_size.width / key.viewport.width.max(1.0);
+            let scale_y = key.surface_size.height / key.viewport.height.max(1.0);
+            let whole = |value: f32| (value - value.round()).abs() <= 1.0e-3;
+            if !whole(delta.x * scale_x) || !whole(delta.y * scale_y) {
+                return None;
+            }
+        }
+        Some(delta)
+    }
+}
+
+/// The window-space rectangle all `clips` leave visible: `Some(None)` without
+/// clips, `None` when a path clip needs the stencil.
+fn rectangular_clip(clips: &[ResolvedClipPrimitive]) -> Option<Option<Rect>> {
+    clips
+        .iter()
+        .try_fold(None::<Rect>, |current, clip| match clip {
+            ResolvedClipPrimitive::Rect(rect) => Some(Some(match current {
+                Some(current) => current.intersection(*rect).unwrap_or(Rect::ZERO),
+                None => *rect,
+            })),
+            ResolvedClipPrimitive::Path { .. } => None,
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1789,45 +1875,44 @@ impl RetainedCompositorState {
                                     .unwrap_or((Transform::IDENTITY, Vec::new(), 1.0)),
                             },
                         };
+                        // Rectangular clips stay out of the composed geometry and
+                        // become scissors at submission. A packet whose layer only
+                        // moved then keeps its geometry and GPU buffers and is
+                        // offset by the GPU instead of recomposed.
+                        let rect_clip = rectangular_clip(&clips);
                         let key = CompositionKey {
                             transform,
-                            clips,
+                            clips: if rect_clip.is_some() {
+                                Vec::new()
+                            } else {
+                                clips
+                            },
                             opacity,
                             viewport,
                             surface_size,
                         };
                         let mut cached = packet.composed.borrow_mut();
-                        if cached.as_ref().is_none_or(|cached| cached.key != key) {
-                            let mut current = if key.transform.is_identity()
-                                && key.clips.is_empty()
-                                && key.opacity == 1.0
-                            {
-                                Arc::clone(&packet.draw_ops)
+                        let reuse = cached.as_ref().and_then(|cached| {
+                            if cached.key == key {
+                                Some(Vector::ZERO)
                             } else {
-                                let mut current = DrawOpArena::default();
-                                current.append_transformed_fragment(
-                                    &packet.draw_ops,
-                                    key.transform,
-                                    key.opacity,
-                                    &key.clips,
-                                    viewport,
-                                )?;
-                                Arc::new(current)
-                            };
-                            if current.draw_ops.iter().any(|op| op.image.is_some()) {
-                                Arc::make_mut(&mut current)
-                                    .finalize_image_draws(viewport, surface_size);
+                                cached.translation_to(&key)
                             }
-                            *cached = Some(ComposedPacket {
-                                key,
-                                draw_ops: current,
-                            });
-                        }
+                        });
+                        let translation = match reuse {
+                            Some(translation) => translation,
+                            None => {
+                                *cached = Some(ComposedPacket::compose(&packet.draw_ops, key)?);
+                                Vector::ZERO
+                            }
+                        };
                         let current = &cached.as_ref().expect("composed packet cached").draw_ops;
                         if !current.draw_ops.is_empty() {
                             submission.fragments.push(RetainedFrameFragment {
                                 id: packet.id,
                                 draw_ops: Arc::clone(current),
+                                translation,
+                                clip: rect_clip.flatten(),
                             });
                         }
                         stats.direct_packets += 1;
@@ -2147,6 +2232,14 @@ pub(crate) fn normalize_packet_snapshot(
         snapshot.initial_state.transform_node = TransformNodeId::ROOT;
         snapshot.initial_state.pixel_snap_offset =
             physical_pixel_phase(pixel_snap_origin, raster_scale_factor);
+    }
+    if has_text && let Some(bounds) = snapshot.scene.paint_bounds() {
+        // Text only samples the backdrop under itself; a stationary backdrop
+        // must not invalidate a packet that moves across it.
+        snapshot
+            .initial_state
+            .text_background
+            .restrict_to(bounds.inflate(1.0, 1.0));
     }
     if !has_text {
         // Text metadata must not invalidate retained geometry-only packets.

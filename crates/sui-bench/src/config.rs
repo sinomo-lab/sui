@@ -4,6 +4,8 @@ pub const FIXTURES: &[&str] = &[
     "controls-grid",
     "nested-flex",
     "scrollbar-thresholds",
+    "scroll-flat",
+    "scroll-retained",
     "keyed-collection",
     "virtual-collection",
     "streaming-document",
@@ -215,7 +217,11 @@ impl Config {
             && !collection
             && !matches!(
                 self.fixture.as_str(),
-                "scrollbar-thresholds" | "streaming-document" | "application-shell"
+                "scrollbar-thresholds"
+                    | "scroll-flat"
+                    | "scroll-retained"
+                    | "streaming-document"
+                    | "application-shell"
             )
         {
             return Err("scroll requires a scrollable fixture".into());

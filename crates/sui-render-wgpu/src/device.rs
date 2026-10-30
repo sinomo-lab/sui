@@ -136,6 +136,22 @@ impl SharedRenderer {
                     },
                 ],
             });
+        let fragment_translation_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("SUI fragment translation bind group layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(
+                            crate::resources::FRAGMENT_TRANSLATION_SIZE,
+                        ),
+                    },
+                    count: None,
+                }],
+            });
         let output_transform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("SUI output transform bind group layout"),
@@ -180,6 +196,7 @@ impl SharedRenderer {
             image_bind_group_layout,
             text_atlas_array_bind_group_layout,
             analytic_path_bind_group_layout,
+            fragment_translation_bind_group_layout,
             output_transform_bind_group_layout,
             image_linear_sampler,
             image_nearest_sampler,

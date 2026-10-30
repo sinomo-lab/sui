@@ -113,6 +113,19 @@ Versioning, with the usual expectation that the API may change during the
   hasher for widget IDs.
 - JavaScript widget callbacks and class-instance checks cross the
   WebAssembly boundary fewer times per call.
+- Scrolling and translating a retained layer is now compositor-only: the
+  renderer reuses the layer's composed geometry and vertex buffers and moves
+  them with a GPU offset, and rectangular clips are applied as scissors.
+  A 400-row `retain_content_layer()` scroll step drops from 8.1 ms to 0.9 ms
+  in the offscreen benchmark, and a flattened one from 3.3 ms to 1.3 ms.
+- Layout change detection no longer rebuilds a node index for every moved
+  widget, which made each scroll step quadratic in the number of widgets.
+- Translated layout bounds keep their exact size, and descendants that move
+  with their paint boundary within f32 rounding stay composition-only, so
+  retained content far from the origin is no longer repainted on scroll.
+- Text packets only compare the backdrop under themselves, so text scrolling
+  over a uniform background keeps its rasterized glyphs.
+- Added `scroll-flat` and `scroll-retained` fixtures to `sui-bench`.
 
 ## [0.5.0] - 2026-10-08
 

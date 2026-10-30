@@ -4220,7 +4220,8 @@ impl WindowState {
                     {
                         output_widgets.push(current_node.id);
                         repaint_candidates.insert(resolve_snapshot_paint_boundary_or_root(
-                            &current_snapshot,
+                            &current_nodes,
+                            current_snapshot.root,
                             current_node.id,
                         ));
                         continue;
@@ -4235,7 +4236,8 @@ impl WindowState {
                     }
                     if delta != Vector::ZERO {
                         let resolved_boundary = resolve_snapshot_paint_boundary_or_root(
-                            &current_snapshot,
+                            &current_nodes,
+                            current_snapshot.root,
                             current_node.id,
                         );
                         if resolved_boundary == current_node.id
@@ -4250,9 +4252,11 @@ impl WindowState {
                             .zip(previous_nodes.get(&resolved_boundary))
                             .is_some_and(|(current_boundary, previous_boundary)| {
                                 current_boundary.paint_boundary == PaintBoundaryMode::Explicit
-                                    && current_boundary.geometry.layout_bounds.origin
-                                        - previous_boundary.geometry.layout_bounds.origin
-                                        == delta
+                                    && same_layer_translation(
+                                        current_boundary.geometry.layout_bounds.origin
+                                            - previous_boundary.geometry.layout_bounds.origin,
+                                        delta,
+                                    )
                             })
                         {
                             // A descendant that moved by exactly the same delta as its
@@ -4267,13 +4271,15 @@ impl WindowState {
                 (None, Some(current_node)) => {
                     output_widgets.push(current_node.id);
                     repaint_candidates.insert(resolve_snapshot_paint_boundary_or_root(
-                        &current_snapshot,
+                        &current_nodes,
+                        current_snapshot.root,
                         current_node.id,
                     ));
                 }
                 (Some(previous_node), None) => {
                     repaint_candidates.insert(resolve_snapshot_paint_boundary_or_root(
-                        previous,
+                        &previous_nodes,
+                        previous.root,
                         previous_node.id,
                     ));
                 }
@@ -5888,15 +5894,22 @@ fn active_text_layout_handles(scene: &Scene) -> HashSet<TextLayoutHandle> {
     handles
 }
 
+/// Whether a descendant moved with its paint boundary. Descendant origins are
+/// stored in absolute f32 coordinates, so far from the origin the same move
+/// can round to a slightly different delta than the boundary's.
+fn same_layer_translation(boundary_delta: Vector, delta: Vector) -> bool {
+    const TOLERANCE: f32 = 1.0 / 64.0;
+    (boundary_delta.x - delta.x).abs() <= TOLERANCE
+        && (boundary_delta.y - delta.y).abs() <= TOLERANCE
+}
+
+/// The nearest explicit paint boundary at or above `widget_id`, looked up in
+/// `nodes`, an index of the snapshot whose root is `root`.
 fn resolve_snapshot_paint_boundary_or_root(
-    snapshot: &WidgetGraphSnapshot,
+    nodes: &FxHashMap<WidgetId, &WidgetNodeSnapshot>,
+    root: WidgetId,
     widget_id: WidgetId,
 ) -> WidgetId {
-    let nodes = snapshot
-        .nodes
-        .iter()
-        .map(|node| (node.id, node))
-        .collect::<HashMap<_, _>>();
     let mut current = Some(widget_id);
     while let Some(candidate) = current {
         let Some(node) = nodes.get(&candidate) else {
@@ -5907,7 +5920,7 @@ fn resolve_snapshot_paint_boundary_or_root(
         }
         current = node.parent;
     }
-    snapshot.root
+    root
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

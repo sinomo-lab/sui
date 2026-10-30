@@ -32,13 +32,13 @@ struct AnalyticPoint {
     _pad: vec2<f32>,
 };
 
-@group(0) @binding(0)
+@group(1) @binding(0)
 var<storage, read> path_metas: array<AnalyticPathMeta>;
 
-@group(0) @binding(1)
+@group(1) @binding(1)
 var<storage, read> contours: array<AnalyticContour>;
 
-@group(0) @binding(2)
+@group(1) @binding(2)
 var<storage, read> points: array<AnalyticPoint>;
 
 @vertex
@@ -52,7 +52,7 @@ fn vs_main(
     @location(6) path_index: u32,
 ) -> VsOut {
     var out: VsOut;
-    out.position = vec4<f32>(mix(ndc_min, ndc_max, corner), 0.0, 1.0);
+    out.position = translate_fragment(vec4<f32>(mix(ndc_min, ndc_max, corner), 0.0, 1.0));
     out.color = color;
     out.scene_position = mix(scene_min, scene_max, corner);
     out.path_index = path_index;

@@ -72,6 +72,8 @@ between revisions.
 | `controls-grid` | Grid of dynamic labels and buttons; local, distributed, or whole-set text changes. |
 | `nested-flex` | Real nested Flex/Padding containers with a dynamic label population; configurable depth. |
 | `scrollbar-thresholds` | ScrollView with content near the horizontal gutter threshold and vertically overflowing content; alternating widths exercise coupled gutters. |
+| `scroll-flat` | Vertical ScrollView over a stack of labels, painted into the scroll view's layer; alternating scroll direction. |
+| `scroll-retained` | The same content behind `retain_content_layer()`, so scrolling moves a retained layer. |
 | `keyed-collection` | VirtualList backed by a keyed model; move, prepend, and remove cycles. |
 | `virtual-collection` | Large logical VirtualList model with a bounded viewport/overscan; alternating scroll direction. |
 | `streaming-document` | RichDocumentView with retained completed paragraphs and tail appends/new blocks. |

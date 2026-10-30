@@ -2134,3 +2134,103 @@ pub(crate) fn nested_cached_scroll_auto_sibling_transforms_match_direct_after_im
 
     assert_rgba_images_match(&direct_pixels, &cached_pixels);
 }
+
+#[test]
+pub(crate) fn moved_scroll_content_reuses_composed_geometry_with_gpu_translation() {
+    let scroll_id = WidgetId::new(231);
+    let content_id = WidgetId::new(232);
+    let scroll_bounds = Rect::new(20.0, 16.0, 200.0, 120.0);
+    let build_frame = |window_id, content_y: f32, update_kind| {
+        let content_bounds = Rect::new(20.0, content_y, 200.0, 400.0);
+        let content_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(content_id),
+            content_id,
+            content_bounds,
+        )
+        .with_content_bounds(content_bounds)
+        .with_paint_bounds(content_bounds);
+        let mut content = Scene::new();
+        for row in 0..10 {
+            content.push(SceneCommand::FillRect {
+                rect: Rect::new(24.0, content_y + row as f32 * 40.0, 150.0, 32.0),
+                brush: Color::rgba(0.1 * row as f32, 0.4, 0.8, 1.0).into(),
+            });
+            content.push(SceneCommand::PushClip {
+                rect: Rect::new(30.0, content_y + row as f32 * 40.0 + 4.0, 60.0, 12.0),
+            });
+            content.push(SceneCommand::FillRect {
+                rect: Rect::new(24.0, content_y + row as f32 * 40.0, 150.0, 32.0),
+                brush: Color::rgba(0.9, 0.2, 0.1, 1.0).into(),
+            });
+            content.push(SceneCommand::PopClip);
+        }
+        let scroll_descriptor = SceneLayerDescriptor::new(
+            SceneLayerId::from_widget(scroll_id),
+            scroll_id,
+            scroll_bounds,
+        )
+        .with_content_bounds(scroll_bounds)
+        .with_paint_bounds(scroll_bounds)
+        .with_composition_mode(LayerCompositionMode::Scroll);
+        let mut scroll = Scene::new();
+        scroll.push(SceneCommand::FillRect {
+            rect: scroll_bounds,
+            brush: Color::WHITE.into(),
+        });
+        scroll.push(SceneCommand::PushClip {
+            rect: scroll_bounds,
+        });
+        scroll.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            content_descriptor.clone(),
+            content,
+        )));
+        scroll.push(SceneCommand::PopClip);
+        let mut scene = Scene::new();
+        scene.push(SceneCommand::Layer(SceneLayer::from_descriptor(
+            scroll_descriptor,
+            scroll,
+        )));
+        SceneFrame {
+            window_id,
+            viewport: Size::new(240.0, 160.0),
+            surface_size: Size::new(240.0, 160.0),
+            scale_factor: 1.0,
+            dirty_regions: Vec::new(),
+            layer_updates: vec![SceneLayerUpdate::from_descriptor(
+                update_kind,
+                content_descriptor,
+            )],
+            scene,
+            font_registry: Arc::new(FontRegistry::new()),
+            image_registry: Arc::new(ImageRegistry::new()),
+            text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+        }
+    };
+
+    let window = WindowId::new(231);
+    let mut moved = WgpuRenderer::default();
+    moved
+        .render(&build_frame(window, 16.0, SceneLayerUpdateKind::Content))
+        .unwrap();
+    let initial = moved.last_frame_stats(window).unwrap();
+    assert!(initial.prepared_fragment_build_count > 0);
+    assert!(initial.uploaded_vertex_bytes > 0);
+    moved
+        .render(&build_frame(window, -32.0, SceneLayerUpdateKind::Transform))
+        .unwrap();
+    let last = build_frame(window, -88.0, SceneLayerUpdateKind::Transform);
+    moved.render(&last).unwrap();
+    let stats = moved.last_frame_stats(window).unwrap();
+    let moved_pixels = moved.capture_last_frame_rgba(window).unwrap();
+
+    let mut fresh = WgpuRenderer::default();
+    fresh
+        .render(&build_frame(window, -88.0, SceneLayerUpdateKind::Content))
+        .unwrap();
+    let fresh_pixels = fresh.capture_last_frame_rgba(window).unwrap();
+
+    assert_rgba_images_match(&fresh_pixels, &moved_pixels);
+    assert_eq!(stats.retained_packet_build_count, 0);
+    assert_eq!(stats.prepared_fragment_build_count, 0);
+    assert_eq!(stats.uploaded_vertex_bytes, 0);
+}

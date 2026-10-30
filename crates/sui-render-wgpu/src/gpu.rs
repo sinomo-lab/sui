@@ -54,6 +54,8 @@ pub(crate) struct SharedRenderer {
     pub(crate) image_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) text_atlas_array_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) analytic_path_bind_group_layout: wgpu::BindGroupLayout,
+    /// Group 0 of every scene pipeline: the drawn fragment's translation.
+    pub(crate) fragment_translation_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) output_transform_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) image_linear_sampler: wgpu::Sampler,
     pub(crate) image_nearest_sampler: wgpu::Sampler,
@@ -378,7 +380,10 @@ impl SharedRenderer {
                                 } else {
                                     "SUI textured scene pipeline layout"
                                 }),
-                                bind_group_layouts: &[Some(bind_group_layout)],
+                                bind_group_layouts: &[
+                                    Some(&self.fragment_translation_bind_group_layout),
+                                    Some(bind_group_layout),
+                                ],
                                 immediate_size: 0,
                             }),
                     )
@@ -387,7 +392,10 @@ impl SharedRenderer {
                     self.device
                         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                             label: Some("SUI analytic path pipeline layout"),
-                            bind_group_layouts: &[Some(&self.analytic_path_bind_group_layout)],
+                            bind_group_layouts: &[
+                                Some(&self.fragment_translation_bind_group_layout),
+                                Some(&self.analytic_path_bind_group_layout),
+                            ],
                             immediate_size: 0,
                         }),
                 ),
@@ -406,7 +414,13 @@ impl SharedRenderer {
                 | PipelineKind::RoundedRectClipped
                 | PipelineKind::GradientRect
                 | PipelineKind::GradientRectClipped
-                | PipelineKind::ClipMask => None,
+                | PipelineKind::ClipMask => Some(self.device.create_pipeline_layout(
+                    &wgpu::PipelineLayoutDescriptor {
+                        label: Some("SUI scene pipeline layout"),
+                        bind_group_layouts: &[Some(&self.fragment_translation_bind_group_layout)],
+                        immediate_size: 0,
+                    },
+                )),
             };
             let compact_vertex_layouts = [Some(CompactVertex::layout())];
             let solid_vertex_layouts = [Some(SolidVertex::layout())];

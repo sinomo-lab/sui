@@ -400,6 +400,9 @@ impl WgpuRenderer {
         }
         self.frame_resources.fragments.remove(&window_id);
         self.frame_resources.output_transforms.remove(&window_id);
+        self.frame_resources
+            .fragment_translations
+            .remove(&window_id);
         self.surfaces.remove(&window_id);
         self.offscreen_outputs.remove(&window_id);
         self.offscreen_targets.remove(&window_id);
