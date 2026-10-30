@@ -533,7 +533,7 @@ From the workspace root, with maturin, packaging, and twine installed:
 ```bash
 maturin sdist --manifest-path crates/sui-python/Cargo.toml --out target/python-sdist
 python -m unittest discover -s crates/sui-python/packaging -v
-python crates/sui-python/packaging/check_sdist.py target/python-sdist/sinomo_ui-0.5.0.tar.gz --version 0.5.0 --license LICENSE
+python crates/sui-python/packaging/check_sdist.py target/python-sdist/sinomo_ui-0.6.0.tar.gz --version 0.6.0 --license LICENSE
 python -m twine check --strict target/python-sdist/*.tar.gz
 ```
 

@@ -4,7 +4,20 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
-## [Unreleased]
+## [0.6.0] - 2026-10-30
+
+This release makes the JavaScript package async and runs it in browsers on a
+WebAssembly build, removes the APIs deprecated in 0.4, and makes small-change
+frames much cheaper: retained layers scroll on the compositor, draws batch
+across packets with clips applied in shaders, and windows on every platform
+redraw only what changed.
+
+### Upgrading from 0.5
+
+- Update the SUI crates together from `0.5` to `0.6`, and `sinomo-ui-lucide` to
+  `1.47.3`, which bundles the same Lucide 1.47.0 icons for the `0.6` family.
+- Clear 0.5's deprecation warnings before updating: each names its
+  replacement, and 0.6 removes the deprecated APIs.
 
 ### Breaking changes
 
@@ -85,6 +98,15 @@ Versioning, with the usual expectation that the API may change during the
 - Added a `node:test` suite that runs on both the addon and the WebAssembly
   build.
 
+### Python
+
+- The sdist places the license file at its root, where its metadata declares
+  it. The release workflow checks each sdist's contents and metadata, and
+  runs `twine check`, before uploading it.
+- The examples open interactive desktop windows with `App.run()` instead of
+  printing snapshots, and paint the theme's window background with a root
+  `surface`, as the README's examples now do.
+
 ### Rust
 
 - Added `DesktopPlatform::start_pumped` and `PumpedDesktop`, and
@@ -102,9 +124,22 @@ Versioning, with the usual expectation that the API may change during the
   dual-source blending could leave its text pipeline for later renderers,
   which then drew LCD text in grayscale. Text pipelines are now cached per
   variant.
+- On Windows, closing the last window no longer returns from `run` before the
+  window is destroyed, which left it on screen until the process exited.
+- `ContextMenu` keeps its panel positions, and with them its paint,
+  semantics, and hit testing, when a parent such as a toolbar measures it
+  again after arranging it.
+- `VirtualTable` publishes its viewport only when arranged, not when a parent
+  measures provisional sizes, which made layout observers alternate between
+  sizes forever.
+- Touch input no longer opens tooltips, which could cover the menu or action
+  a finger just activated.
 
 ### Performance
 
+- On Android, a focused window no longer presents every display frame while
+  its UI is unchanged. Desktop windows keep presenting so that variable
+  refresh rate does not lower the monitor's refresh rate.
 - In the browser, a focused canvas no longer wakes on every display frame
   while nothing changes, matching Android.
 - Bundled fallback fonts on the web and Android, and fonts registered by the
@@ -121,8 +156,6 @@ Versioning, with the usual expectation that the API may change during the
 - Scrolling and translating a retained layer is now compositor-only: the
   renderer reuses the layer's composed geometry and vertex buffers and moves
   them with a GPU offset, and rectangular clips are applied as scissors.
-  A 400-row `retain_content_layer()` scroll step drops from 8.1 ms to 0.9 ms
-  in the offscreen benchmark, and a flattened one from 3.3 ms to 1.3 ms.
 - Layout change detection no longer rebuilds a node index for every moved
   widget, which made each scroll step quadratic in the number of widgets.
 - Translated layout bounds keep their exact size, and descendants that move
@@ -131,9 +164,7 @@ Versioning, with the usual expectation that the API may change during the
 - Text packets only compare the backdrop under themselves, so text scrolling
   over a uniform background keeps its rasterized glyphs.
 - Added `scroll-flat` and `scroll-retained` fixtures to `sui-bench`.
-- Small-change frames do less whole-tree and whole-scene work. With 1,200
-  widgets and one label changing, an offscreen frame drops from 3.0 ms to
-  1.8 ms and the runtime's share from 1.05 ms to 0.72 ms:
+- Small-change frames do less whole-tree and whole-scene work:
   - The renderer reorders each fragment's draws so draws that share a
     pipeline and clip are adjacent, without moving any draw past one it
     overlaps, and drops clip rectangles that contain the whole draw. The
@@ -160,9 +191,7 @@ Versioning, with the usual expectation that the API may change during the
   clears and redraws only the region where its packets changed, and redraws
   nothing when none did. Reordered packets, a resized target, a different
   image registry, external images, frames drawn straight to the swapchain,
-  and damage over half the target fall back to a full redraw. With one cell
-  of a 1,200-cell 4K grid changing per frame, GPU-inclusive frame time drops
-  from about 1.6 ms to 0.85 ms.
+  and damage over half the target fall back to a full redraw.
 - Native SDR windows (Windows, macOS, Linux, Android, and iOS) redraw
   partially too: they draw into a persistent frame in the swapchain's format
   and copy it to the swapchain, when the swapchain accepts copies. Frames
@@ -665,3 +694,4 @@ Initial public alpha release of the Rust workspace.
 [0.4.0]: https://github.com/sinomo-lab/sui/compare/v0.3.0...v0.4.0
 [0.4.1]: https://github.com/sinomo-lab/sui/compare/v0.4.0...v0.4.1
 [0.5.0]: https://github.com/sinomo-lab/sui/compare/v0.4.1...v0.5.0
+[0.6.0]: https://github.com/sinomo-lab/sui/compare/v0.5.0...v0.6.0

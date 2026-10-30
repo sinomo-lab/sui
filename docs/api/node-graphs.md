@@ -9,8 +9,8 @@ Add the separate package alongside the SUI facade:
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", version = "0.5" }
-sui-nodes = { package = "sinomo-ui-nodes", version = "0.5" }
+sui = { package = "sinomo-ui", version = "0.6" }
+sui-nodes = { package = "sinomo-ui-nodes", version = "0.6" }
 ```
 
 ## Build a graph

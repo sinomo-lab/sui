@@ -230,6 +230,8 @@ keep them identical, and the `node:test` suite runs on both. Implemented:
 - callback error boundaries through `setErrorHandler`, including async
   callbacks;
 - byte-based resource loading (`pngImage`, `svgImage`, `fontBytes`);
+- release modules shrunk with `wasm-opt -Os` and built with WebAssembly SIMD
+  (`cargo xtask web build --release`);
 - a framework-free example (`crates/sui-js/examples/web`).
 
 Remaining before the alpha exit criteria are met:
@@ -237,8 +239,7 @@ Remaining before the alpha exit criteria are met:
 - a documented browser matrix and device-loss behavior;
 - browser accessibility (DOM mirror or AccessKit) for the canvas;
 - a common-bundler example and a packed-package smoke test;
-- a module-size budget (the release module is about 16 MB before compression)
-  and `wasm-opt` in the build;
+- a module-size budget for the release module;
 - semantic/render compatibility checks for the portable widget tier in a real
   browser, beyond the Node-hosted test run.
 

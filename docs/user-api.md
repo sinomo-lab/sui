@@ -11,7 +11,7 @@ application code:
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", version = "0.5" }
+sui = { package = "sinomo-ui", version = "0.6" }
 ```
 
 ```rust,no_run
@@ -129,7 +129,7 @@ remain roadmap items; see the
 ## Stability boundary
 
 The public Rust facade, desktop runtime, built-in widgets, and deterministic
-testing model are implemented. This is still a `0.5.0` pre-release workspace:
+testing model are implemented. This is still a `0.6.0` pre-release workspace:
 semver compatibility is not promised, language packages are local builds, and
 browser/mobile/native-HDR surfaces vary by platform. Check the
 [platform matrix](../README.md#platform-status) before choosing a deployment
