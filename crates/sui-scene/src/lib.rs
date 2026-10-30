@@ -879,6 +879,13 @@ impl Scene {
     }
 
     pub fn append(&mut self, scene: Scene) {
+        // Appending to an empty scene shares the command list instead of
+        // copying it, which keeps single-child wrappers from duplicating
+        // their subtree's commands.
+        if self.commands.is_empty() {
+            *self = scene;
+            return;
+        }
         if self.bounds.state.is_balanced() && scene.bounds.state.is_balanced() {
             self.bounds.extend(&scene.bounds);
         } else {
@@ -891,6 +898,10 @@ impl Scene {
 
     /// Append a retained scene without allocating an intermediate command vector.
     pub fn append_ref(&mut self, scene: &Scene) {
+        if self.commands.is_empty() {
+            self.clone_from(scene);
+            return;
+        }
         if self.bounds.state.is_balanced() && scene.bounds.state.is_balanced() {
             self.bounds.extend(&scene.bounds);
         } else {

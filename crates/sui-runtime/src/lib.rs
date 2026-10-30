@@ -1311,6 +1311,10 @@ struct WindowState {
     viewport: Option<Size>,
     last_frame: Option<SceneFrame>,
     last_paint_bounds_by_widget: HashMap<WidgetId, Rect>,
+    /// The base image registry the last frame's registry was built from.
+    last_image_registry_base: Option<Arc<ImageRegistry>>,
+    /// Persistent text layouts left after the last prune.
+    retained_text_layout_count: usize,
     last_semantics: Vec<SemanticsNode>,
     pending_invalidations: Vec<InvalidationRequest>,
     // Counts preserve provenance without changing the public request type. If an
@@ -1363,7 +1367,12 @@ struct WindowState {
     /// The widget graph the last frame was painted from, kept when layout
     /// runs while an event is handled, before the next frame renders. The
     /// frame compares against it to repaint and move what that layout moved.
-    graph_before_event_layout: Option<WidgetGraphSnapshot>,
+    /// The graph as it was before this frame's first layout, kept by
+    /// swapping instead of copying when the graph is rebuilt.
+    previous_graph: WidgetGraph,
+    /// Whether `previous_graph` holds the graph from before this frame's
+    /// first layout.
+    previous_graph_saved: bool,
 }
 
 impl WindowState {
@@ -1407,6 +1416,8 @@ impl WindowState {
             viewport: None,
             last_frame: None,
             last_paint_bounds_by_widget: HashMap::new(),
+            last_image_registry_base: None,
+            retained_text_layout_count: 0,
             last_semantics: Vec::new(),
             pending_invalidations: Vec::new(),
             pending_local_output: HashMap::new(),
@@ -1446,7 +1457,8 @@ impl WindowState {
             widget_rebuild_history: VecDeque::new(),
             last_render_diagnostics: RenderDiagnostics::default(),
             painted_render_options: None,
-            graph_before_event_layout: None,
+            previous_graph: WidgetGraph::default(),
+            previous_graph_saved: false,
         }
     }
 
@@ -2516,9 +2528,6 @@ impl WindowState {
         image_registry: Arc<ImageRegistry>,
     ) {
         if self.schedule.measure || self.schedule.arrange || self.viewport.is_none() {
-            if self.graph_before_event_layout.is_none() && !self.graph.is_empty() {
-                self.graph_before_event_layout = Some(self.graph.snapshot());
-            }
             let scope_source = self.pending_invalidations.clone();
             let invalidations = self.run_measure_arrange_pass(
                 &scope_source,
@@ -3513,16 +3522,9 @@ impl WindowState {
             root_repaint_covers_graph_changes(self.root.id(), &invalidations);
         // Layout that already ran while handling events changed the graph
         // since the last frame too.
-        let graph_before_event_layout = self.graph_before_event_layout.take();
-        let previous_graph = if root_repaint_covers_graph_changes {
-            None
-        } else if graph_before_event_layout.is_some() {
-            graph_before_event_layout
-        } else if (self.schedule.measure || self.schedule.arrange) && !self.graph.is_empty() {
-            Some(self.graph.snapshot())
-        } else {
-            None
-        };
+        let diff_graph = !root_repaint_covers_graph_changes
+            && (self.previous_graph_saved
+                || ((self.schedule.measure || self.schedule.arrange) && !self.graph.is_empty()));
         let mut graph_changes = GraphChangeSet::default();
 
         // WindowState starts with a bootstrap schedule. Initial size/DPI events
@@ -3541,7 +3543,9 @@ impl WindowState {
             graph_changes = if root_repaint_covers_graph_changes {
                 GraphChangeSet::default()
             } else {
-                self.collect_graph_changes(previous_graph.as_ref())
+                self.collect_graph_changes(
+                    (diff_graph && self.previous_graph_saved).then_some(&self.previous_graph),
+                )
             };
             if diagnostics_enabled {
                 diagnostics.push(FramePhase::MeasureArrange, started.elapsed());
@@ -3554,11 +3558,12 @@ impl WindowState {
                     diagnostics.push(FramePhase::HitTest, started.elapsed());
                 }
             }
-            if let Some(previous_graph) = previous_graph.as_ref() {
-                graph_changes = self.collect_graph_changes(Some(previous_graph));
+            if diff_graph && self.previous_graph_saved {
+                graph_changes = self.collect_graph_changes(Some(&self.previous_graph));
             }
         }
 
+        self.previous_graph_saved = false;
         self.apply_pending_overlay_focus(&mut invalidations);
 
         let viewport = self.viewport.unwrap_or(Size::ZERO);
@@ -3753,7 +3758,15 @@ impl WindowState {
             );
             let frame_image_registry =
                 self.frame_image_registry(Arc::clone(&image_registry), paint_images);
-            retain_text_layouts_for_scene(text_system.as_ref(), &scene);
+            // Pruning walks the whole scene and copies the registry. Layouts
+            // the scene no longer uses only cost memory, so let a bounded
+            // number build up between prunes.
+            if text_system.text_layout_registry().len()
+                > self.retained_text_layout_count + TEXT_LAYOUT_PRUNE_SLACK
+            {
+                retain_text_layouts_for_scene(text_system.as_ref(), &scene);
+                self.retained_text_layout_count = text_system.text_layout_registry().len();
+            }
             self.last_frame = Some(SceneFrame {
                 window_id: self.id,
                 viewport,
@@ -3855,10 +3868,20 @@ impl WindowState {
     }
 
     fn frame_image_registry(
-        &self,
+        &mut self,
         base: Arc<ImageRegistry>,
         paint_images: Vec<(ImageHandle, PaintImageResource)>,
     ) -> Arc<ImageRegistry> {
+        if paint_images.is_empty()
+            && self
+                .last_image_registry_base
+                .as_ref()
+                .is_some_and(|last| Arc::ptr_eq(last, &base))
+            && let Some(frame) = &self.last_frame
+        {
+            return Arc::clone(&frame.image_registry);
+        }
+        self.last_image_registry_base = Some(Arc::clone(&base));
         let mut registry = self
             .last_frame
             .as_ref()
@@ -4180,7 +4203,7 @@ impl WindowState {
         minimized
     }
 
-    fn collect_graph_changes(&self, previous: Option<&WidgetGraphSnapshot>) -> GraphChangeSet {
+    fn collect_graph_changes(&self, previous: Option<&WidgetGraph>) -> GraphChangeSet {
         let Some(previous) = previous else {
             return GraphChangeSet {
                 output_widgets: vec![self.graph.root],
@@ -4189,19 +4212,16 @@ impl WindowState {
             };
         };
 
-        let current_snapshot = self.graph.snapshot();
-        let previous_nodes: FxHashMap<_, _> =
-            previous.nodes.iter().map(|node| (node.id, node)).collect();
-        let current_nodes: FxHashMap<_, _> = current_snapshot
-            .nodes
-            .iter()
-            .map(|node| (node.id, node))
-            .collect();
-        let widget_ids = previous_nodes
-            .keys()
-            .chain(current_nodes.keys())
-            .copied()
-            .collect::<FxHashSet<_>>();
+        let previous_nodes = &previous.nodes;
+        let current_nodes = &self.graph.nodes;
+        let current_root = self.graph.root;
+        let widget_ids = self.graph.order.iter().copied().chain(
+            previous
+                .order
+                .iter()
+                .copied()
+                .filter(|widget_id| !current_nodes.contains_key(widget_id)),
+        );
         let mut output_widgets = Vec::new();
         let mut repaint_candidates = HashSet::new();
         let mut transform_candidates = Vec::new();
@@ -4220,8 +4240,8 @@ impl WindowState {
                     {
                         output_widgets.push(current_node.id);
                         repaint_candidates.insert(resolve_snapshot_paint_boundary_or_root(
-                            &current_nodes,
-                            current_snapshot.root,
+                            current_nodes,
+                            current_root,
                             current_node.id,
                         ));
                         continue;
@@ -4236,8 +4256,8 @@ impl WindowState {
                     }
                     if delta != Vector::ZERO {
                         let resolved_boundary = resolve_snapshot_paint_boundary_or_root(
-                            &current_nodes,
-                            current_snapshot.root,
+                            current_nodes,
+                            current_root,
                             current_node.id,
                         );
                         if resolved_boundary == current_node.id
@@ -4271,14 +4291,14 @@ impl WindowState {
                 (None, Some(current_node)) => {
                     output_widgets.push(current_node.id);
                     repaint_candidates.insert(resolve_snapshot_paint_boundary_or_root(
-                        &current_nodes,
-                        current_snapshot.root,
+                        current_nodes,
+                        current_root,
                         current_node.id,
                     ));
                 }
                 (Some(previous_node), None) => {
                     repaint_candidates.insert(resolve_snapshot_paint_boundary_or_root(
-                        &previous_nodes,
+                        previous_nodes,
                         previous.root,
                         previous_node.id,
                     ));
@@ -4711,6 +4731,7 @@ impl WindowState {
         } else {
             self.root.measured_size()
         };
+
         layout_work::elapsed(measure_started, |work, us| work.measure_us += us);
         let viewport = constraints.clamp(measured_root);
 
@@ -4730,6 +4751,7 @@ impl WindowState {
             &mut arrange_ctx,
             Rect::from_origin_size(Point::ZERO, viewport),
         );
+
         layout_work::elapsed(arrange_started, |work, us| work.arrange_us += us);
         self.viewport = Some(viewport);
         self.schedule.measure = false;
@@ -4746,11 +4768,16 @@ impl WindowState {
 
     fn refresh_graph(&mut self) {
         let graph_started = layout_work::started();
+        if !self.previous_graph_saved && !self.graph.is_empty() {
+            std::mem::swap(&mut self.graph, &mut self.previous_graph);
+            self.previous_graph_saved = true;
+        }
         self.graph.rebuild_in_place(
             &self.root,
             self.focus.focused_widget,
             &self.last_paint_bounds_by_widget,
         );
+
         let overlay_focus = self.overlay_manager.sync(
             self.graph.overlay_snapshots(),
             &self.graph,
@@ -4810,6 +4837,11 @@ impl WindowState {
     }
 
     fn sync_scene_stack_metadata(&self, scene: &mut Scene) {
+        // Mutating would detach command lists the previous frame and the
+        // renderer still share, and recompute every level's bounds.
+        if self.scene_stack_metadata_is_current(scene) {
+            return;
+        }
         scene.visit_layers_mut(&mut |layer| {
             if let Some(node) = self.graph.node(layer.widget_id()) {
                 layer.descriptor.stack_host = node.stack_host;
@@ -4820,6 +4852,39 @@ impl WindowState {
             }
         });
         scene.reorder_stack_surfaces();
+    }
+
+    /// Whether every layer in `scene` already carries the graph's stack
+    /// metadata and each level's stack surfaces are already in order.
+    fn scene_stack_metadata_is_current(&self, scene: &Scene) -> bool {
+        let mut last_stack_order = None;
+        for command in scene.commands() {
+            let SceneCommand::Layer(layer) = command else {
+                continue;
+            };
+            if let Some(node) = self.graph.node(layer.widget_id()) {
+                let descriptor = &layer.descriptor;
+                if descriptor.stack_host != node.stack_host
+                    || descriptor.stack_order != node.stack_surface_order
+                    || descriptor.transient_owner_surface != node.transient_owner_surface
+                    || descriptor.is_stack_surface != node.is_stack_surface
+                    || descriptor.hit_test != node.hit_test
+                {
+                    return false;
+                }
+            }
+            if layer.descriptor.is_stack_surface {
+                let order = layer.descriptor.stack_order;
+                if last_stack_order.is_some_and(|last| order < last) {
+                    return false;
+                }
+                last_stack_order = Some(order);
+            }
+            if !self.scene_stack_metadata_is_current(&layer.scene) {
+                return false;
+            }
+        }
+        true
     }
 
     fn prune_runtime_state(&mut self) {
@@ -5041,7 +5106,7 @@ fn scale_viewport_to_surface_size(viewport: Size, scale_factor: f32) -> Size {
 
 impl WindowState {
     fn assemble_semantics_tree(&mut self, nodes: Vec<SemanticsNode>) -> Vec<SemanticsNode> {
-        let semantic_ids: HashSet<_> = nodes.iter().map(|node| node.id).collect();
+        let semantic_ids: FxHashSet<_> = nodes.iter().map(|node| node.id).collect();
         if self
             .focused_semantics
             .is_some_and(|focused| !semantic_ids.contains(&focused))
@@ -5061,7 +5126,7 @@ impl WindowState {
 
     fn resolve_semantics_parent(
         &self,
-        semantic_ids: &HashSet<WidgetId>,
+        semantic_ids: &FxHashSet<WidgetId>,
         widget_id: WidgetId,
         explicit_parent: Option<WidgetId>,
     ) -> Option<WidgetId> {
@@ -5135,7 +5200,7 @@ impl WidgetGraph {
         self.overlay_options.clear();
         self.overlay_parents.clear();
         self.overlay_surfaces.clear();
-        let mut inverse_cache = HashMap::new();
+        let mut inverse_cache = FxHashMap::default();
         self.collect(
             root,
             None,
@@ -5427,7 +5492,7 @@ impl WidgetGraph {
         focused_widget: Option<WidgetId>,
         paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
         context: GraphCollectContext,
-        inverse_cache: &mut HashMap<[u32; 6], Option<Transform>>,
+        inverse_cache: &mut FxHashMap<[u32; 6], Option<Transform>>,
     ) {
         let id = pod.id();
         self.order.push(id);
@@ -5528,9 +5593,13 @@ impl WidgetGraph {
 
         let local_bounds = pod.bounds();
         let presentation_transform = pod.presentation_transform();
-        let inverse_presentation_transform = *inverse_cache
-            .entry(transform_bits(presentation_transform))
-            .or_insert_with(|| presentation_transform.inverse());
+        let inverse_presentation_transform = if presentation_transform.is_identity() {
+            Some(Transform::IDENTITY)
+        } else {
+            *inverse_cache
+                .entry(transform_bits(presentation_transform))
+                .or_insert_with(|| presentation_transform.inverse())
+        };
         let layout_bounds = presentation_transform.transform_rect_bbox(local_bounds);
         let input_bounds = layout_bounds;
         let paint_bounds = paint_bounds_by_widget
@@ -5625,7 +5694,7 @@ struct CollectChildrenVisitor<'a> {
     paint_bounds_by_widget: &'a HashMap<WidgetId, Rect>,
     context: GraphCollectContext,
     children: Vec<WidgetId>,
-    inverse_cache: &'a mut HashMap<[u32; 6], Option<Transform>>,
+    inverse_cache: &'a mut FxHashMap<[u32; 6], Option<Transform>>,
 }
 
 impl WidgetPodVisitor for CollectChildrenVisitor<'_> {
@@ -5876,6 +5945,10 @@ fn collect_scene_layers(scene: &Scene) -> HashMap<WidgetId, SceneLayerDescriptor
     layers
 }
 
+/// How many persistent text layouts may accumulate before a frame prunes the
+/// ones its scene no longer references.
+const TEXT_LAYOUT_PRUNE_SLACK: usize = 64;
+
 fn retain_text_layouts_for_scene(text_system: &TextSystem, scene: &Scene) {
     text_system.retain_persistent_layouts(&active_text_layout_handles(scene));
 }
@@ -5906,7 +5979,7 @@ fn same_layer_translation(boundary_delta: Vector, delta: Vector) -> bool {
 /// The nearest explicit paint boundary at or above `widget_id`, looked up in
 /// `nodes`, an index of the snapshot whose root is `root`.
 fn resolve_snapshot_paint_boundary_or_root(
-    nodes: &FxHashMap<WidgetId, &WidgetNodeSnapshot>,
+    nodes: &FxHashMap<WidgetId, WidgetNodeSnapshot>,
     root: WidgetId,
     widget_id: WidgetId,
 ) -> WidgetId {

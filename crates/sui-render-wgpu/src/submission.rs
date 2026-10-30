@@ -555,6 +555,7 @@ pub(crate) fn prepare_frame_batches_with_analytic_slots(
     if let Some(slots) = analytic_path_slots {
         stamp_draw_op_analytic_path_slots(&mut draw_ops, slots);
     }
+    reorder_draw_ops_for_batching(&mut draw_ops, batch_analytic_paths, viewport);
     let cached_passes = cache_draw_ops_internal(&draw_ops, batch_analytic_paths);
     let mut passes = prepare_cached_passes(
         &cached_passes,
@@ -658,6 +659,190 @@ pub(crate) fn batch_draw_ops(
 #[cfg(test)]
 pub(crate) fn cache_draw_ops(draw_ops: &DrawOpArena) -> Vec<CachedPassBatch> {
     cache_draw_ops_internal(draw_ops, false)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Lets tests render the same frame with and without batch reordering.
+    pub(crate) static BATCH_REORDER_DISABLED: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// How many earlier batches a draw may move past to join one of its kind.
+/// Bounds the reordering cost for long fragments.
+const BATCH_REORDER_WINDOW: usize = 32;
+
+/// Reorder `draw_ops` so draws that can share a GPU draw call are adjacent.
+///
+/// A draw moves back to join the nearest earlier batch with the same
+/// pipeline, resources, and clip, but never past a draw it overlaps, so the
+/// painter's order of every overlapping pair is kept and the image does not
+/// change. Draws never move across a change of stencil clip paths.
+pub(crate) fn reorder_draw_ops_for_batching(
+    draw_ops: &mut DrawOpArena,
+    batch_analytic_paths: bool,
+    viewport: Size,
+) {
+    struct Batch {
+        kind: PreparedDrawKind,
+        clip_rect: Option<Rect>,
+        clip_state_index: usize,
+        bounds: [f32; 4],
+        ops: Vec<usize>,
+    }
+
+    #[cfg(test)]
+    if BATCH_REORDER_DISABLED.with(std::cell::Cell::get) {
+        return;
+    }
+    if draw_ops.draw_ops.len() < 3 || viewport.is_empty() {
+        return;
+    }
+    // A clip that contains everything a draw covers changes nothing, but its
+    // scissor would keep the draw from batching with its neighbors.
+    let bounds = draw_ops
+        .draw_ops
+        .iter()
+        .map(|op| draw_op_ndc_bounds(draw_ops, op))
+        .collect::<Vec<_>>();
+    for (op, bounds) in draw_ops.draw_ops.iter_mut().zip(&bounds) {
+        if let Some(clip) = op.clip_rect
+            && ndc_bounds_within(*bounds, clip, viewport)
+        {
+            op.clip_rect = None;
+        }
+    }
+    let mut batches: Vec<Batch> = Vec::new();
+    let mut segment_start = 0;
+    let mut reordered = false;
+    for (index, op) in draw_ops.draw_ops.iter().enumerate() {
+        let mut kind = prepared_draw_kind(draw_ops, op);
+        if batch_analytic_paths && matches!(kind, PreparedDrawKind::AnalyticPath { .. }) {
+            kind = PreparedDrawKind::AnalyticPath {
+                resource_signature: 0,
+            };
+        }
+        let same_clip_paths = batches.last().is_some_and(|batch| {
+            draw_ops.clip_states[batch.clip_state_index].clip_paths
+                == draw_ops.clip_states[op.clip_state_index].clip_paths
+        });
+        if !same_clip_paths {
+            segment_start = batches.len();
+        }
+        let bounds = bounds[index];
+        let mut target = None;
+        for (candidate_index, candidate) in batches[segment_start..]
+            .iter()
+            .enumerate()
+            .rev()
+            .take(BATCH_REORDER_WINDOW)
+        {
+            if candidate.kind == kind
+                && candidate.clip_rect == op.clip_rect
+                && candidate.clip_state_index == op.clip_state_index
+            {
+                target = Some(segment_start + candidate_index);
+                break;
+            }
+            if bounds_overlap(candidate.bounds, bounds) {
+                break;
+            }
+        }
+        match target {
+            Some(target) => {
+                reordered |= target + 1 != batches.len();
+                let batch = &mut batches[target];
+                batch.ops.push(index);
+                batch.bounds = [
+                    batch.bounds[0].min(bounds[0]),
+                    batch.bounds[1].min(bounds[1]),
+                    batch.bounds[2].max(bounds[2]),
+                    batch.bounds[3].max(bounds[3]),
+                ];
+            }
+            None => batches.push(Batch {
+                kind,
+                clip_rect: op.clip_rect,
+                clip_state_index: op.clip_state_index,
+                bounds,
+                ops: vec![index],
+            }),
+        }
+    }
+    if !reordered {
+        return;
+    }
+
+    let mut ops = Vec::with_capacity(draw_ops.draw_ops.len());
+    let mut scene_vertices = Vec::with_capacity(draw_ops.scene_vertices.len());
+    let mut text_instances = Vec::with_capacity(draw_ops.text_instances.len());
+    for batch in &batches {
+        for &index in &batch.ops {
+            let mut op = draw_ops.draw_ops[index].clone();
+            let range = op.vertices.start as usize..(op.vertices.start + op.vertices.len) as usize;
+            if op.kind == DrawOpKind::TextAtlas {
+                op.vertices.start = text_instances.len() as u32;
+                text_instances.extend_from_slice(&draw_ops.text_instances[range]);
+            } else {
+                op.vertices.start = scene_vertices.len() as u32;
+                scene_vertices.extend_from_slice(&draw_ops.scene_vertices[range]);
+            }
+            ops.push(op);
+        }
+    }
+    draw_ops.draw_ops = ops;
+    draw_ops.scene_vertices = scene_vertices;
+    draw_ops.text_instances = text_instances;
+}
+
+/// The normalized-device-coordinate bounds `[min_x, min_y, max_x, max_y]` of
+/// everything `op` can cover.
+fn draw_op_ndc_bounds(draw_ops: &DrawOpArena, op: &DrawOp) -> [f32; 4] {
+    let mut bounds = [
+        f32::INFINITY,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NEG_INFINITY,
+    ];
+    let mut include = |x: f32, y: f32| {
+        bounds[0] = bounds[0].min(x);
+        bounds[1] = bounds[1].min(y);
+        bounds[2] = bounds[2].max(x);
+        bounds[3] = bounds[3].max(y);
+    };
+    let range = op.vertices.start as usize..(op.vertices.start + op.vertices.len) as usize;
+    if op.kind == DrawOpKind::TextAtlas {
+        for instance in &draw_ops.text_instances[range] {
+            let [x, y] = instance.top_left;
+            let [ax, ay] = instance.x_axis;
+            let [bx, by] = instance.y_axis;
+            include(x, y);
+            include(x + ax, y + ay);
+            include(x + bx, y + by);
+            include(x + ax + bx, y + ay + by);
+        }
+    } else {
+        for vertex in &draw_ops.scene_vertices[range] {
+            include(vertex.position[0], vertex.position[1]);
+        }
+    }
+    bounds
+}
+
+/// Whether NDC `bounds` lie inside the logical rectangle `clip`.
+fn ndc_bounds_within(bounds: [f32; 4], clip: Rect, viewport: Size) -> bool {
+    let to_x = |x: f32| (x + 1.0) * 0.5 * viewport.width;
+    let to_y = |y: f32| (1.0 - y) * 0.5 * viewport.height;
+    // Rounding in the NDC round trip must not drop a clip that trims a draw.
+    const SLACK: f32 = 1.0 / 256.0;
+    to_x(bounds[0]) >= clip.x() - SLACK
+        && to_x(bounds[2]) <= clip.max_x() + SLACK
+        && to_y(bounds[3]) >= clip.y() - SLACK
+        && to_y(bounds[1]) <= clip.max_y() + SLACK
+}
+
+fn bounds_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
+    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 }
 
 pub(crate) fn cache_draw_ops_internal(

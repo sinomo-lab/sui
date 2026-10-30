@@ -961,3 +961,60 @@ pub(crate) fn cached_layer_matches_direct_for_tight_tab_text_at_fractional_scale
 
     assert_rgba_images_match(&direct_pixels, &cached_pixels);
 }
+
+#[test]
+pub(crate) fn batch_reordering_keeps_overlapping_draw_order_and_merges_draws() {
+    // Alternate pipelines so neighbors cannot batch in submission order, and
+    // make every cell overlap the next so reordering must respect overlaps.
+    let mut scene = Scene::new();
+    for row in 0..4 {
+        for column in 0..6 {
+            let x = 8.0 + column as f32 * 36.0;
+            let y = 8.0 + row as f32 * 36.0;
+            scene.push(SceneCommand::FillRoundedRect {
+                rect: Rect::new(x, y, 30.0, 30.0),
+                radii: [6.0; 4],
+                brush: Color::rgba(0.2, 0.4, 0.9, 0.6).into(),
+                border: None,
+                shadow: None,
+            });
+            scene.push(SceneCommand::FillPath {
+                path: Path::rounded_rect(Rect::new(x + 18.0, y + 10.0, 30.0, 12.0), 4.0),
+                brush: Color::rgba(0.9, 0.3, 0.1, 0.5).into(),
+            });
+        }
+    }
+    let frame = SceneFrame {
+        window_id: WindowId::new(240),
+        viewport: Size::new(240.0, 160.0),
+        surface_size: Size::new(240.0, 160.0),
+        scale_factor: 1.0,
+        dirty_regions: Vec::new(),
+        layer_updates: Vec::new(),
+        scene,
+        font_registry: Arc::new(FontRegistry::new()),
+        image_registry: Arc::new(ImageRegistry::new()),
+        text_layout_registry: Arc::new(TextLayoutRegistry::default()),
+    };
+    let render = |reorder: bool| {
+        crate::submission::BATCH_REORDER_DISABLED.with(|disabled| disabled.set(!reorder));
+        let mut renderer = WgpuRenderer::default();
+        renderer.render(&frame).unwrap();
+        let draws = renderer
+            .last_frame_stats(frame.window_id)
+            .unwrap()
+            .draw_count;
+        let pixels = renderer.capture_last_frame_rgba(frame.window_id).unwrap();
+        crate::submission::BATCH_REORDER_DISABLED.with(|disabled| disabled.set(false));
+        (draws, pixels)
+    };
+
+    let (ordered_draws, ordered) = render(false);
+    let (reordered_draws, reordered) = render(true);
+
+    assert_rgba_images_match(&ordered, &reordered);
+    assert!(
+        reordered_draws < ordered_draws,
+        "reordering left {reordered_draws} of {ordered_draws} draws"
+    );
+}

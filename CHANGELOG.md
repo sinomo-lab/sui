@@ -126,6 +126,21 @@ Versioning, with the usual expectation that the API may change during the
 - Text packets only compare the backdrop under themselves, so text scrolling
   over a uniform background keeps its rasterized glyphs.
 - Added `scroll-flat` and `scroll-retained` fixtures to `sui-bench`.
+- Small-change frames do less whole-tree and whole-scene work. With 1,200
+  widgets and one label changing, an offscreen frame drops from 3.0 ms to
+  1.8 ms and the runtime's share from 1.05 ms to 0.72 ms:
+  - The renderer reorders each fragment's draws so draws that share a
+    pipeline and clip are adjacent, without moving any draw past one it
+    overlaps, and drops clip rectangles that contain the whole draw. The
+    controls grid goes from 1,201 to 647 draw calls per frame.
+  - The runtime keeps the graph from before layout by swapping buffers
+    instead of copying a snapshot, and diffs the two graphs directly.
+  - Stack metadata is only rewritten when it changed, so unchanged frames
+    keep sharing scene command lists with the renderer.
+  - The frame image registry is reused while its images are unchanged, and
+    unused text layouts are pruned in batches rather than every frame.
+  - Appending a scene to an empty one shares its commands instead of copying
+    them, and semantics assembly uses a faster hasher.
 
 ## [0.5.0] - 2026-10-08
 
