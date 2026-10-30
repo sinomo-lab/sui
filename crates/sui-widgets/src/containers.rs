@@ -2111,7 +2111,8 @@ impl ScrollAxes {
     }
 }
 
-const TOUCH_SCROLL_DRAG_THRESHOLD: f32 = 4.0;
+/// How far a touch moves before it scrolls rather than presses.
+pub(crate) const TOUCH_SCROLL_DRAG_THRESHOLD: f32 = 4.0;
 
 /// How close to a scroll view's edge a drag starts scrolling it.
 const DRAG_AUTO_SCROLL_EDGE: f32 = 40.0;

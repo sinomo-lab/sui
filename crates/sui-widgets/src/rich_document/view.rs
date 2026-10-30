@@ -7,9 +7,9 @@ use std::{
 };
 
 use sui_core::{
-    Event, ImageHandle, KeyState, Point, PointerButton, PointerEventKind, Rect, ScrollDelta,
-    SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size,
-    Vector, WidgetId,
+    Event, ImageHandle, InvalidationKind, InvalidationRequest, InvalidationTarget, KeyState, Point,
+    PointerButton, PointerEvent, PointerEventKind, PointerKind, Rect, ScrollDelta, SemanticsAction,
+    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
 };
 use sui_layout::Constraints;
 use sui_reactive::Signal;
@@ -27,6 +27,7 @@ use super::{
     RichDocumentModel, RichDocumentSpan, RichDocumentStatus, RichInlineImage, RichInlineKind,
     RichSyntaxHighlighter, RichSyntaxSpan, RichSyntaxTokenKind,
 };
+use crate::containers::TOUCH_SCROLL_DRAG_THRESHOLD;
 use crate::frame::{snap_to_pixels, stroke_border};
 use crate::{DefaultTheme, TextCommand, ThemeTextToken};
 
@@ -245,9 +246,14 @@ impl Default for RichDocumentViewState {
 struct BlockTextHandle {
     block: RichBlockId,
     bounds: Rect,
+    /// Where the text layout starts before it scrolls sideways.
     origin: Point,
     layout: Option<PersistentTextLayout>,
     text: String,
+    /// How far a code block's text has scrolled sideways, shared so the
+    /// document's touch pans and hit tests see what the block draws.
+    horizontal_offset: f32,
+    max_horizontal_offset: f32,
 }
 
 impl BlockTextHandle {
@@ -258,6 +264,8 @@ impl BlockTextHandle {
             origin: Point::ZERO,
             layout: None,
             text: String::new(),
+            horizontal_offset: 0.0,
+            max_horizontal_offset: 0.0,
         }
     }
 
@@ -266,13 +274,38 @@ impl BlockTextHandle {
             return None;
         }
         let layout = self.layout.as_ref()?;
-        let cursor =
-            layout.hit_test_point(Point::new(point.x - self.origin.x, point.y - self.origin.y));
+        let cursor = layout.hit_test_point(Point::new(
+            point.x - self.origin.x + self.horizontal_offset,
+            point.y - self.origin.y,
+        ));
         Some(DocumentPoint {
             block: self.block,
             offset: cursor.utf8_offset.min(self.text.len()),
         })
     }
+
+    /// Scrolls the text sideways by `delta`, as far as it overflows,
+    /// reporting whether it moved.
+    fn scroll_horizontally(&mut self, delta: f32) -> bool {
+        let next = (self.horizontal_offset + delta).clamp(0.0, self.max_horizontal_offset);
+        if (next - self.horizontal_offset).abs() <= f32::EPSILON {
+            return false;
+        }
+        self.horizontal_offset = next;
+        true
+    }
+}
+
+/// A touch that went down on a code block whose text overflows sideways.
+/// Once it moves mostly sideways it pans the code; moving any other way
+/// leaves it to select text or scroll an enclosing view, as before.
+#[derive(Clone, Copy)]
+struct CodePan {
+    pointer_id: u64,
+    block: RichBlockId,
+    start: Point,
+    /// Where the touch was at its last move, once it pans.
+    last: Option<Point>,
 }
 
 struct RetainedBlock {
@@ -296,6 +329,7 @@ pub struct RichDocumentView {
     dragging: bool,
     drag_anchor: Option<DocumentPoint>,
     pressed_inline: Option<(RichBlockId, PressedInline)>,
+    code_pan: Option<CodePan>,
     on_link: Option<StringAction>,
     on_image: Option<StringAction>,
     image_resolver: Option<ImageResolver>,
@@ -317,6 +351,7 @@ impl RichDocumentView {
             dragging: false,
             drag_anchor: None,
             pressed_inline: None,
+            code_pan: None,
             on_link: None,
             on_image: None,
             image_resolver: None,
@@ -628,6 +663,91 @@ impl RichDocumentView {
             false
         }
     }
+
+    /// The pan a touch going down at `pointer` may start, when it lands on
+    /// a code block whose text overflows sideways.
+    fn code_pan_at(&self, pointer: &PointerEvent) -> Option<CodePan> {
+        if pointer.pointer_kind != PointerKind::Touch {
+            return None;
+        }
+        self.order.iter().find_map(|id| {
+            let block = self.blocks.get(id)?;
+            (block.pod.bounds().contains(pointer.position)
+                && block.text.borrow().max_horizontal_offset > 0.0)
+                .then_some(CodePan {
+                    pointer_id: pointer.pointer_id,
+                    block: *id,
+                    start: pointer.position,
+                    last: None,
+                })
+        })
+    }
+
+    /// Follows the touch of a code pan, reporting whether the pan took
+    /// `pointer`, which then neither selects nor reaches enclosing views.
+    fn follow_code_pan(&mut self, ctx: &mut EventCtx, pointer: &PointerEvent) -> bool {
+        let Some(mut pan) = self
+            .code_pan
+            .filter(|pan| pan.pointer_id == pointer.pointer_id)
+        else {
+            return false;
+        };
+        match pointer.kind {
+            PointerEventKind::Move => {
+                let from = match pan.last {
+                    Some(last) => last,
+                    None => {
+                        let moved = pointer.position - pan.start;
+                        if moved.x.hypot(moved.y) < TOUCH_SCROLL_DRAG_THRESHOLD {
+                            // Too short to tell a pan from a selection yet:
+                            // hold any selection where the touch went down.
+                            if self.dragging {
+                                ctx.set_handled();
+                            }
+                            return self.dragging;
+                        }
+                        if moved.x.abs() <= moved.y.abs() {
+                            self.code_pan = None;
+                            return false;
+                        }
+                        self.dragging = false;
+                        self.drag_anchor = None;
+                        self.pressed_inline = None;
+                        ctx.request_pointer_capture(pointer.pointer_id);
+                        // The code follows the touch from where it went down.
+                        pan.start
+                    }
+                };
+                pan.last = Some(pointer.position);
+                self.code_pan = Some(pan);
+                self.scroll_code_block(ctx, pan.block, from.x - pointer.position.x);
+                ctx.set_handled();
+                true
+            }
+            PointerEventKind::Up | PointerEventKind::Cancel => {
+                self.code_pan = None;
+                if pan.last.is_none() {
+                    return false;
+                }
+                ctx.release_pointer_capture(pointer.pointer_id);
+                ctx.set_handled();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn scroll_code_block(&self, ctx: &mut EventCtx, block: RichBlockId, delta: f32) {
+        let Some(block) = self.blocks.get(&block) else {
+            return;
+        };
+        if block.text.borrow_mut().scroll_horizontally(delta) {
+            ctx.request(InvalidationRequest::new(
+                InvalidationTarget::Widget(block.pod.id()),
+                InvalidationKind::Paint,
+            ));
+        }
+    }
 }
 
 impl Widget for RichDocumentView {
@@ -635,8 +755,16 @@ impl Widget for RichDocumentView {
         if let Event::Pointer(pointer) = event
             && ctx.phase() != EventPhase::Bubble
         {
+            if self.follow_code_pan(ctx, pointer) {
+                return;
+            }
             match pointer.kind {
                 PointerEventKind::Down if pointer.button == Some(PointerButton::Primary) => {
+                    // A new primary touch ends any pan whose release went
+                    // elsewhere.
+                    if pointer.is_primary {
+                        self.code_pan = self.code_pan_at(pointer);
+                    }
                     if let Some(point) = self.point_at(pointer.position, true) {
                         let selection = self.state.selection();
                         let anchor = if pointer.modifiers.shift {
@@ -881,8 +1009,6 @@ struct DefaultBlockView {
     highlighter: Rc<dyn RichSyntaxHighlighter>,
     layout: Option<PersistentTextLayout>,
     semantic_ids: HashMap<SemanticPart, WidgetId>,
-    horizontal_offset: f32,
-    max_horizontal_offset: f32,
     on_link: Option<StringAction>,
     on_image: Option<StringAction>,
     image_resolver: Option<ImageResolver>,
@@ -910,8 +1036,6 @@ impl DefaultBlockView {
             highlighter,
             layout: None,
             semantic_ids: HashMap::new(),
-            horizontal_offset: 0.0,
-            max_horizontal_offset: 0.0,
             on_link,
             on_image,
             image_resolver,
@@ -978,6 +1102,7 @@ impl DefaultBlockView {
         }
     }
 
+    /// Where the text layout starts in `bounds`, before it scrolls sideways.
     fn layout_origin(&self, bounds: Rect, kind: &RichDocumentBlockKind) -> Point {
         let (left, top, _, _) = self.text_insets(kind);
         let layout_x = self
@@ -985,10 +1110,7 @@ impl DefaultBlockView {
             .as_ref()
             .map(|layout| layout.measurement().bounds.x())
             .unwrap_or(0.0);
-        Point::new(
-            bounds.x() + left - layout_x - self.horizontal_offset,
-            bounds.y() + top,
-        )
+        Point::new(bounds.x() + left - layout_x, bounds.y() + top)
     }
 
     fn text_bounds(&self, bounds: Rect, kind: &RichDocumentBlockKind) -> Rect {
@@ -1100,9 +1222,7 @@ impl Widget for DefaultBlockView {
                 } else {
                     0.0
                 };
-                let next = (self.horizontal_offset - axis).clamp(0.0, self.max_horizontal_offset);
-                if (next - self.horizontal_offset).abs() > f32::EPSILON {
-                    self.horizontal_offset = next;
+                if self.text_handle.borrow_mut().scroll_horizontally(-axis) {
                     ctx.request_paint();
                     ctx.request_semantics();
                     ctx.set_handled();
@@ -1235,13 +1355,6 @@ impl Widget for DefaultBlockView {
                 (measurement.width, measurement.height)
             })
             .unwrap_or((0.0, 0.0));
-        self.max_horizontal_offset =
-            if matches!(block.kind, RichDocumentBlockKind::CodeBlock { .. }) {
-                (measured_width - available_width).max(0.0)
-            } else {
-                0.0
-            };
-        self.horizontal_offset = self.horizontal_offset.min(self.max_horizontal_offset);
         let height = measured_height + top + bottom;
         let width = if constraints.max.width.is_finite() {
             constraints.max.width
@@ -1252,6 +1365,13 @@ impl Widget for DefaultBlockView {
         let mut shared = self.text_handle.borrow_mut();
         shared.text = text;
         shared.layout = self.layout.clone();
+        shared.max_horizontal_offset =
+            if matches!(block.kind, RichDocumentBlockKind::CodeBlock { .. }) {
+                (measured_width - available_width).max(0.0)
+            } else {
+                0.0
+            };
+        shared.horizontal_offset = shared.horizontal_offset.min(shared.max_horizontal_offset);
         size
     }
 
@@ -1348,7 +1468,8 @@ impl Widget for DefaultBlockView {
             return;
         };
         let text_bounds = self.text_bounds(bounds, &block.kind);
-        let origin = self.layout_origin(bounds, &block.kind);
+        let horizontal_offset = self.text_handle.borrow().horizontal_offset;
+        let origin = self.layout_origin(bounds, &block.kind) + Vector::new(-horizontal_offset, 0.0);
         ctx.push_clip_rect(text_bounds);
         let selection = self.selection_range(block.id, layout.text().len());
         if !selection.is_empty() {
@@ -1880,26 +2001,27 @@ mod tests {
 
     use sui_core::{
         Event, ImageHandle, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind,
-        ScrollDelta, SemanticsAction, SemanticsActionRequest, SemanticsNode, SemanticsRole,
-        SemanticsValue, Size, Vector, WindowEvent,
+        PointerKind, Rect, ScrollDelta, SemanticsAction, SemanticsActionRequest, SemanticsNode,
+        SemanticsRole, SemanticsValue, Size, Vector, WindowEvent, WindowId,
     };
     use sui_layout::Constraints;
     use sui_reactive::Signal;
     use sui_runtime::{
-        Application, CommandDelivery, CommandTarget, MeasureCtx, Runtime, SemanticsCtx, Widget,
-        WindowBuilder,
+        Application, CommandDelivery, CommandTarget, MeasureCtx, RenderOutput, Runtime,
+        SemanticsCtx, Widget, WindowBuilder,
     };
-    use sui_scene::{RegisteredImage, SceneCommand};
+    use sui_scene::{Brush, RegisteredImage, SceneCommand};
 
     use super::{
-        RichDocumentBlock, RichDocumentBlockKind, RichDocumentModel, RichDocumentRenderContext,
-        RichDocumentRendererRegistry, RichDocumentView, RichDocumentViewState,
-        code_header_action_text_style, code_header_language_text_style, heading_text_style,
-        syntax_color,
+        CODE_HEADER_HEIGHT, CODE_INSET, RichDocumentBlock, RichDocumentBlockKind,
+        RichDocumentModel, RichDocumentRenderContext, RichDocumentRendererRegistry,
+        RichDocumentView, RichDocumentViewState, code_header_action_text_style,
+        code_header_language_text_style, heading_text_style, syntax_color,
     };
     use crate::RichSyntaxTokenKind;
     use crate::{
-        DefaultTheme, RichAttachment, RichExtensionBlock, TEXT_COMMAND, TextCommand, ThemeTextToken,
+        DefaultTheme, RichAttachment, RichExtensionBlock, ScrollState, ScrollView, SizedBox,
+        TEXT_COMMAND, TextCommand, ThemeTextToken,
     };
     use sui_text::FontWeight;
 
@@ -2218,6 +2340,280 @@ mod tests {
             second_origin.x < first_origin.x,
             "expected code origin to move left, before={first_origin:?}, after={second_origin:?}"
         );
+    }
+
+    /// A one-line code block far wider than the 320-pixel windows below.
+    const LONG_CODE: &str = "```text\nlet diagnostic_context = \"a deliberately long code line that overflows a narrow rich document\";\n```";
+
+    fn touch_pointer(kind: PointerEventKind, position: Point, delta: Vector) -> Event {
+        let mut pointer = PointerEvent::new(kind, position);
+        pointer.pointer_id = 11;
+        pointer.pointer_kind = PointerKind::Touch;
+        pointer.delta = delta;
+        match kind {
+            PointerEventKind::Down => {
+                pointer.button = Some(PointerButton::Primary);
+                pointer.buttons = PointerButtons::new(1);
+            }
+            PointerEventKind::Move => pointer.buttons = PointerButtons::new(1),
+            PointerEventKind::Up => pointer.button = Some(PointerButton::Primary),
+            _ => {}
+        }
+        Event::Pointer(pointer)
+    }
+
+    /// Touches `from`, drags halfway and then on to `to`, and lifts.
+    fn touch_drag(runtime: &mut Runtime, window_id: WindowId, from: Point, to: Point) {
+        let halfway = Point::new((from.x + to.x) * 0.5, (from.y + to.y) * 0.5);
+        runtime
+            .handle_event(
+                window_id,
+                touch_pointer(PointerEventKind::Down, from, Vector::ZERO),
+            )
+            .unwrap();
+        for (previous, next) in [(from, halfway), (halfway, to)] {
+            runtime
+                .handle_event(
+                    window_id,
+                    touch_pointer(PointerEventKind::Move, next, next - previous),
+                )
+                .unwrap();
+        }
+        runtime
+            .handle_event(
+                window_id,
+                touch_pointer(PointerEventKind::Up, to, Vector::ZERO),
+            )
+            .unwrap();
+    }
+
+    fn sized_runtime<W>(root: W) -> (Runtime, WindowId)
+    where
+        W: Widget + 'static,
+    {
+        let (mut runtime, window_id) = runtime(root);
+        runtime
+            .handle_event(
+                window_id,
+                Event::Window(WindowEvent::Resized(Size::new(320.0, 240.0))),
+            )
+            .unwrap();
+        (runtime, window_id)
+    }
+
+    fn code_bounds(output: &RenderOutput) -> Rect {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.role == SemanticsRole::Code)
+            .expect("code semantics")
+            .bounds
+    }
+
+    /// Where the code block's line sits, mid-height in its text area.
+    fn code_line_y(code: Rect) -> f32 {
+        let top = code.y() + CODE_HEADER_HEIGHT + CODE_INSET;
+        (top + code.max_y() - CODE_INSET) * 0.5
+    }
+
+    fn code_text_origin(output: &RenderOutput) -> Point {
+        let mut widest: Option<(f32, Point)> = None;
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::DrawShapedText(text) = command
+                && widest.is_none_or(|(width, _)| text.bounds.width() > width)
+            {
+                widest = Some((text.bounds.width(), text.origin));
+            }
+        });
+        widest.expect("code text draw").1
+    }
+
+    fn selection_rects(output: &RenderOutput) -> Vec<Rect> {
+        let selection = DefaultTheme::default().palette.selection;
+        let mut rects = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillRect {
+                rect,
+                brush: Brush::Solid(fill),
+            } = command
+                && *fill == selection
+            {
+                rects.push(*rect);
+            }
+        });
+        rects
+    }
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.01,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn touch_drag_pans_an_overflowing_code_block_sideways() {
+        let state = RichDocumentViewState::new();
+        let (mut runtime, window_id) = sized_runtime(
+            RichDocumentView::new(RichDocumentModel::from_markdown(LONG_CODE)).state(state.clone()),
+        );
+        let first = runtime.render(window_id).unwrap();
+        let code = code_bounds(&first);
+        let start = code_text_origin(&first);
+        let from = Point::new(code.x() + code.width() * 0.75, code_line_y(code));
+
+        // Mostly sideways, as a finger drags.
+        touch_drag(
+            &mut runtime,
+            window_id,
+            from,
+            Point::new(from.x - 120.0, from.y + 10.0),
+        );
+        let panned = code_text_origin(&runtime.render(window_id).unwrap());
+        assert_close(panned.x, start.x - 120.0);
+        assert_close(panned.y, start.y);
+        assert_eq!(state.selected_text(), None, "a pan selects nothing");
+
+        // Back past the start, where the code stops.
+        touch_drag(
+            &mut runtime,
+            window_id,
+            from,
+            Point::new(from.x + 200.0, from.y),
+        );
+        let back = code_text_origin(&runtime.render(window_id).unwrap());
+        assert_close(back.x, start.x);
+    }
+
+    #[test]
+    fn scrolled_code_block_selects_the_text_it_shows() {
+        let (mut runtime, window_id) = sized_runtime(RichDocumentView::new(
+            RichDocumentModel::from_markdown(LONG_CODE),
+        ));
+        let first = runtime.render(window_id).unwrap();
+        let code = code_bounds(&first);
+        let start = code_text_origin(&first);
+        let y = code_line_y(code);
+        let mut wheel = PointerEvent::new(
+            PointerEventKind::Scroll,
+            Point::new(code.x() + code.width() * 0.5, y),
+        );
+        wheel.scroll_delta = Some(ScrollDelta::Pixels(Vector::new(-60.0, 0.0)));
+        let touch = Point::new(code.x() + code.width() * 0.75, y);
+
+        for (scroll, offset) in [
+            (Some(Event::Pointer(wheel)), 60.0),
+            // A pan scrolls on from where the wheel left the code.
+            (None, 140.0),
+        ] {
+            match scroll {
+                Some(event) => runtime.handle_event(window_id, event).unwrap(),
+                None => touch_drag(
+                    &mut runtime,
+                    window_id,
+                    touch,
+                    Point::new(touch.x - 80.0, y),
+                ),
+            }
+            let scrolled = runtime.render(window_id).unwrap();
+            assert_close(code_text_origin(&scrolled).x, start.x - offset);
+
+            let from = Point::new(code.x() + 60.0, y);
+            let to = Point::new(code.x() + 180.0, y);
+            for (kind, position, pressed) in [
+                (PointerEventKind::Down, from, true),
+                (PointerEventKind::Move, to, true),
+                (PointerEventKind::Up, to, false),
+            ] {
+                runtime
+                    .handle_event(window_id, primary_pointer(kind, position, pressed))
+                    .unwrap();
+            }
+            let selected = selection_rects(&runtime.render(window_id).unwrap());
+            assert_eq!(selected.len(), 1, "{selected:?}");
+            // Within half a glyph of where the drag went.
+            assert!(
+                (selected[0].x() - from.x).abs() < 6.0 && (selected[0].max_x() - to.x).abs() < 6.0,
+                "selected {:?} for a drag from {} to {} scrolled by {offset}",
+                selected[0],
+                from.x,
+                to.x
+            );
+        }
+    }
+
+    #[test]
+    fn upright_touch_drag_on_a_code_block_selects_instead_of_panning() {
+        let state = RichDocumentViewState::new();
+        let (mut runtime, window_id) = sized_runtime(
+            RichDocumentView::new(RichDocumentModel::from_markdown(format!(
+                "{LONG_CODE}\n\nAfter the code."
+            )))
+            .state(state.clone()),
+        );
+        let first = runtime.render(window_id).unwrap();
+        let code = code_bounds(&first);
+        let start = code_text_origin(&first);
+        let paragraph = node(
+            &first.semantics,
+            SemanticsRole::Paragraph,
+            "After the code.",
+        );
+        let from = Point::new(code.x() + 120.0, code_line_y(code));
+
+        touch_drag(
+            &mut runtime,
+            window_id,
+            from,
+            Point::new(from.x - 20.0, paragraph.bounds.y() + 10.0),
+        );
+
+        let output = runtime.render(window_id).unwrap();
+        assert_close(code_text_origin(&output).x, start.x);
+        let selected = state.selected_text().expect("an upright drag selects");
+        assert!(selected.contains("After"), "selected {selected:?}");
+    }
+
+    #[test]
+    fn code_block_pans_inside_a_scroll_view_that_scrolls_upright_drags() {
+        let markdown = std::iter::once(LONG_CODE.to_string())
+            .chain((1..=12).map(|index| format!("Paragraph {index}")))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let scroll = ScrollState::new();
+        let (mut runtime, window_id) = sized_runtime(
+            SizedBox::new().size(Size::new(320.0, 200.0)).child(
+                ScrollView::vertical(RichDocumentView::new(RichDocumentModel::from_markdown(
+                    markdown,
+                )))
+                .state(scroll.clone()),
+            ),
+        );
+        let first = runtime.render(window_id).unwrap();
+        let code = code_bounds(&first);
+        let start = code_text_origin(&first);
+        // In the code block's margin, below its text.
+        let from = Point::new(code.x() + code.width() * 0.75, code.max_y() - 4.0);
+
+        touch_drag(
+            &mut runtime,
+            window_id,
+            from,
+            Point::new(from.x - 100.0, from.y),
+        );
+        let panned = code_text_origin(&runtime.render(window_id).unwrap());
+        assert_close(panned.x, start.x - 100.0);
+        assert_eq!(scroll.current_offset(), Vector::ZERO);
+
+        touch_drag(
+            &mut runtime,
+            window_id,
+            from,
+            Point::new(from.x, from.y - 60.0),
+        );
+        assert_eq!(scroll.current_offset(), Vector::new(0.0, 60.0));
+        let output = runtime.render(window_id).unwrap();
+        assert_close(code_text_origin(&output).x, panned.x);
     }
 
     #[test]

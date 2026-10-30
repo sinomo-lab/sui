@@ -101,7 +101,11 @@ otherwise act on them.
 The default code renderer provides a language header, a pointer- and
 accessibility-invokable copy action, horizontal clipping and scrolling, and a
 lightweight `BasicSyntaxHighlighter`. Horizontal wheel deltas scroll directly;
-Shift plus a vertical wheel delta provides the desktop fallback.
+Shift plus a vertical wheel delta provides the desktop fallback. On touch
+screens, a drag that starts on an overflowing code block and moves mostly
+sideways pans its code; other touch drags select text as before, or scroll an
+enclosing `ScrollView` when they start outside the text. Selection and
+pointer hits follow the scrolled code.
 
 Replace highlighting without replacing the code renderer:
 
