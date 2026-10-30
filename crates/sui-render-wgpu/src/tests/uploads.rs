@@ -126,6 +126,8 @@ fn local_vertex_changes_upload_a_subrange_and_preserve_other_geometry() {
 
 #[test]
 fn vertex_allocations_are_reused_across_changes_empty_frames_and_growth() {
+    // Inspects per-packet buffers, which fragment grouping would merge.
+    crate::submission::FRAGMENT_GROUPING_DISABLED.with(|disabled| disabled.set(true));
     let mut renderer = WgpuRenderer::new();
     let window = WindowId::new(8901);
     renderer
@@ -313,6 +315,8 @@ fn output_resources_reuse_bindings_but_update_color_policy_and_resized_source() 
 
 #[test]
 fn growing_text_keeps_other_packet_allocations_and_uploads_local() {
+    // Inspects per-packet buffers, which fragment grouping would merge.
+    crate::submission::FRAGMENT_GROUPING_DISABLED.with(|disabled| disabled.set(true));
     use crate::retained::{CompositionContainerId, RetainedPacketId};
     use crate::tests::support::assert_rgba_images_match;
     let window = WindowId::new(8962);
@@ -480,4 +484,64 @@ fn combined_scene_and_output_submission_matches_separate_passes() {
             &separate.capture_rgba(window).unwrap(),
         );
     }
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+fn grouped_fragments_batch_across_packets_and_rebuild_only_the_edited_group() {
+    use crate::tests::support::assert_rgba_images_match;
+    // Clipped cells in many 16-command packets: differing clips and packets
+    // used to need separate draw calls.
+    let grid = |window: WindowId, highlighted: usize| {
+        let mut frame = SceneFrame::new(window, Size::new(256.0, 256.0));
+        frame.scene.push(SceneCommand::Clear(Color::BLACK));
+        for index in 0..256 {
+            let rect = Rect::new(
+                (index % 16) as f32 * 16.0,
+                (index / 16) as f32 * 16.0,
+                14.0,
+                14.0,
+            );
+            frame.scene.push(SceneCommand::PushClip {
+                rect: rect.inflate(-2.0, -2.0),
+            });
+            frame.scene.push(SceneCommand::FillRect {
+                rect,
+                brush: if index == highlighted {
+                    Color::srgba(1.0, 0.8, 0.1, 1.0)
+                } else {
+                    Color::srgba(0.2, 0.4, 0.9, 1.0)
+                }
+                .into(),
+            });
+            frame.scene.push(SceneCommand::PopClip);
+        }
+        frame
+    };
+    let window = WindowId::new(8990);
+    let mut renderer = WgpuRenderer::new();
+    renderer.render(&grid(window, 0)).unwrap();
+    let initial = renderer.last_frame_stats(window).unwrap();
+    assert!(
+        initial.draw_count < 4,
+        "{} draws for one batchable grid",
+        initial.draw_count
+    );
+
+    renderer.render(&grid(window, 0)).unwrap();
+    let unchanged = renderer.last_frame_stats(window).unwrap();
+    assert_eq!(unchanged.prepared_fragment_build_count, 0);
+    assert_eq!(unchanged.uploaded_vertex_bytes, 0);
+
+    renderer.render(&grid(window, 200)).unwrap();
+    let edited = renderer.last_frame_stats(window).unwrap();
+    assert_eq!(edited.prepared_fragment_build_count, 1);
+    assert!(edited.uploaded_vertex_bytes < initial.uploaded_vertex_bytes);
+
+    let mut fresh = WgpuRenderer::new();
+    fresh.render(&grid(window, 200)).unwrap();
+    assert_rgba_images_match(
+        &fresh.capture_last_frame_rgba(window).unwrap(),
+        &renderer.capture_last_frame_rgba(window).unwrap(),
+    );
 }

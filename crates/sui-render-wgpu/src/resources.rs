@@ -34,9 +34,14 @@ pub(crate) struct FrameResources {
         HashMap<sui_core::WindowId, HashMap<crate::retained::RetainedPacketId, FragmentBuffers>>,
     pub(crate) output_transforms: HashMap<sui_core::WindowId, crate::output::CachedOutputTransform>,
     pub(crate) fragment_translations: HashMap<sui_core::WindowId, FragmentTranslationBuffer>,
+    pub(crate) fragment_groups: HashMap<
+        sui_core::WindowId,
+        HashMap<crate::retained::RetainedPacketId, crate::submission::FragmentGroup>,
+    >,
 }
 
-/// Bytes of one fragment translation uniform: an NDC offset padded to a vec4.
+/// Bytes of one fragment translation uniform: an NDC offset and the same
+/// offset in framebuffer pixels.
 pub(crate) const FRAGMENT_TRANSLATION_SIZE: u64 = 16;
 
 /// A window's fragment translations, one uniform slot per distinct offset in
@@ -73,6 +78,7 @@ impl PreparedFragmentTranslations {
         window: sui_core::WindowId,
         translations: impl IntoIterator<Item = sui_core::Vector>,
         viewport: sui_core::Size,
+        framebuffer_size: (u32, u32),
     ) -> Self {
         let stride = (shared.device.limits().min_uniform_buffer_offset_alignment as u64)
             .max(FRAGMENT_TRANSLATION_SIZE);
@@ -117,11 +123,12 @@ impl PreparedFragmentTranslations {
         let buffer = &buffers[&window];
         let mut contents = vec![0_u8; slots.len() * stride as usize];
         for (translation, offset) in &slots {
+            // NDC offset for geometry, framebuffer pixels for clip rectangles.
             let ndc = [
                 translation.x * 2.0 / viewport.width.max(1.0),
                 -translation.y * 2.0 / viewport.height.max(1.0),
-                0.0_f32,
-                0.0,
+                translation.x * framebuffer_size.0.max(1) as f32 / viewport.width.max(1.0),
+                translation.y * framebuffer_size.1.max(1) as f32 / viewport.height.max(1.0),
             ];
             let start = *offset as usize;
             contents[start..start + FRAGMENT_TRANSLATION_SIZE as usize]

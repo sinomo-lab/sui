@@ -563,6 +563,10 @@ pub(crate) struct Vertex {
     pub(crate) shader_params4: [f32; 4], // border_color rgba (linear)
 }
 
+/// A rectangular clip that keeps every pixel: framebuffer-pixel edges
+/// `(min_x, min_y, max_x, max_y)` as the scene shaders read them.
+pub(crate) const NO_CLIP: [f32; 4] = [-1.0e30, -1.0e30, 1.0e30, 1.0e30];
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 pub(crate) struct CompactVertex {
@@ -570,6 +574,7 @@ pub(crate) struct CompactVertex {
     pub(crate) color: [f32; 4],
     pub(crate) tex_coords: [f32; 2],
     pub(crate) shader_params: [f32; 4],
+    pub(crate) clip: [f32; 4],
 }
 
 #[repr(C)]
@@ -577,6 +582,7 @@ pub(crate) struct CompactVertex {
 pub(crate) struct SolidVertex {
     pub(crate) position: [f32; 2],
     pub(crate) color: [f32; 4],
+    pub(crate) clip: [f32; 4],
 }
 
 impl From<Vertex> for SolidVertex {
@@ -584,13 +590,14 @@ impl From<Vertex> for SolidVertex {
         Self {
             position: vertex.position,
             color: vertex.color,
+            clip: NO_CLIP,
         }
     }
 }
 
 impl SolidVertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4, 2 => Float32x4];
 
     pub(crate) fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
@@ -613,6 +620,7 @@ pub(crate) struct ExtendedQuadInstance {
     pub(crate) shader_params2: [f32; 4],
     pub(crate) shader_params3: [f32; 4],
     pub(crate) shader_params4: [f32; 4],
+    pub(crate) clip: [f32; 4],
 }
 
 #[repr(C)]
@@ -624,16 +632,18 @@ pub(crate) struct AnalyticQuadInstance {
     pub(crate) scene_max: [f32; 2],
     pub(crate) color: [f32; 4],
     pub(crate) path_index: u32,
+    pub(crate) clip: [f32; 4],
 }
 
 impl AnalyticQuadInstance {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
         1 => Float32x2,
         2 => Float32x2,
         3 => Float32x2,
         4 => Float32x2,
         5 => Float32x4,
         6 => Uint32,
+        7 => Float32x4,
     ];
 
     pub(crate) fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
@@ -646,7 +656,7 @@ impl AnalyticQuadInstance {
 }
 
 impl ExtendedQuadInstance {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
         1 => Float32x2,
         2 => Float32x2,
         3 => Float32x2,
@@ -656,6 +666,7 @@ impl ExtendedQuadInstance {
         7 => Float32x4,
         8 => Float32x4,
         9 => Float32x4,
+        10 => Float32x4,
     ];
 
     pub(crate) fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
@@ -674,16 +685,18 @@ impl From<Vertex> for CompactVertex {
             color: vertex.color,
             tex_coords: vertex.tex_coords,
             shader_params: vertex.shader_params,
+            clip: NO_CLIP,
         }
     }
 }
 
 impl CompactVertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
         0 => Float32x2,
         1 => Float32x4,
         2 => Float32x2,
         3 => Float32x4,
+        4 => Float32x4,
     ];
 
     pub(crate) fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
@@ -769,6 +782,8 @@ pub(crate) struct TextAtlasInstance {
     /// Atlas page == texture-array layer this glyph lives on, in the atlas selected by
     /// `coverage_flags[3]` (0 = single-channel mask, 1 = RGBA color/LCD).
     pub(crate) layer: u32,
+    /// The draw's rectangular clip; see `NO_CLIP`.
+    pub(crate) clip: [f32; 4],
 }
 
 impl TextAtlasInstance {
@@ -783,7 +798,7 @@ impl TextAtlasInstance {
         kind.page_slot(self.layer as usize)
     }
 
-    const ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
         1 => Float32x2,
         2 => Float32x2,
         3 => Float32x2,
@@ -792,7 +807,8 @@ impl TextAtlasInstance {
         6 => Float32x4,
         7 => Uint8x4,
         8 => Float32,
-        9 => Uint32
+        9 => Uint32,
+        10 => Float32x4
     ];
 
     pub(crate) fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {

@@ -25,6 +25,7 @@ use crate::geometry::AnalyticPathCpuData;
 use crate::gpu::AnalyticQuadInstance;
 use crate::gpu::CompactVertex;
 use crate::gpu::ExtendedQuadInstance;
+use crate::gpu::NO_CLIP;
 use crate::gpu::SharedRenderer;
 use crate::gpu::SolidVertex;
 use crate::gpu::TextAtlasInstance;
@@ -32,6 +33,7 @@ use crate::gpu::TextAtlasInstance;
 use crate::gpu::Vertex;
 use crate::resources::PreparedFragmentTranslations;
 use crate::retained::RetainedFrameFragment;
+use crate::retained::RetainedPacketId;
 use crate::surface::normalize_framebuffer_size;
 use crate::text::TextFrameStats;
 use crate::text_engine::TextEngine;
@@ -197,14 +199,17 @@ impl WgpuRenderer {
             .fragments
             .entry(frame.window_id)
             .or_default();
-        let live_packets: HashSet<_> = submission
-            .fragments
-            .iter()
-            .map(|fragment| fragment.id)
-            .collect();
+        let fragments = group_fragments(
+            submission.fragments,
+            self.frame_resources
+                .fragment_groups
+                .entry(frame.window_id)
+                .or_default(),
+        );
+        let live_packets: HashSet<_> = fragments.iter().map(|fragment| fragment.id).collect();
         buffers.retain(|id, _| live_packets.contains(id));
         let mut shadow_budget = crate::uploads::MAX_WINDOW_VERTEX_SHADOW_BYTES;
-        for fragment in submission.fragments {
+        for fragment in fragments {
             let RetainedFrameFragment {
                 id,
                 draw_ops,
@@ -381,6 +386,7 @@ impl WgpuRenderer {
                 .iter()
                 .map(|fragment| fragment.translation),
             frame.viewport,
+            framebuffer_size,
         );
         let batch_prepare_started = diagnostics_enabled.then(Instant::now);
         let encodable_passes = flatten_fragment_passes(&prepared_fragments, &fragment_translations);
@@ -555,7 +561,8 @@ pub(crate) fn prepare_frame_batches_with_analytic_slots(
     if let Some(slots) = analytic_path_slots {
         stamp_draw_op_analytic_path_slots(&mut draw_ops, slots);
     }
-    reorder_draw_ops_for_batching(&mut draw_ops, batch_analytic_paths, viewport);
+    reorder_draw_ops_for_batching(&mut draw_ops, batch_analytic_paths);
+    let scene_clips = stamp_draw_op_clips(&mut draw_ops, viewport, framebuffer_size);
     let cached_passes = cache_draw_ops_internal(&draw_ops, batch_analytic_paths);
     let mut passes = prepare_cached_passes(
         &cached_passes,
@@ -578,20 +585,28 @@ pub(crate) fn prepare_frame_batches_with_analytic_slots(
             }
             let source = &draw_ops.scene_vertices
                 [draw.vertices.start as usize..(draw.vertices.start + draw.vertices.len) as usize];
+            let clips = &scene_clips
+                [draw.vertices.start as usize..(draw.vertices.start + draw.vertices.len) as usize];
             if draw.kind == PreparedDrawKind::Solid {
                 draw.vertices.start = solid_vertices.len() as u32;
-                solid_vertices.extend(source.iter().copied().map(SolidVertex::from));
+                solid_vertices.extend(source.iter().zip(clips).map(|(vertex, clip)| SolidVertex {
+                    clip: *clip,
+                    ..SolidVertex::from(*vertex)
+                }));
             } else if matches!(draw.kind, PreparedDrawKind::AnalyticPath { .. }) {
                 draw.vertices.start = analytic_vertices.len() as u32;
                 let (quads, remainder) = source.as_chunks::<6>();
-                analytic_vertices.extend(quads.iter().map(|vertices| AnalyticQuadInstance {
-                    ndc_min: vertices[0].position,
-                    ndc_max: vertices[5].position,
-                    scene_min: vertices[0].tex_coords,
-                    scene_max: vertices[5].tex_coords,
-                    color: vertices[0].color,
-                    path_index: vertices[0].shader_params[0].round().max(0.0) as u32,
-                }));
+                analytic_vertices.extend(quads.iter().zip(clips.iter().step_by(6)).map(
+                    |(vertices, clip)| AnalyticQuadInstance {
+                        ndc_min: vertices[0].position,
+                        ndc_max: vertices[5].position,
+                        scene_min: vertices[0].tex_coords,
+                        scene_max: vertices[5].tex_coords,
+                        color: vertices[0].color,
+                        path_index: vertices[0].shader_params[0].round().max(0.0) as u32,
+                        clip: *clip,
+                    },
+                ));
                 assert!(
                     remainder.is_empty(),
                     "analytic batches must contain complete six-vertex quads"
@@ -600,17 +615,20 @@ pub(crate) fn prepare_frame_batches_with_analytic_slots(
             } else if draw.kind.uses_extended_vertices() {
                 draw.vertices.start = extended_vertices.len() as u32;
                 let (quads, remainder) = source.as_chunks::<6>();
-                extended_vertices.extend(quads.iter().map(|vertices| ExtendedQuadInstance {
-                    ndc_min: vertices[0].position,
-                    ndc_max: vertices[5].position,
-                    local_min: vertices[0].tex_coords,
-                    local_max: vertices[5].tex_coords,
-                    color: vertices[0].color,
-                    shader_params: vertices[0].shader_params,
-                    shader_params2: vertices[0].shader_params2,
-                    shader_params3: vertices[0].shader_params3,
-                    shader_params4: vertices[0].shader_params4,
-                }));
+                extended_vertices.extend(quads.iter().zip(clips.iter().step_by(6)).map(
+                    |(vertices, clip)| ExtendedQuadInstance {
+                        ndc_min: vertices[0].position,
+                        ndc_max: vertices[5].position,
+                        local_min: vertices[0].tex_coords,
+                        local_max: vertices[5].tex_coords,
+                        color: vertices[0].color,
+                        shader_params: vertices[0].shader_params,
+                        shader_params2: vertices[0].shader_params2,
+                        shader_params3: vertices[0].shader_params3,
+                        shader_params4: vertices[0].shader_params4,
+                        clip: *clip,
+                    },
+                ));
                 assert!(
                     remainder.is_empty(),
                     "extended rectangle batches must contain complete six-vertex quads"
@@ -618,7 +636,12 @@ pub(crate) fn prepare_frame_batches_with_analytic_slots(
                 draw.vertices.len /= 6;
             } else {
                 draw.vertices.start = scene_vertices.len() as u32;
-                scene_vertices.extend(source.iter().copied().map(CompactVertex::from));
+                scene_vertices.extend(source.iter().zip(clips).map(|(vertex, clip)| {
+                    CompactVertex {
+                        clip: *clip,
+                        ..CompactVertex::from(*vertex)
+                    }
+                }));
             }
         }
     }
@@ -666,7 +689,69 @@ thread_local! {
     /// Lets tests render the same frame with and without batch reordering.
     pub(crate) static BATCH_REORDER_DISABLED: std::cell::Cell<bool> =
         const { std::cell::Cell::new(false) };
+    /// Lets tests observe each packet's own GPU buffers, which grouping
+    /// otherwise merges.
+    pub(crate) static FRAGMENT_GROUPING_DISABLED: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
+
+/// Move each draw's rectangular clip into its vertices or text instances as
+/// framebuffer-pixel edges, so draws with different clips can share a draw
+/// call, and drop draws their clip hides completely. Returns the clip of each
+/// scene vertex; text instances carry theirs.
+pub(crate) fn stamp_draw_op_clips(
+    draw_ops: &mut DrawOpArena,
+    viewport: Size,
+    framebuffer_size: (u32, u32),
+) -> Vec<[f32; 4]> {
+    let mut scene_clips = vec![NO_CLIP; draw_ops.scene_vertices.len()];
+    let DrawOpArena {
+        draw_ops: ops,
+        text_instances,
+        ..
+    } = draw_ops;
+    ops.retain_mut(|op| {
+        let clip = match op.clip_rect.take() {
+            Some(rect) => match clip_pixels(rect, viewport, framebuffer_size) {
+                Some(clip) => clip,
+                None => return false,
+            },
+            None => NO_CLIP,
+        };
+        let range = op.vertices.start as usize..(op.vertices.start + op.vertices.len) as usize;
+        if op.kind == DrawOpKind::TextAtlas {
+            for instance in &mut text_instances[range] {
+                instance.clip = clip;
+            }
+        } else {
+            scene_clips[range].fill(clip);
+        }
+        true
+    });
+    scene_clips
+}
+
+/// The framebuffer-pixel edges of `rect`, rounded exactly as scissor edges
+/// are but not limited to the framebuffer, so a clip keeps the same pixels
+/// after its fragment is translated. `None` when it keeps no pixel.
+fn clip_pixels(rect: Rect, viewport: Size, framebuffer_size: (u32, u32)) -> Option<[f32; 4]> {
+    if rect.is_empty() || viewport.is_empty() {
+        return None;
+    }
+    let scale_x = framebuffer_size.0.max(1) as f32 / viewport.width.max(1.0);
+    let scale_y = framebuffer_size.1.max(1) as f32 / viewport.height.max(1.0);
+    let clip = [
+        (rect.x() * scale_x).round(),
+        (rect.y() * scale_y).round(),
+        (rect.max_x() * scale_x).round(),
+        (rect.max_y() * scale_y).round(),
+    ];
+    (clip[0] < clip[2] && clip[1] < clip[3]).then_some(clip)
+}
+
+/// A batch's combined bounds soon cover most of a fragment, so when they
+/// overlap a draw, its members are checked one by one, up to this many.
+const BATCH_OVERLAP_CHECK_LIMIT: usize = 128;
 
 /// How many earlier batches a draw may move past to join one of its kind.
 /// Bounds the reordering cost for long fragments.
@@ -675,17 +760,15 @@ const BATCH_REORDER_WINDOW: usize = 32;
 /// Reorder `draw_ops` so draws that can share a GPU draw call are adjacent.
 ///
 /// A draw moves back to join the nearest earlier batch with the same
-/// pipeline, resources, and clip, but never past a draw it overlaps, so the
+/// pipeline and resources, but never past a draw it overlaps, so the
 /// painter's order of every overlapping pair is kept and the image does not
 /// change. Draws never move across a change of stencil clip paths.
 pub(crate) fn reorder_draw_ops_for_batching(
     draw_ops: &mut DrawOpArena,
     batch_analytic_paths: bool,
-    viewport: Size,
 ) {
     struct Batch {
         kind: PreparedDrawKind,
-        clip_rect: Option<Rect>,
         clip_state_index: usize,
         bounds: [f32; 4],
         ops: Vec<usize>,
@@ -695,23 +778,14 @@ pub(crate) fn reorder_draw_ops_for_batching(
     if BATCH_REORDER_DISABLED.with(std::cell::Cell::get) {
         return;
     }
-    if draw_ops.draw_ops.len() < 3 || viewport.is_empty() {
+    if draw_ops.draw_ops.len() < 3 {
         return;
     }
-    // A clip that contains everything a draw covers changes nothing, but its
-    // scissor would keep the draw from batching with its neighbors.
-    let bounds = draw_ops
+    let op_bounds = draw_ops
         .draw_ops
         .iter()
         .map(|op| draw_op_ndc_bounds(draw_ops, op))
         .collect::<Vec<_>>();
-    for (op, bounds) in draw_ops.draw_ops.iter_mut().zip(&bounds) {
-        if let Some(clip) = op.clip_rect
-            && ndc_bounds_within(*bounds, clip, viewport)
-        {
-            op.clip_rect = None;
-        }
-    }
     let mut batches: Vec<Batch> = Vec::new();
     let mut segment_start = 0;
     let mut reordered = false;
@@ -729,7 +803,7 @@ pub(crate) fn reorder_draw_ops_for_batching(
         if !same_clip_paths {
             segment_start = batches.len();
         }
-        let bounds = bounds[index];
+        let bounds = op_bounds[index];
         let mut target = None;
         for (candidate_index, candidate) in batches[segment_start..]
             .iter()
@@ -738,13 +812,19 @@ pub(crate) fn reorder_draw_ops_for_batching(
             .take(BATCH_REORDER_WINDOW)
         {
             if candidate.kind == kind
-                && candidate.clip_rect == op.clip_rect
-                && candidate.clip_state_index == op.clip_state_index
+                && draw_ops.clip_states[candidate.clip_state_index].clip_paths
+                    == draw_ops.clip_states[op.clip_state_index].clip_paths
             {
                 target = Some(segment_start + candidate_index);
                 break;
             }
-            if bounds_overlap(candidate.bounds, bounds) {
+            if bounds_overlap(candidate.bounds, bounds)
+                && (candidate.ops.len() > BATCH_OVERLAP_CHECK_LIMIT
+                    || candidate
+                        .ops
+                        .iter()
+                        .any(|&member| bounds_overlap(op_bounds[member], bounds)))
+            {
                 break;
             }
         }
@@ -762,7 +842,6 @@ pub(crate) fn reorder_draw_ops_for_batching(
             }
             None => batches.push(Batch {
                 kind,
-                clip_rect: op.clip_rect,
                 clip_state_index: op.clip_state_index,
                 bounds,
                 ops: vec![index],
@@ -827,18 +906,6 @@ fn draw_op_ndc_bounds(draw_ops: &DrawOpArena, op: &DrawOp) -> [f32; 4] {
         }
     }
     bounds
-}
-
-/// Whether NDC `bounds` lie inside the logical rectangle `clip`.
-fn ndc_bounds_within(bounds: [f32; 4], clip: Rect, viewport: Size) -> bool {
-    let to_x = |x: f32| (x + 1.0) * 0.5 * viewport.width;
-    let to_y = |y: f32| (1.0 - y) * 0.5 * viewport.height;
-    // Rounding in the NDC round trip must not drop a clip that trims a draw.
-    const SLACK: f32 = 1.0 / 256.0;
-    to_x(bounds[0]) >= clip.x() - SLACK
-        && to_x(bounds[2]) <= clip.max_x() + SLACK
-        && to_y(bounds[3]) >= clip.y() - SLACK
-        && to_y(bounds[1]) <= clip.max_y() + SLACK
 }
 
 fn bounds_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
@@ -1047,6 +1114,130 @@ pub(crate) fn stamp_draw_op_analytic_path_slots(
             vertex.shader_params[0] = slot as f32;
         }
     }
+}
+
+/// Most fragments a group merges; also aligns groups to packet indices so a
+/// change rebuilds only the group around it.
+const FRAGMENT_GROUP_SIZE: u32 = 16;
+
+/// Consecutive fragments merged into one GPU fragment, and the members it
+/// was built from.
+pub(crate) struct FragmentGroup {
+    members: Vec<(RetainedPacketId, Arc<DrawOpArena>, Option<Rect>)>,
+    merged: Arc<DrawOpArena>,
+}
+
+/// Merge runs of consecutive fragments that are not being translated into
+/// cached groups, so each group draws from one set of buffers and its draws
+/// can batch. Packets stay small for cheap rebuilds; a group is rebuilt from
+/// its members' existing geometry only when one of them changes, and keeps
+/// its identity (and GPU buffers) otherwise.
+pub(crate) fn group_fragments(
+    fragments: Vec<RetainedFrameFragment>,
+    groups: &mut HashMap<RetainedPacketId, FragmentGroup>,
+) -> Vec<RetainedFrameFragment> {
+    let mut grouped = Vec::with_capacity(fragments.len());
+    let mut live = HashSet::new();
+    let mut run: Vec<RetainedFrameFragment> = Vec::new();
+    let flush = |run: &mut Vec<RetainedFrameFragment>,
+                 grouped: &mut Vec<RetainedFrameFragment>,
+                 live: &mut HashSet<RetainedPacketId>,
+                 groups: &mut HashMap<RetainedPacketId, FragmentGroup>| {
+        if run.len() < 2 {
+            grouped.append(run);
+            return;
+        }
+        let first = run[0].id;
+        let id = RetainedPacketId {
+            container: first.container,
+            segment_index: first.segment_index | 1 << 31,
+        };
+        live.insert(id);
+        let current = groups.get(&id).is_some_and(|group| {
+            group.members.len() == run.len()
+                && group
+                    .members
+                    .iter()
+                    .zip(run.iter())
+                    .all(|(member, fragment)| {
+                        member.0 == fragment.id
+                            && Arc::ptr_eq(&member.1, &fragment.draw_ops)
+                            && member.2 == fragment.clip
+                    })
+        });
+        if !current {
+            let mut merged = DrawOpArena::default();
+            for fragment in run.iter() {
+                let first_op = merged.draw_ops.len();
+                merged.append_fragment(&fragment.draw_ops);
+                if let Some(clip) = fragment.clip {
+                    // The fragment's window clip becomes part of each draw's
+                    // own clip; a draw outside it draws nothing.
+                    let mut index = first_op;
+                    while index < merged.draw_ops.len() {
+                        let op = &mut merged.draw_ops[index];
+                        match op
+                            .clip_rect
+                            .map_or(Some(clip), |rect| rect.intersection(clip))
+                        {
+                            Some(rect) => {
+                                op.clip_rect = Some(rect);
+                                index += 1;
+                            }
+                            None => {
+                                merged.draw_ops.remove(index);
+                            }
+                        }
+                    }
+                }
+            }
+            groups.insert(
+                id,
+                FragmentGroup {
+                    members: run
+                        .iter()
+                        .map(|fragment| {
+                            (fragment.id, Arc::clone(&fragment.draw_ops), fragment.clip)
+                        })
+                        .collect(),
+                    merged: Arc::new(merged),
+                },
+            );
+        }
+        grouped.push(RetainedFrameFragment {
+            id,
+            draw_ops: Arc::clone(&groups[&id].merged),
+            translation: Vector::ZERO,
+            clip: None,
+        });
+        run.clear();
+    };
+    #[cfg(test)]
+    if FRAGMENT_GROUPING_DISABLED.with(std::cell::Cell::get) {
+        groups.clear();
+        return fragments;
+    }
+    for fragment in fragments {
+        if fragment.translation != Vector::ZERO {
+            flush(&mut run, &mut grouped, &mut live, groups);
+            grouped.push(fragment);
+            continue;
+        }
+        if run
+            .last()
+            .is_some_and(|last| last.id.container != fragment.id.container)
+        {
+            flush(&mut run, &mut grouped, &mut live, groups);
+        }
+        let ends_group = fragment.id.segment_index % FRAGMENT_GROUP_SIZE == FRAGMENT_GROUP_SIZE - 1;
+        run.push(fragment);
+        if ends_group || run.len() as u32 >= FRAGMENT_GROUP_SIZE {
+            flush(&mut run, &mut grouped, &mut live, groups);
+        }
+    }
+    flush(&mut run, &mut grouped, &mut live, groups);
+    groups.retain(|id, _| live.contains(id));
+    grouped
 }
 
 /// `submission` offset by `translation` and scissored to the window-space
@@ -1678,11 +1869,11 @@ pub(crate) mod transient_vertex_tests {
 
         let prepared = prepare_frame_batches(draw_ops, Size::new(100.0, 100.0), (100, 100));
 
-        assert_eq!(std::mem::size_of::<CompactVertex>(), 48);
-        assert_eq!(std::mem::size_of::<SolidVertex>(), 24);
-        assert_eq!(std::mem::size_of::<AnalyticQuadInstance>(), 52);
-        assert_eq!(std::mem::size_of::<ExtendedQuadInstance>(), 112);
-        assert_eq!(std::mem::size_of::<TextAtlasInstance>(), 60);
+        assert_eq!(std::mem::size_of::<CompactVertex>(), 64);
+        assert_eq!(std::mem::size_of::<SolidVertex>(), 40);
+        assert_eq!(std::mem::size_of::<AnalyticQuadInstance>(), 68);
+        assert_eq!(std::mem::size_of::<ExtendedQuadInstance>(), 128);
+        assert_eq!(std::mem::size_of::<TextAtlasInstance>(), 76);
         assert_eq!(prepared.solid_vertices.len(), 6);
         assert_eq!(prepared.scene_vertices.len(), 0);
         assert_eq!(prepared.analytic_vertices.len(), 0);

@@ -1433,6 +1433,7 @@ pub(crate) fn build_text_atlas_instance(
         ],
         coverage_parameter: coverage_policy_parameter,
         layer: page_index as u32,
+        clip: crate::gpu::NO_CLIP,
     })
 }
 

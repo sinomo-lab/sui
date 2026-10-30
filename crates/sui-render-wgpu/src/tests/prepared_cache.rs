@@ -62,6 +62,8 @@ fn layered_frame(window: WindowId, revision: usize) -> SceneFrame {
 
 #[test]
 fn prepared_fragments_reuse_unchanged_data_and_invalidate_local_edits_and_properties() {
+    // Inspects per-packet buffers, which fragment grouping would merge.
+    crate::submission::FRAGMENT_GROUPING_DISABLED.with(|disabled| disabled.set(true));
     let window = WindowId::new(9200);
     let mut retained = WgpuRenderer::new();
     let mut reference = WgpuRenderer::new();

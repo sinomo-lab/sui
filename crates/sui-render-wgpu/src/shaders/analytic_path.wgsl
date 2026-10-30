@@ -4,6 +4,7 @@ struct VsOut {
     @location(0) color: vec4<f32>,
     @location(1) scene_position: vec2<f32>,
     @location(2) @interpolate(flat) path_index: u32,
+    @location(3) @interpolate(flat) clip: vec4<f32>,
 };
 
 struct AnalyticPathMeta {
@@ -50,9 +51,11 @@ fn vs_main(
     @location(4) scene_max: vec2<f32>,
     @location(5) color: vec4<f32>,
     @location(6) path_index: u32,
+    @location(7) clip: vec4<f32>,
 ) -> VsOut {
     var out: VsOut;
     out.position = translate_fragment(vec4<f32>(mix(ndc_min, ndc_max, corner), 0.0, 1.0));
+    out.clip = translate_clip(clip);
     out.color = color;
     out.scene_position = mix(scene_min, scene_max, corner);
     out.path_index = path_index;
@@ -138,5 +141,8 @@ fn fs_shade(in: VsOut) -> vec4<f32> {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    if !clip_contains(in.position, in.clip) {
+        discard;
+    }
     return fit_straight(fs_shade(in));
 }

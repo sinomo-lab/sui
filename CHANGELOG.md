@@ -141,6 +141,15 @@ Versioning, with the usual expectation that the API may change during the
     unused text layouts are pruned in batches rather than every frame.
   - Appending a scene to an empty one shares its commands instead of copying
     them, and semantics assembly uses a faster hasher.
+- Rectangular clips are applied in the scene shaders instead of with
+  scissors: every vertex and glyph instance carries its clip in framebuffer
+  pixels, snapped to the same edges a scissor uses, and moves with its
+  fragment. Draws with different clips can then share a draw call, and runs
+  of up to 16 consecutive packets are merged into cached groups that are
+  rebuilt only when a member changes. The 1,200-widget controls grid goes
+  from 647 to 22 draw calls per frame, which matters most in browsers, where
+  each GPU call goes through JavaScript. Vertex and instance formats grow by
+  16 bytes each.
 
 ## [0.5.0] - 2026-10-08
 

@@ -227,7 +227,7 @@ pub(crate) fn retained_compositor_carries_active_path_clips() {
 }
 
 #[test]
-pub(crate) fn prepare_frame_batches_converts_clip_rects_to_scissors() {
+pub(crate) fn prepare_frame_batches_moves_clip_rects_into_vertices() {
     let prepared = prepare_frame_batches(
         DrawOpArena {
             scene_vertices: vec![
@@ -258,15 +258,15 @@ pub(crate) fn prepare_frame_batches_converts_clip_rects_to_scissors() {
         (100, 80),
     );
 
+    // The clip travels with the vertices in framebuffer pixels, so the draw
+    // needs no scissor and can batch with draws clipped differently.
     assert_eq!(prepared.passes.len(), 1);
-    assert_eq!(
-        prepared.passes[0].draws[0].clip_rect,
-        Some(ScissorRect {
-            x: 10,
-            y: 16,
-            width: 40,
-            height: 20,
-        })
+    assert_eq!(prepared.passes[0].draws[0].clip_rect, None);
+    assert!(
+        prepared
+            .solid_vertices
+            .iter()
+            .all(|vertex| vertex.clip == [10.0, 16.0, 50.0, 36.0])
     );
 }
 

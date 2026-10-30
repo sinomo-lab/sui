@@ -8,6 +8,7 @@ struct VsOut {
     @location(4) @interpolate(flat) uv_min: vec2<f32>,
     @location(5) @interpolate(flat) uv_max: vec2<f32>,
     @location(6) @interpolate(flat) atlas_kind: u32,
+    @location(7) @interpolate(flat) clip: vec4<f32>,
 };
 
 struct FragmentOutput {
@@ -38,9 +39,11 @@ fn vs_main(
     @location(7) coverage_flags: vec4<u32>,
     @location(8) coverage_parameter: f32,
     @location(9) layer: u32,
+    @location(10) clip: vec4<f32>,
 ) -> VsOut {
     var out: VsOut;
     out.position = translate_fragment(vec4<f32>(top_left + local_pos.x * x_axis + local_pos.y * y_axis, 0.0, 1.0));
+    out.clip = translate_clip(clip);
     out.color = color;
     out.glyph_coords = local_pos;
     out.metadata = vec4<f32>(
@@ -209,6 +212,9 @@ fn fs_shade(in: VsOut) -> FragmentOutput {
 
 @fragment
 fn fs_main(in: VsOut) -> FragmentOutput {
+    if !clip_contains(in.position, in.clip) {
+        discard;
+    }
     var out = fs_shade(in);
     out.foreground = vec4<f32>(fit_to_sdr(out.foreground.rgb, SDR_FIT), out.foreground.a);
     return out;

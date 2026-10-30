@@ -9,14 +9,15 @@ struct VsOut {
     @location(0) color: vec4<f32>, @location(1) local: vec2<f32>,
     @location(2) p0: vec4<f32>, @location(3) radii: vec4<f32>,
     @location(4) p2: vec4<f32>, @location(5) border_color: vec4<f32>,
+    @location(6) @interpolate(flat) clip: vec4<f32>,
 };
 @vertex
 fn vs_main(@location(0) corner: vec2<f32>, @location(1) ndc_min: vec2<f32>,
     @location(2) ndc_max: vec2<f32>, @location(3) local_min: vec2<f32>,
     @location(4) local_max: vec2<f32>, @location(5) color: vec4<f32>,
     @location(6) p0: vec4<f32>, @location(7) radii: vec4<f32>,
-    @location(8) p2: vec4<f32>, @location(9) border_color: vec4<f32>) -> VsOut {
-    var out: VsOut; out.position = translate_fragment(vec4<f32>(mix(ndc_min, ndc_max, corner), 0.0, 1.0));
+    @location(8) p2: vec4<f32>, @location(9) border_color: vec4<f32>, @location(10) clip: vec4<f32>) -> VsOut {
+    var out: VsOut; out.position = translate_fragment(vec4<f32>(mix(ndc_min, ndc_max, corner), 0.0, 1.0)); out.clip = translate_clip(clip);
     out.color = color; out.local = mix(local_min, local_max, corner); out.p0 = p0;
     out.radii = radii; out.p2 = p2; out.border_color = border_color;
     return out;
@@ -118,5 +119,8 @@ fn fs_shade(in: VsOut) -> vec4<f32> {
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    if !clip_contains(in.position, in.clip) {
+        discard;
+    }
     return fit_straight(fs_shade(in));
 }
