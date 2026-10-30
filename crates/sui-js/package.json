@@ -31,7 +31,7 @@
   ],
   "scripts": {
     "build": "napi build --platform --release",
-    "test": "cargo build --package sinomo-ui-js && node --test tests/",
+    "test": "cargo build --package sinomo-ui-js && node tests/run.js node",
     "test:web": "cargo xtask web build && node tests/run.js web"
   },
   "keywords": [
