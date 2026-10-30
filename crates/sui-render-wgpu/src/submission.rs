@@ -1605,9 +1605,12 @@ pub(crate) fn encode_clipped_pass(
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
             view: stencil_view.expect("stencil view available for path-clipped pass"),
             depth_ops: None,
+            // Each path-clipped pass clears and builds its own clip masks, so
+            // nothing reads the stencil afterwards. Discarding it saves
+            // tile-based GPUs from writing it back to memory.
             stencil_ops: Some(wgpu::Operations {
                 load: wgpu::LoadOp::Clear(0),
-                store: wgpu::StoreOp::Store,
+                store: wgpu::StoreOp::Discard,
             }),
         }),
         occlusion_query_set: None,

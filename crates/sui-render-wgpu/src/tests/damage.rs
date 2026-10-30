@@ -145,3 +145,51 @@ fn partial_redraw_falls_back_to_full_redraw_when_inputs_change() {
     renderer.render(&resized).unwrap();
     assert_eq!(last_region(), RedrawRegion::Full);
 }
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+fn trimmed_memory_is_rebuilt_without_changing_frames() {
+    let window = WindowId::new(9302);
+    let images = Arc::new(ImageRegistry::new());
+    let mut renderer = WgpuRenderer::new();
+    let fresh_pixels = |frame: &SceneFrame| {
+        let mut fresh = WgpuRenderer::new();
+        fresh.render(frame).unwrap();
+        fresh.capture_last_frame_rgba(window).unwrap()
+    };
+
+    let first = grid(window, &images, 100, None, Vector::ZERO);
+    renderer.render(&first).unwrap();
+
+    // Backgrounding keeps the retained scene, so nothing is rebuilt.
+    renderer.trim_memory(crate::MemoryTrimLevel::Background);
+    renderer.render(&first).unwrap();
+    assert_eq!(
+        renderer
+            .last_frame_stats(window)
+            .unwrap()
+            .retained_packet_build_count,
+        0
+    );
+    assert_rgba_images_match(
+        &fresh_pixels(&first),
+        &renderer.capture_last_frame_rgba(window).unwrap(),
+    );
+
+    // Memory pressure frees the retained scene; the next frame rebuilds it.
+    renderer.trim_memory(crate::MemoryTrimLevel::Critical);
+    let edited = grid(window, &images, 37, None, Vector::ZERO);
+    renderer.render(&edited).unwrap();
+    assert!(
+        renderer
+            .last_frame_stats(window)
+            .unwrap()
+            .retained_packet_build_count
+            > 0
+    );
+    assert_eq!(last_region(), RedrawRegion::Full);
+    assert_rgba_images_match(
+        &fresh_pixels(&edited),
+        &renderer.capture_last_frame_rgba(window).unwrap(),
+    );
+}

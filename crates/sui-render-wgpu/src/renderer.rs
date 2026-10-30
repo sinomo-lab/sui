@@ -7,6 +7,7 @@ use crate::output::DisplayCapabilities;
 use crate::output::OutputStrategy;
 use crate::output::RendererCapabilities;
 use crate::resources::FrameResources;
+use crate::resources::{IMAGE_CACHE_BUDGET_BYTES, IMAGE_CACHE_IDLE};
 use crate::surface::normalize_framebuffer_size;
 use crate::text::RendererTextCacheSnapshot;
 use crate::text_engine::TextEngine;
@@ -21,6 +22,51 @@ use sui_core::Result;
 use sui_core::WindowId;
 use sui_scene::SceneFrame;
 pub use sui_scene::TextSubpixelOrder;
+
+/// The image textures to release: those unused for `idle`, then the least
+/// recently used until the rest fit `budget` bytes. Textures used by frame
+/// `drawn` are kept even over budget, since the screen still shows them.
+pub(crate) fn image_textures_to_evict<K: Copy>(
+    entries: impl Iterator<Item = (K, usize, web_time::Instant, u64)>,
+    drawn: usize,
+    now: web_time::Instant,
+    idle: std::time::Duration,
+    budget: u64,
+) -> Vec<K> {
+    let mut evicted = Vec::new();
+    let mut kept = Vec::new();
+    let mut total = 0;
+    for (key, last_used_frame, last_used_at, bytes) in entries {
+        let used = last_used_frame >= drawn;
+        if used || now.duration_since(last_used_at) <= idle {
+            total += bytes;
+            if !used {
+                kept.push((last_used_at, bytes, key));
+            }
+        } else {
+            evicted.push(key);
+        }
+    }
+    kept.sort_by_key(|(last_used_at, _, _)| *last_used_at);
+    for (_, bytes, key) in kept {
+        if total <= budget {
+            break;
+        }
+        evicted.push(key);
+        total -= bytes;
+    }
+    evicted
+}
+
+/// How much memory [`WgpuRenderer::trim_memory`] gives up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryTrimLevel {
+    /// The app is in the background: free what is quick to recreate and
+    /// keep the retained scene, so returning to the app stays fast.
+    Background,
+    /// The system is short of memory: free everything that can be rebuilt.
+    Critical,
+}
 
 impl WgpuRenderer {
     pub fn new() -> Self {
@@ -388,6 +434,76 @@ impl WgpuRenderer {
         self.last_frame_stats.clear();
     }
 
+    /// Give up retained memory the renderer can rebuild.
+    ///
+    /// [`MemoryTrimLevel::Background`] keeps what makes the next frame
+    /// cheap, the retained scene and its GPU geometry, and frees textures
+    /// and staging memory that are quick to recreate. Call it when the app
+    /// is backgrounded. [`MemoryTrimLevel::Critical`] frees everything that
+    /// can be rebuilt, at the cost of rebuilding it on the next frame. Call
+    /// it when the system reports memory pressure.
+    pub fn trim_memory(&mut self, level: MemoryTrimLevel) {
+        self.image_cache.clear();
+        self.frame_resources.uploads.release();
+        self.frame_resources.stencil = None;
+        // Frames of windows without a surface are not being shown.
+        let dropped = self
+            .offscreen_targets
+            .keys()
+            .chain(self.intermediate_targets.keys())
+            .chain(self.swapchain_frames.keys())
+            .copied()
+            .filter(|window_id| {
+                level == MemoryTrimLevel::Critical || !self.surfaces.contains_key(window_id)
+            })
+            .collect::<Vec<_>>();
+        for window_id in dropped {
+            self.offscreen_targets.remove(&window_id);
+            self.intermediate_targets.remove(&window_id);
+            self.swapchain_frames.remove(&window_id);
+            // A recreated target shows nothing yet.
+            self.frame_resources.target_contents.remove(&window_id);
+        }
+        if level == MemoryTrimLevel::Critical {
+            self.text_engine = None;
+            self.text_atlas_array = None;
+            self.compositors.clear();
+            self.analytic_path_cache.clear();
+            self.frame_resources.analytic_path_arena = Default::default();
+            self.frame_resources.fragments.clear();
+            self.frame_resources.fragment_groups.clear();
+            self.frame_resources.packet_bounds.clear();
+            self.frame_resources.target_contents.clear();
+        }
+    }
+
+    /// Release image textures unused for [`IMAGE_CACHE_IDLE`], then the least
+    /// recently used ones until the cache fits [`IMAGE_CACHE_BUDGET_BYTES`].
+    /// Textures the frame just drawn used are always kept.
+    fn evict_image_textures(&mut self) {
+        let evicted = image_textures_to_evict(
+            self.image_cache
+                .iter()
+                .map(|(key, entry)| (*key, entry.last_used_frame, entry.last_used_at, entry.bytes)),
+            self.frames_rendered.saturating_sub(1),
+            web_time::Instant::now(),
+            IMAGE_CACHE_IDLE,
+            IMAGE_CACHE_BUDGET_BYTES,
+        );
+        for key in evicted {
+            self.image_cache.remove(&key);
+        }
+    }
+
+    /// Release only `window_id`'s surface, as a mobile host must when the
+    /// app is backgrounded. Everything retained for the window stays, so the
+    /// first frame after [`register_window`](Self::register_window) reuses
+    /// it instead of rebuilding the whole scene.
+    pub fn suspend_window(&mut self, window_id: WindowId) {
+        self.prepared_surfaces.remove(&window_id);
+        self.surfaces.remove(&window_id);
+    }
+
     pub fn remove_window(&mut self, window_id: WindowId) {
         self.prepared_surfaces.remove(&window_id);
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -447,8 +563,7 @@ impl WgpuRenderer {
         self.last_frame_stats.insert(frame.window_id, frame_stats);
         self.analytic_path_cache
             .retain(|_, entry| self.frames_rendered.saturating_sub(entry.last_used_frame) <= 120);
-        self.image_cache
-            .retain(|_, entry| self.frames_rendered.saturating_sub(entry.last_used_frame) <= 120);
+        self.evict_image_textures();
         Ok(())
     }
 

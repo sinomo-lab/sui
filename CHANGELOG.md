@@ -170,6 +170,21 @@ Versioning, with the usual expectation that the API may change during the
   that change everything pay a copy of about 0.07 ms. Android and iOS keep
   drawing straight to the swapchain, where reading the kept frame back and
   copying it can cost more than redrawing on tile-based GPUs.
+- Path clips use a stencil-only `Stencil8` attachment whose contents are
+  discarded after each pass instead of stored, which saves tile-based mobile
+  GPUs a write of the whole attachment per clipped pass.
+- Suspending a window (backgrounding an Android app) releases only its
+  surface and keeps the renderer's retained scene. Resuming with the same
+  size and scale presents the existing frame instead of relaying out and
+  rebuilding everything.
+- Added `WgpuRenderer::trim_memory` and `MemoryTrimLevel`. Desktop and mobile
+  hosts call it with `Background` on suspend, freeing image textures,
+  staging memory, and hidden frames, and with `Critical` on the system's
+  memory warning, also freeing text atlases and the retained scene, which
+  the next frame rebuilds.
+- The image texture cache expires textures unused for 2 seconds instead of
+  120 frames, so 120 Hz displays no longer evict twice as fast, and keeps
+  idle textures within a budget of 64 MB on mobile and 256 MB elsewhere.
 
 ## [0.5.0] - 2026-10-08
 

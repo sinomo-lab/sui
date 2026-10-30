@@ -9,6 +9,13 @@ pub(crate) struct GpuUploads {
 }
 
 impl GpuUploads {
+    /// Free the staging memory between frames; it is recreated on demand.
+    pub(crate) fn release(&mut self) {
+        if self.encoder.is_none() {
+            self.belt = None;
+        }
+    }
+
     pub(crate) fn write_buffer(
         &mut self,
         device: &wgpu::Device,

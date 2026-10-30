@@ -260,3 +260,32 @@ pub(crate) fn retained_compositor_errors_for_unregistered_image_handle() {
             .contains("image handle 88 is not registered")
     );
 }
+
+#[test]
+fn image_texture_eviction_expires_idle_textures_then_fits_the_budget() {
+    use crate::renderer::image_textures_to_evict;
+    use std::time::Duration;
+    let now = web_time::Instant::now();
+    let ago = |millis| now - Duration::from_millis(millis);
+    let idle = Duration::from_secs(2);
+    let entries = || {
+        [
+            // (key, last used frame, last used at, bytes)
+            ("drawn", 10, ago(5_000), 400),
+            ("stale", 3, ago(3_000), 10),
+            ("older", 8, ago(1_500), 100),
+            ("recent", 9, ago(100), 100),
+        ]
+        .into_iter()
+    };
+
+    // Within budget only the idle texture goes, even at 120 frames a second.
+    let mut evicted = image_textures_to_evict(entries(), 10, now, idle, 1_000);
+    evicted.sort_unstable();
+    assert_eq!(evicted, ["stale"]);
+
+    // Over budget the least recently used go next, never the drawn one.
+    let mut evicted = image_textures_to_evict(entries(), 10, now, idle, 450);
+    evicted.sort_unstable();
+    assert_eq!(evicted, ["older", "recent", "stale"]);
+}

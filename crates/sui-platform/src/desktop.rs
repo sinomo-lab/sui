@@ -14,7 +14,7 @@ use sui_core::{
     PointerButton, PointerButtons, PointerEvent, PointerEventKind, PointerKind,
     RawMouseMotionEvent, Result, ScrollDelta, SemanticsRole, Size, Vector, WindowEvent, WindowId,
 };
-use sui_render_wgpu::{WgpuExternalTextureRegistry, WgpuRenderer};
+use sui_render_wgpu::{MemoryTrimLevel, WgpuExternalTextureRegistry, WgpuRenderer};
 use sui_runtime::{
     CommandSender, FramePacing, PresentationLatencyDiagnostics, Runtime,
     WindowIcon as RuntimeWindowIcon, WindowPerformanceSnapshot, window_performance_snapshot,
@@ -970,18 +970,26 @@ impl DesktopApp {
             self.refresh_window_display_capabilities(window_id)?;
 
             let scale_factor = window.scale_factor();
-            let size = physical_size_to_logical_size(
-                Self::initial_window_physical_size(&window),
-                scale_factor,
-            );
+            let physical_size = Self::initial_window_physical_size(&window);
+            let size = physical_size_to_logical_size(physical_size, scale_factor);
+            let mut unchanged = false;
             if let Some(state) = self.windows.get_mut(&window_id) {
+                unchanged = state.scale_factor == scale_factor
+                    && state.suspended_size.take() == Some(physical_size);
                 state.scale_factor = scale_factor;
                 state.display_capabilities_dirty = false;
                 state.redraw_requested = false;
                 state.redraw_requested_at_ms = None;
+                state.present_pending = unchanged;
+            }
+            if unchanged {
+                // Layout and the retained scene still fit the window; only
+                // the new surface needs the current frame.
+                window.request_redraw();
+                continue;
             }
 
-            // A newly restored surface has no contents. Re-delivering its current
+            // The window changed while suspended. Re-delivering its current
             // scale and size invalidates layout/paint and schedules a fresh frame
             // without replacing the retained runtime or widget tree.
             self.process_event(
@@ -1025,8 +1033,10 @@ impl DesktopApp {
         for (window_id, window) in &mut self.windows {
             // On Android the native SurfaceView is invalid as soon as this
             // callback returns. Drop wgpu surfaces synchronously while retaining
-            // the host window and SUI runtime state for the next Resumed event.
-            self.renderer.remove_window(*window_id);
+            // the host window, SUI runtime state, and the renderer's retained
+            // scene for the next Resumed event.
+            self.renderer.suspend_window(*window_id);
+            window.suspended_size = Some(window.window.inner_size());
             window.display_capabilities_dirty = true;
             window.redraw_requested = false;
             window.redraw_requested_at_ms = None;
@@ -1037,6 +1047,9 @@ impl DesktopApp {
                 window.ime_allowed = false;
             }
         }
+        // A backgrounded app is a likely target for the system to reclaim;
+        // keep only what makes returning to it fast.
+        self.renderer.trim_memory(MemoryTrimLevel::Background);
 
         Ok(())
     }
@@ -1195,6 +1208,8 @@ impl DesktopApp {
                     applied_cursor_revision: 0,
                     touch_points: HashMap::new(),
                     android_back_down_seen: false,
+                    suspended_size: None,
+                    present_pending: false,
                     ime_allowed: false,
                     scale_factor,
                     refresh_interval: monitor_refresh_interval(&window),
@@ -1386,7 +1401,16 @@ impl DesktopApp {
             .is_some_and(|window| window.frame_pacing == FramePacing::Display)
             && self.runtime.has_pending_animation_frames(window_id)?;
         let capturing = crate::has_pending_window_debug_captures(window_id);
-        if !self.runtime.needs_render(window_id)? && !keep_presenting && !animating && !capturing {
+        let present_pending = self
+            .windows
+            .get(&window_id)
+            .is_some_and(|window| window.present_pending);
+        if !self.runtime.needs_render(window_id)?
+            && !keep_presenting
+            && !animating
+            && !capturing
+            && !present_pending
+        {
             return Ok(());
         }
 
@@ -1623,8 +1647,15 @@ impl DesktopApp {
         }) {
             return Ok(());
         }
-        if !self.runtime.needs_render(window_id)? {
+        let present_pending = self
+            .windows
+            .get(&window_id)
+            .is_some_and(|window| window.present_pending);
+        if !self.runtime.needs_render(window_id)? && !present_pending {
             return Ok(());
+        }
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            window.present_pending = false;
         }
 
         self.update_clock();
@@ -2801,6 +2832,11 @@ impl ApplicationHandler<DesktopUserEvent> for DesktopApp {
         }
     }
 
+    fn memory_warning(&mut self, _event_loop: &ActiveEventLoop) {
+        // Everything the renderer frees here is rebuilt by the next frame.
+        self.renderer.trim_memory(MemoryTrimLevel::Critical);
+    }
+
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
         if let Err(error) = self.suspend_window_surfaces() {
             self.handle_error(event_loop, error);
@@ -2909,6 +2945,12 @@ struct WindowState {
     applied_cursor_revision: u64,
     touch_points: HashMap<u64, Point>,
     android_back_down_seen: bool,
+    /// The surface size when the window was suspended, to tell on resume
+    /// whether layout must change or the retained frame can simply be shown.
+    suspended_size: Option<PhysicalSize<u32>>,
+    /// A new surface has no contents, so the next frame must be presented
+    /// even when nothing in the window changed.
+    present_pending: bool,
     ime_allowed: bool,
     scale_factor: f64,
     /// The monitor's refresh period, when the platform reports it.

@@ -61,6 +61,7 @@ pub use output::RequestedDynamicRangeMode;
 pub use output::RequestedOutputColorPrimaries;
 pub use output::RequestedToneMappingMode;
 pub use output::fit_to_sdr;
+pub use renderer::MemoryTrimLevel;
 pub use text::GlyphCacheSnapshot;
 pub use text::RendererTextCacheSnapshot;
 pub use text_policy::FeatheringOptions;

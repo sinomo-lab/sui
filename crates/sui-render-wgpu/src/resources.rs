@@ -175,7 +175,9 @@ pub(crate) struct StencilTarget {
     pub(crate) size: (u32, u32),
 }
 
-pub(crate) const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
+/// Path clips only need a stencil; no pass tests depth. A stencil-only
+/// format halves the attachment on GPUs that store it separately.
+pub(crate) const STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Stencil8;
 pub(crate) const DEFAULT_FEATHER_WIDTH: f32 = 0.0;
 
 pub(crate) struct ImageMipLevel {
@@ -383,6 +385,7 @@ impl WgpuRenderer {
         };
         if let Some(cached) = self.image_cache.get_mut(&texture_key) {
             cached.last_used_frame = self.frames_rendered;
+            cached.last_used_at = Instant::now();
             if Self::registered_image_data_identity_eq(&cached.image, image) {
                 return Ok(Self::image_bind_group_for_sampling(cached, key.sampling));
             }
@@ -457,12 +460,14 @@ impl WgpuRenderer {
         self.image_cache.insert(
             texture_key,
             CachedImageTexture {
+                bytes: texture_bytes(&texture),
                 texture,
                 _view: view,
                 linear_bind_group,
                 nearest_bind_group,
                 image: image.clone(),
                 last_used_frame: self.frames_rendered,
+                last_used_at: Instant::now(),
             },
         );
 
@@ -1182,6 +1187,35 @@ pub(crate) struct CachedImageTexture {
     pub(crate) nearest_bind_group: wgpu::BindGroup,
     pub(crate) image: sui_scene::RegisteredImage,
     pub(crate) last_used_frame: usize,
+    pub(crate) last_used_at: Instant,
+    /// GPU memory the texture and its mip levels take.
+    pub(crate) bytes: u64,
+}
+
+/// Image textures unused for this long are released, however many frames
+/// were drawn meanwhile.
+pub(crate) const IMAGE_CACHE_IDLE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Image texture memory kept beyond what the current frame uses. Mobile
+/// devices share a smaller memory budget with every other app.
+pub(crate) const IMAGE_CACHE_BUDGET_BYTES: u64 =
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        64 * 1024 * 1024
+    } else {
+        256 * 1024 * 1024
+    };
+
+/// The GPU memory `texture` and all its mip levels take.
+pub(crate) fn texture_bytes(texture: &wgpu::Texture) -> u64 {
+    let bytes_per_texel = u64::from(texture.format().block_copy_size(None).unwrap_or(4));
+    let size = texture.size();
+    (0..texture.mip_level_count())
+        .map(|level| {
+            let width = u64::from((size.width >> level).max(1));
+            let height = u64::from((size.height >> level).max(1));
+            width * height * bytes_per_texel
+        })
+        .sum()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
