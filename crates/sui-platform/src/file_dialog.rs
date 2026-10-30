@@ -21,13 +21,6 @@ use sui_core::{Error, Result, WindowId};
 ))]
 use winit::window::Window;
 
-const RFD_SUPPORTED: bool = cfg!(any(
-    target_arch = "wasm32",
-    target_os = "windows",
-    target_os = "macos",
-    target_os = "linux"
-));
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileDialogMode {
     OpenFile,
@@ -66,7 +59,8 @@ pub struct FileDialogRequest {
     /// Logical SUI window that should own the native dialog.
     ///
     /// Native desktop hosts resolve this to a live window and retain it while
-    /// the returned dialog future is active. Web builds ignore this field.
+    /// the returned dialog future is active. Web and Android builds ignore
+    /// this field.
     pub parent_window: Option<WindowId>,
 }
 
@@ -119,117 +113,238 @@ impl FileDialogRequest {
     }
 }
 
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+type FileInner = crate::os_files::OsFile;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+type FolderInner = crate::os_files::OsFolder;
+#[cfg(target_arch = "wasm32")]
+type FileInner = crate::web_files::WebFile;
+#[cfg(target_arch = "wasm32")]
+type FolderInner = crate::web_files::WebFolder;
+#[cfg(target_os = "android")]
+type FileInner = crate::android_file_dialog::AndroidFile;
+#[cfg(target_os = "android")]
+type FolderInner = crate::android_file_dialog::AndroidFolder;
+#[cfg(not(any(
+    target_arch = "wasm32",
+    target_os = "windows",
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "android"
+)))]
+type FileInner = Unsupported;
+#[cfg(not(any(
+    target_arch = "wasm32",
+    target_os = "windows",
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "android"
+)))]
+type FolderInner = Unsupported;
+
+/// A file the user chose in a file dialog, or found in a chosen folder.
+///
+/// Desktop files have a filesystem path. Web and Android files do not, so
+/// portable code reads and writes through the file itself.
 #[derive(Clone, Debug)]
 pub struct PlatformFile {
+    inner: FileInner,
+}
+
+impl PlatformFile {
     #[cfg(any(
         target_arch = "wasm32",
         target_os = "windows",
         target_os = "macos",
-        target_os = "linux"
+        target_os = "linux",
+        target_os = "android"
     ))]
-    inner: rfd::FileHandle,
-    #[cfg(not(any(
-        target_arch = "wasm32",
-        target_os = "windows",
-        target_os = "macos",
-        target_os = "linux"
-    )))]
-    name: String,
-}
-
-impl PlatformFile {
-    pub fn file_name(&self) -> String {
-        #[cfg(any(
-            target_arch = "wasm32",
-            target_os = "windows",
-            target_os = "macos",
-            target_os = "linux"
-        ))]
-        {
-            self.inner.file_name()
-        }
-        #[cfg(not(any(
-            target_arch = "wasm32",
-            target_os = "windows",
-            target_os = "macos",
-            target_os = "linux"
-        )))]
-        {
-            self.name.clone()
-        }
+    pub(crate) fn from_inner(inner: FileInner) -> Self {
+        Self { inner }
     }
 
+    pub fn file_name(&self) -> String {
+        self.inner.file_name()
+    }
+
+    /// The file's path on desktop platforms, `None` on the web and Android.
     pub fn path(&self) -> Option<&Path> {
-        #[cfg(all(
-            not(target_arch = "wasm32"),
-            any(target_os = "windows", target_os = "macos", target_os = "linux")
-        ))]
-        {
-            Some(self.inner.path())
-        }
-        #[cfg(not(all(
-            not(target_arch = "wasm32"),
-            any(target_os = "windows", target_os = "macos", target_os = "linux")
-        )))]
-        {
-            None
-        }
+        self.inner.path()
     }
 
     pub async fn read(&self) -> Result<Vec<u8>> {
-        #[cfg(any(
-            target_arch = "wasm32",
-            target_os = "windows",
-            target_os = "macos",
-            target_os = "linux"
-        ))]
-        {
-            Ok(self.inner.read().await)
-        }
-        #[cfg(not(any(
-            target_arch = "wasm32",
-            target_os = "windows",
-            target_os = "macos",
-            target_os = "linux"
-        )))]
-        {
-            Err(Error::new(
-                "file handles are not supported on this platform",
-            ))
-        }
+        self.inner.read().await
     }
 
+    /// Replace the file's contents with `data`.
     pub async fn write(&self, data: &[u8]) -> Result<()> {
-        #[cfg(any(
-            target_arch = "wasm32",
-            target_os = "windows",
-            target_os = "macos",
-            target_os = "linux"
-        ))]
-        {
-            self.inner
-                .write(data)
-                .await
-                .map_err(|error| Error::new(format!("file write failed: {error}")))
+        self.inner.write(data).await
+    }
+}
+
+/// A folder the user chose in a folder dialog, or found inside one.
+///
+/// Desktop folders have a filesystem path. Web and Android folders do not, so
+/// portable code lists, opens, and creates entries through the folder itself.
+/// Entries are named by a single name, never a path, so a folder reaches only
+/// what is directly inside it.
+#[derive(Clone, Debug)]
+pub struct PlatformFolder {
+    inner: FolderInner,
+}
+
+impl PlatformFolder {
+    #[cfg(any(
+        target_arch = "wasm32",
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android"
+    ))]
+    pub(crate) fn from_inner(inner: FolderInner) -> Self {
+        Self { inner }
+    }
+
+    pub fn name(&self) -> String {
+        self.inner.name()
+    }
+
+    /// The folder's path on desktop platforms, `None` on the web and Android.
+    pub fn path(&self) -> Option<&Path> {
+        self.inner.path()
+    }
+
+    /// The files and folders directly inside this folder, in no particular
+    /// order.
+    pub async fn entries(&self) -> Result<Vec<FolderEntry>> {
+        self.inner.entries().await
+    }
+
+    /// The file called `name` in this folder, or `None` when there is none.
+    pub async fn file(&self, name: &str) -> Result<Option<PlatformFile>> {
+        check_entry_name(name)?;
+        self.inner.file(name).await
+    }
+
+    /// The folder called `name` in this folder, or `None` when there is none.
+    pub async fn folder(&self, name: &str) -> Result<Option<PlatformFolder>> {
+        check_entry_name(name)?;
+        self.inner.folder(name).await
+    }
+
+    /// The file called `name` in this folder, created empty when there is
+    /// none. An existing file keeps its contents; a folder with that name is
+    /// an error.
+    pub async fn create_file(&self, name: &str) -> Result<PlatformFile> {
+        check_entry_name(name)?;
+        self.inner.create_file(name).await
+    }
+
+    /// The folder called `name` in this folder, created when there is none.
+    /// A file with that name is an error.
+    pub async fn create_folder(&self, name: &str) -> Result<PlatformFolder> {
+        check_entry_name(name)?;
+        self.inner.create_folder(name).await
+    }
+}
+
+/// A file or folder inside a [`PlatformFolder`].
+#[derive(Clone, Debug)]
+pub enum FolderEntry {
+    File(PlatformFile),
+    Folder(PlatformFolder),
+}
+
+impl FolderEntry {
+    pub fn name(&self) -> String {
+        match self {
+            Self::File(file) => file.file_name(),
+            Self::Folder(folder) => folder.name(),
         }
-        #[cfg(not(any(
-            target_arch = "wasm32",
-            target_os = "windows",
-            target_os = "macos",
-            target_os = "linux"
-        )))]
-        {
-            let _ = data;
-            Err(Error::new(
-                "file handles are not supported on this platform",
-            ))
-        }
+    }
+}
+
+fn check_entry_name(name: &str) -> Result<()> {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', '\0']) {
+        return Err(Error::new(format!("{name:?} is not a file or folder name")));
+    }
+    Ok(())
+}
+
+/// Stands in for files and folders where SUI shows no file dialogs, so none
+/// can exist.
+#[cfg(not(any(
+    target_arch = "wasm32",
+    target_os = "windows",
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "android"
+)))]
+#[derive(Clone, Debug)]
+enum Unsupported {}
+
+#[cfg(not(any(
+    target_arch = "wasm32",
+    target_os = "windows",
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "android"
+)))]
+impl Unsupported {
+    fn file_name(&self) -> String {
+        match *self {}
+    }
+
+    fn name(&self) -> String {
+        match *self {}
+    }
+
+    fn path(&self) -> Option<&Path> {
+        match *self {}
+    }
+
+    async fn read(&self) -> Result<Vec<u8>> {
+        match *self {}
+    }
+
+    async fn write(&self, _data: &[u8]) -> Result<()> {
+        match *self {}
+    }
+
+    async fn entries(&self) -> Result<Vec<FolderEntry>> {
+        match *self {}
+    }
+
+    async fn file(&self, _name: &str) -> Result<Option<PlatformFile>> {
+        match *self {}
+    }
+
+    async fn folder(&self, _name: &str) -> Result<Option<PlatformFolder>> {
+        match *self {}
+    }
+
+    async fn create_file(&self, _name: &str) -> Result<PlatformFile> {
+        match *self {}
+    }
+
+    async fn create_folder(&self, _name: &str) -> Result<PlatformFolder> {
+        match *self {}
     }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct FileDialogSelection {
+    /// The chosen files. Desktop folder dialogs also list the chosen folders
+    /// here, as files with their paths, as they did before `folders` existed.
     pub files: Vec<PlatformFile>,
+    /// The chosen folders, from folder dialogs.
+    pub folders: Vec<PlatformFolder>,
 }
 
 impl FileDialogSelection {
@@ -275,12 +390,9 @@ pub async fn show_file_dialog(request: FileDialogRequest) -> Result<Option<FileD
 }
 
 fn prepare_file_dialog(request: FileDialogRequest) -> FileDialogFuture {
-    if !RFD_SUPPORTED {
-        return Box::pin(async {
-            Err(Error::new(
-                "native file dialogs are not supported on this platform",
-            ))
-        });
+    #[cfg(target_os = "android")]
+    {
+        crate::android_file_dialog::show_file_dialog(request)
     }
 
     #[cfg(any(
@@ -367,7 +479,7 @@ fn prepare_file_dialog(request: FileDialogRequest) -> FileDialogFuture {
                 let operation = dialog.pick_folder();
                 Box::pin(async move {
                     let result = await_dialog_with_parent(parent_guard, operation).await;
-                    Ok(result.map(|file| selection(vec![file])))
+                    Ok(result.map(|folder| folder_selection(vec![folder])))
                 })
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -375,13 +487,13 @@ fn prepare_file_dialog(request: FileDialogRequest) -> FileDialogFuture {
                 let operation = dialog.pick_folders();
                 Box::pin(async move {
                     let result = await_dialog_with_parent(parent_guard, operation).await;
-                    Ok(result.map(selection))
+                    Ok(result.map(folder_selection))
                 })
             }
             #[cfg(target_arch = "wasm32")]
-            FileDialogMode::OpenFolder | FileDialogMode::OpenFolders => Box::pin(async {
-                Err(Error::new("folder dialogs are not available in web builds"))
-            }),
+            FileDialogMode::OpenFolder | FileDialogMode::OpenFolders => {
+                crate::web_files::show_directory_picker()
+            }
         }
     }
 
@@ -389,7 +501,8 @@ fn prepare_file_dialog(request: FileDialogRequest) -> FileDialogFuture {
         target_arch = "wasm32",
         target_os = "windows",
         target_os = "macos",
-        target_os = "linux"
+        target_os = "linux",
+        target_os = "android"
     )))]
     {
         let _ = request;
@@ -421,8 +534,27 @@ fn selection(files: Vec<rfd::FileHandle>) -> FileDialogSelection {
     FileDialogSelection {
         files: files
             .into_iter()
-            .map(|inner| PlatformFile { inner })
+            .map(|file| PlatformFile::from_inner(file.into()))
             .collect(),
+        folders: Vec::new(),
+    }
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+fn folder_selection(folders: Vec<rfd::FileHandle>) -> FileDialogSelection {
+    FileDialogSelection {
+        folders: folders
+            .iter()
+            .map(|folder| {
+                PlatformFolder::from_inner(crate::os_files::OsFolder::new(
+                    folder.path().to_path_buf(),
+                ))
+            })
+            .collect(),
+        ..selection(folders)
     }
 }
 

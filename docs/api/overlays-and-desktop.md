@@ -189,8 +189,8 @@ actions should build a managed interactive overlay instead.
 
 ## File Dialogs
 
-With a desktop or web platform feature enabled, `NativeFileDialogs` implements
-the asynchronous `FileDialogService` contract:
+With a desktop, web, or mobile platform feature enabled, `NativeFileDialogs`
+implements the asynchronous `FileDialogService` contract:
 
 ```rust,ignore
 use sui::prelude::*;
@@ -210,9 +210,70 @@ if let Some(selection) = NativeFileDialogs.show(request).await? {
 ```
 
 Cancellation returns `Ok(None)`. Desktop handles expose a filesystem `path`;
-web handles intentionally do not, so portable code should use `read` and
-`write`. Folder selection is unavailable in web builds. SUI does not block the
-UI thread or prescribe an async executor for application code.
+web and Android handles do not, so portable code should use `read` and
+`write`. SUI does not block the UI thread or prescribe an async executor for
+application code.
+
+### Folders
+
+`FileDialogMode::OpenFolder` and `OpenFolders` return the chosen folders in
+`selection.folders` as `PlatformFolder` handles. A folder lists the files and
+folders directly inside it and opens or creates them by name, so the same code
+works with or without a filesystem path:
+
+```rust,ignore
+use sui::prelude::*;
+
+let request = FileDialogRequest::new(FileDialogMode::OpenFolder);
+if let Some(selection) = NativeFileDialogs.show(request).await? {
+    let Some(folder) = selection.folders.first() else { return Ok(()) };
+    for entry in folder.entries().await? {
+        if let FolderEntry::File(file) = entry {
+            index_document(file.file_name(), file.read().await?);
+        }
+    }
+    let notes = folder.create_folder("notes").await?;
+    notes.create_file("today.md").await?.write(b"# Today\n").await?;
+}
+```
+
+`file(name)` and `folder(name)` return `None` when nothing of that kind has the
+name. `create_file` and `create_folder` return the existing entry when there
+is one, without changing a file's contents, and fail when the name belongs to
+the other kind. Names are single names, never paths: `""`, `.`, `..`, and
+names containing `/` or `\` are errors, so a folder only reaches what is
+inside it. Entries come in no particular order.
+
+Desktop folders have a `path`, and desktop folder dialogs also list the chosen
+folders in `selection.files` as path-backed files, as they did before
+`folders` existed. Web and Android pickers choose one folder at a time, so
+`OpenFolders` returns at most one there.
+
+On the web, folder dialogs use the File System Access API's
+`showDirectoryPicker`, which Chromium browsers such as Chrome and Edge
+provide; other browsers return an error. SUI asks for read and write access
+when the user picks the folder, so the browser may ask the user to allow
+editing.
+
+### Android
+
+On Android, opening and saving show the system document picker. Each file is
+a document that its provider reads and writes, which may be a cloud or app
+storage provider rather than local storage, and `file_name` is the name the
+provider shows. The picker filters by MIME type rather than by extension, so
+SUI combines the request's filters into the types Android knows for their
+extensions; if any extension has no known type, every file shows. A save
+request's suggested name becomes the new document's name, and its type comes
+from that name's extension or else the first filter. Android ignores the
+title, starting directory, and parent window.
+
+Folder dialogs show the system folder picker, and the user confirms that the
+app may access the folder. Android does not let apps choose the root of
+storage, the Download folder itself, or app data folders, so users pick or
+create a folder inside them. Access lasts while the app runs. Listing a
+folder and finding an entry by name ask the folder's provider each time.
+
+### Showing dialogs from handlers
 
 Call `NativeFileDialogs.show(request)` inside the UI callback that initiated
 the action. It resolves the logical parent window and constructs the rfd
@@ -220,8 +281,9 @@ operation synchronously, satisfying macOS main-thread setup; the returned
 native future is `Send` and may then be polled by a background executor. The
 parent registry stores weak window references. Once resolved, the returned
 future retains its parent window while the future is active; a request for a
-window that has already closed returns an error. Web ignores `parent_window`,
-and the returned future must begin polling during browser user activation;
+window that has already closed returns an error. Web and Android ignore
+`parent_window`. Browsers show dialogs only during the user activation that
+asked for them, so on the web the returned future must begin polling then;
 simply storing it for later is insufficient. The free
 `show_file_dialog(request)` async helper defers setup until first poll, so use
 it only when that poll already occurs on the required UI/user-activation path.

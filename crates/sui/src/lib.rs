@@ -94,7 +94,8 @@ pub use sui_platform::WebUrlOpenerBackend;
 pub use sui_platform::{
     DesktopExtension, DesktopExtensionContext, DesktopPlatform, DesktopWindow, FileDialogFilter,
     FileDialogFuture, FileDialogMode, FileDialogRequest, FileDialogSelection, FileDialogService,
-    HeadlessPlatform, NativeFileDialogs, PlatformFile, PlatformWindow, Waker, show_file_dialog,
+    FolderEntry, HeadlessPlatform, NativeFileDialogs, PlatformFile, PlatformFolder, PlatformWindow,
+    Waker, show_file_dialog,
 };
 #[cfg(all(
     feature = "desktop",
@@ -766,7 +767,8 @@ pub mod prelude {
     #[cfg(any(feature = "desktop", feature = "web", feature = "mobile"))]
     pub use crate::{
         FileDialogFilter, FileDialogMode, FileDialogRequest, FileDialogSelection,
-        FileDialogService, NativeFileDialogs, PlatformFile, show_file_dialog,
+        FileDialogService, FolderEntry, NativeFileDialogs, PlatformFile, PlatformFolder,
+        show_file_dialog,
     };
 
     pub use crate::{

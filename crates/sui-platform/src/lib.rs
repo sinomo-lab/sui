@@ -6,6 +6,9 @@ mod accessibility;
 mod android_clipboard;
 #[cfg(target_os = "android")]
 #[allow(unsafe_code)]
+mod android_file_dialog;
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
 mod android_url_opener;
 mod debug_capture;
 mod desktop;
@@ -16,9 +19,16 @@ mod headless;
 mod motion_preference;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod os_clipboard;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
+))]
+mod os_files;
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod os_url_opener;
 mod present;
+#[cfg(target_arch = "wasm32")]
+mod web_files;
 #[cfg(any(target_arch = "wasm32", test))]
 mod web_interop;
 #[cfg(target_os = "windows")]
@@ -68,7 +78,8 @@ pub use display_capabilities::{
 };
 pub use file_dialog::{
     FileDialogFilter, FileDialogFuture, FileDialogMode, FileDialogRequest, FileDialogSelection,
-    FileDialogService, NativeFileDialogs, PlatformFile, show_file_dialog,
+    FileDialogService, FolderEntry, NativeFileDialogs, PlatformFile, PlatformFolder,
+    show_file_dialog,
 };
 pub use headless::{HeadlessPlatform, PlatformWindow};
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]

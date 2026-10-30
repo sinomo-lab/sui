@@ -108,8 +108,9 @@ product rather than treating desktop behavior as proof of browser behavior.
 
 Web builds support asynchronous open/save file handles through the same dialog
 service, subject to browser user-activation and security policy. Files expose
-byte-oriented `read`/`write` operations rather than host filesystem paths, and
-folder selection is intentionally unavailable.
+byte-oriented `read`/`write` operations rather than host filesystem paths.
+Folder dialogs need `showDirectoryPicker`, which Chromium browsers provide;
+other browsers return an error.
 
 The Rust/Wasm application surface is implemented. The JavaScript package
 also runs in the browser through its WebAssembly build, drawing on a canvas;
@@ -146,6 +147,16 @@ Treat package metadata, lifecycle integration, permissions, input, soft
 keyboard behavior, graphics adapter availability, and device testing as part
 of the Android application. The `mobile` feature does not provide an iOS entry
 point in the current public facade.
+
+`NativeFileDialogs` shows the system document picker for opening and saving
+files and the system folder picker for folders; see
+[Overlays and desktop interaction](overlays-and-desktop.md#file-dialogs).
+A NativeActivity cannot receive the picker's result itself, so the platform
+crate compiles a small Java helper to DEX when it builds for Android and loads
+it at runtime, which needs Android 8.0 (API 26) or later. Android builds
+therefore need a JDK and the Android SDK's build tools and platforms. Set
+`ANDROID_HOME` to the SDK, and `JAVA_HOME` to the JDK unless the JDK's `java`
+is on the `PATH`.
 
 ## WGPU-specific APIs
 

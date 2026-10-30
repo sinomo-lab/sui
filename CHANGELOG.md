@@ -24,6 +24,22 @@ Versioning, with the usual expectation that the API may change during the
   `App::url_policy(UrlPolicy::new(...))`, extend the default from a custom
   policy with `UrlPolicy::allows_by_default`, or turn the check off with
   `UrlPolicy::allow_all`.
+- `NativeFileDialogs` works on Android. Opening and saving show the system
+  document picker, and the chosen files are read and written through their
+  document providers, so they have no `path`. Filters become the MIME types
+  Android knows for their extensions, and a filter with an unknown extension
+  shows every file. Building for Android now needs a JDK and the Android SDK
+  build tools, which compile the small Java helper that receives the picker's
+  result.
+- Folder dialogs return `PlatformFolder` handles in the new
+  `FileDialogSelection::folders`. A folder lists its `entries`, finds a `file`
+  or `folder` by name, and creates them with `create_file` and
+  `create_folder`, so folders work without a filesystem path. Desktop folders
+  wrap their path and still appear in `files` as before; Android uses the
+  system folder picker; and the web uses `showDirectoryPicker`, which
+  Chromium browsers provide, while other browsers return an error. Code that
+  builds a `FileDialogSelection` itself, such as a test's `FileDialogService`,
+  must now set `folders` or use `..Default::default()`.
 - Updated dependencies, including PyO3 0.30, napi 3.16, resvg 0.49, and
   wasm-bindgen 0.2.130; building the browser package needs
   `wasm-bindgen-cli` 0.2.130.

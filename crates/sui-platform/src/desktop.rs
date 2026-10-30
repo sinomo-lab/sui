@@ -566,6 +566,7 @@ impl DesktopPlatform {
         runtime.set_url_opener_backend(crate::android_url_opener::AndroidUrlOpenerBackend::new(
             android_app.clone(),
         ));
+        crate::android_file_dialog::set_android_app(android_app.clone());
         let mut event_loop_builder = EventLoop::<DesktopUserEvent>::with_user_event();
         event_loop_builder.with_android_app(android_app);
         let event_loop = event_loop_builder.build().map_err(map_event_loop_error)?;
