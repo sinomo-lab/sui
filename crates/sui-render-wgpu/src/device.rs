@@ -247,7 +247,10 @@ impl WgpuRenderer {
                 let started = web_time::Instant::now();
                 let shared =
                     Self::acquire_shared(&instance, surface.as_deref(), Some(&cancellation))?;
-                Ok((shared, started.elapsed().as_micros() as u64))
+                // As for synchronous preparation, at least a microsecond marks
+                // the frame that prepared the device, even one it only took
+                // from the shared device in under a microsecond.
+                Ok((shared, (started.elapsed().as_micros() as u64).max(1)))
             });
         // A host that cannot spawn another thread can still initialize normally.
         if let Ok(thread) = task {
