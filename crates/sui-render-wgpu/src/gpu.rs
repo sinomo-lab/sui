@@ -46,8 +46,7 @@ pub(crate) struct SharedRenderer {
     pub(crate) adapter: wgpu::Adapter,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
-    pub(crate) pipelines:
-        HashMap<(wgpu::TextureFormat, PipelineKind, SdrFit), wgpu::RenderPipeline>,
+    pub(crate) pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
     /// How scene pipelines fit colors when drawing straight into an SDR
     /// target; set for each window's frame from its tone mapping.
     pub(crate) sdr_fit: SdrFit,
@@ -194,7 +193,14 @@ impl SharedRenderer {
         } else {
             self.sdr_fit
         };
-        let key = (format, kind, fit);
+        // Text pipelines compile differently with dual-source blending, and
+        // offscreen renderers share pipelines, so the variant is part of the
+        // key: a single-source text pipeline must never serve LCD text.
+        let dual_source = matches!(
+            kind,
+            PipelineKind::TextAtlas | PipelineKind::TextAtlasClipped
+        ) && self.dual_source_blending_enabled;
+        let key = (format, kind, fit, dual_source);
         let offscreen = self.offscreen;
         let created = !self.pipelines.contains_key(&key);
         let pipeline = self.pipelines.entry(key).or_insert_with(|| {
@@ -552,6 +558,10 @@ impl SharedRenderer {
         pipeline
     }
 }
+
+/// A compiled pipeline's target format, kind, color fit, and whether it is
+/// the dual-source variant of a text pipeline.
+pub(crate) type PipelineKey = (wgpu::TextureFormat, PipelineKind, SdrFit, bool);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum PipelineKind {

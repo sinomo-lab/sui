@@ -1,7 +1,6 @@
 use crate::WgpuRenderer;
+use crate::gpu::SharedRenderer;
 use crate::gpu::TextAtlasQuadVertex;
-use crate::gpu::{PipelineKind, SharedRenderer};
-use crate::output::SdrFit;
 use crate::resources::create_text_atlas_array_bind_group_layout;
 use std::collections::HashMap;
 use sui_core::Error;
@@ -480,7 +479,7 @@ static OFFSCREEN: std::sync::Mutex<Option<SharedRenderer>> = std::sync::Mutex::n
 
 /// Keep a pipeline an offscreen renderer compiled for the renderers after it.
 pub(crate) fn share_offscreen_pipeline(
-    key: (wgpu::TextureFormat, PipelineKind, SdrFit),
+    key: crate::gpu::PipelineKey,
     pipeline: &wgpu::RenderPipeline,
 ) {
     #[cfg(not(target_arch = "wasm32"))]

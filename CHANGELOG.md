@@ -97,6 +97,11 @@ Versioning, with the usual expectation that the API may change during the
   the bindings. Added `RegisteredFont::try_from_bytes`, which checks the data,
   and `RegisteredFont::family_name`; `font_bytes` and `register_font_bytes`
   now fail for data that is not a font.
+- Offscreen renderers share compiled pipelines, and the shared cache did not
+  tell single-source and dual-source text pipelines apart. A renderer without
+  dual-source blending could leave its text pipeline for later renderers,
+  which then drew LCD text in grayscale. Text pipelines are now cached per
+  variant.
 
 ### Performance
 

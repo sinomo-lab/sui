@@ -692,3 +692,60 @@ fn windows_render_lcd_text_for_a_cleartype_display() {
         "standard smoothing stays grayscale"
     );
 }
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+fn single_source_text_pipelines_are_not_shared_with_dual_source_renderers() {
+    let lcd_frame = || {
+        frame(
+            true,
+            Color::BLACK,
+            Some(Color::WHITE),
+            Transform::IDENTITY,
+            1.0,
+            false,
+        )
+    };
+    let chromatic_pixels = |renderer: &mut WgpuRenderer| {
+        let frame = lcd_frame();
+        renderer.render(&frame).unwrap();
+        renderer
+            .capture_last_frame_rgba(frame.window_id)
+            .unwrap()
+            .pixels()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| {
+                pixel[..3].iter().max().unwrap() - pixel[..3].iter().min().unwrap() > 24
+            })
+            .count()
+    };
+
+    // Offscreen renderers share compiled pipelines. One that falls back to
+    // single-source text compiles a text pipeline that cannot draw LCD.
+    let mut single_source = WgpuRenderer::new();
+    single_source
+        .render(&SceneFrame::new(WindowId::new(9950), Size::new(64.0, 64.0)))
+        .unwrap();
+    if !single_source
+        .shared
+        .as_ref()
+        .unwrap()
+        .dual_source_blending_enabled
+    {
+        return;
+    }
+    single_source
+        .shared
+        .as_mut()
+        .unwrap()
+        .dual_source_blending_enabled = false;
+    assert_eq!(chromatic_pixels(&mut single_source), 0);
+
+    let mut dual_source = WgpuRenderer::new();
+    assert!(
+        chromatic_pixels(&mut dual_source) > 0,
+        "a later renderer drew LCD text with the shared single-source pipeline"
+    );
+}
