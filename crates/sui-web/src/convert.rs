@@ -77,7 +77,10 @@ impl<T: Clone> Clone for Local<T> {
 // ---- Exported classes inside JavaScript values ----------------------------
 
 thread_local! {
-    static CLASSES: RefCell<HashMap<String, Function>> = RefCell::new(HashMap::new());
+    /// Exported class prototypes by class name. A class's `prototype` cannot
+    /// be reassigned, so it is read once here instead of on every check.
+    static CLASSES: RefCell<HashMap<String, Object>> = RefCell::new(HashMap::new());
+    static WBG_PTR_KEY: JsValue = JsValue::from_str("__wbg_ptr");
 }
 
 /// Record the exported class constructors so instances can be recognized
@@ -94,8 +97,10 @@ pub fn register_classes(namespace: &JsValue) -> Result<()> {
             };
             if let Ok(value) = Reflect::get(namespace, &key)
                 && let Ok(constructor) = value.dyn_into::<Function>()
+                && let Ok(prototype) = Reflect::get(&constructor, &JsValue::from_str("prototype"))
+                && let Ok(prototype) = prototype.dyn_into::<Object>()
             {
-                classes.insert(name, constructor);
+                classes.insert(name, prototype);
             }
         }
     });
@@ -134,12 +139,10 @@ pub(crate) fn is_instance(value: &JsValue, name: &str) -> bool {
         return false;
     }
     CLASSES.with(|classes| {
-        classes.borrow().get(name).is_some_and(|constructor| {
-            Reflect::get(constructor, &JsValue::from_str("prototype"))
-                .ok()
-                .and_then(|prototype| prototype.dyn_into::<Object>().ok())
-                .is_some_and(|prototype| prototype.is_prototype_of(value))
-        })
+        classes
+            .borrow()
+            .get(name)
+            .is_some_and(|prototype| prototype.is_prototype_of(value))
     })
 }
 
@@ -148,7 +151,8 @@ pub(crate) fn class_ref<T: JsClass>(value: &JsValue) -> Result<T::Anchor> {
     if !is_instance(value, T::NAME) {
         return Err(invalid_arg(format!("expected a {}", T::NAME)));
     }
-    let pointer = Reflect::get(value, &JsValue::from_str("__wbg_ptr"))?
+    let pointer = WBG_PTR_KEY
+        .with(|key| Reflect::get(value, key))?
         .as_f64()
         .unwrap_or(0.0);
     if pointer == 0.0 {

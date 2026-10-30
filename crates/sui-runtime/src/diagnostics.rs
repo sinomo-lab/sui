@@ -217,17 +217,24 @@ pub(crate) fn begin_widget_timing_collection() {
     });
 }
 
+/// The start of a widget phase timing, or `None` when widget timings are off.
+/// Skipping the clock read matters on wasm, where each one calls into
+/// `performance.now()` for every widget phase.
+pub(crate) fn start_widget_timing() -> Option<Instant> {
+    widget_timing_enabled().then(Instant::now)
+}
+
 pub(crate) fn record_widget_timing(
     widget_id: WidgetId,
     widget_name: &'static str,
     phase: WidgetTimingPhase,
-    duration: Duration,
+    started: Option<Instant>,
 ) {
-    if !widget_timing_enabled() {
+    let Some(started) = started else {
         return;
-    }
+    };
 
-    let duration_ms = duration.as_secs_f64() * 1000.0;
+    let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
     WIDGET_TIMING_COLLECTOR.with(|collector| {
         let mut collector = collector.borrow_mut();
         let Some(entries) = collector.as_mut() else {

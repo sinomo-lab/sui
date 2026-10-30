@@ -14,7 +14,7 @@ use std::{
 use crate::{
     Command, CommandDelivery, CommandKey, CommandSender, CommandTarget,
     command::{QueuedCommand, queued_command},
-    diagnostics::{WidgetTimingPhase, record_widget_timing},
+    diagnostics::{WidgetTimingPhase, record_widget_timing, start_widget_timing},
     motion::{FrameClock, Motion},
     overlay::OverlayOptions,
     reactive::{ObservationPhase, ObservationScope},
@@ -38,7 +38,6 @@ use sui_text::{
     FontRegistry, PersistentTextLayout, ShapedText, ShapedTextWindow, TextLayout, TextLayoutHandle,
     TextLayoutRequest, TextMeasurement, TextRun, TextStyle, TextSystem,
 };
-use web_time::Instant;
 
 static NEXT_WIDGET_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_TIMER_TOKEN: AtomicU64 = AtomicU64::new(1);
@@ -1327,7 +1326,7 @@ impl WidgetPod {
 
         let mut child_ctx = parent_ctx.child(self.id, self.layout_state.arranged_bounds, force);
         child_ctx.probing = probing;
-        let started = Instant::now();
+        let started = start_widget_timing();
         let observations = ObservationScope::new(
             parent_ctx.window_id(),
             self.id,
@@ -1354,7 +1353,7 @@ impl WidgetPod {
             self.id,
             self.widget.debug_name(),
             WidgetTimingPhase::Measure,
-            started.elapsed(),
+            started,
         );
         // An axis query has no complete size to publish as committed geometry.
         if axis.is_none() {
@@ -1407,7 +1406,7 @@ impl WidgetPod {
         // The default intrinsic implementation invokes Widget::measure directly.
         // Its scalar result does not describe the retained final measurement.
         self.layout_state.measure_valid = false;
-        let started = Instant::now();
+        let started = start_widget_timing();
         let phase = match axis {
             Axis::Horizontal => ObservationPhase::IntrinsicHorizontal,
             Axis::Vertical => ObservationPhase::IntrinsicVertical,
@@ -1424,7 +1423,7 @@ impl WidgetPod {
             self.id,
             self.widget.debug_name(),
             WidgetTimingPhase::Measure,
-            started.elapsed(),
+            started,
         );
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
         parent_ctx.extend_wake_requests(child_ctx.take_wake_requests());
@@ -1496,7 +1495,7 @@ impl WidgetPod {
         if size_changed {
             child_ctx.request_paint();
         }
-        let started = Instant::now();
+        let started = start_widget_timing();
         let observations = ObservationScope::new(
             parent_ctx.window_id(),
             self.id,
@@ -1509,7 +1508,7 @@ impl WidgetPod {
             self.id,
             self.widget.debug_name(),
             WidgetTimingPhase::Arrange,
-            started.elapsed(),
+            started,
         );
         parent_ctx.extend_invalidations(child_ctx.take_invalidations());
         parent_ctx.extend_wake_requests(child_ctx.take_wake_requests());
@@ -1582,7 +1581,7 @@ impl WidgetPod {
                 )
             } else {
                 crate::layout_work::record(|work| work.paint_executions += 1);
-                let started = Instant::now();
+                let started = start_widget_timing();
                 let observations = ObservationScope::new(
                     parent_ctx.window_id(),
                     self.id,
@@ -1595,7 +1594,7 @@ impl WidgetPod {
                     self.id,
                     self.widget.debug_name(),
                     WidgetTimingPhase::Paint,
-                    started.elapsed(),
+                    started,
                 );
 
                 parent_ctx.output_reusable &= child_ctx.output_reusable;
@@ -1707,7 +1706,7 @@ impl WidgetPod {
         child_ctx.output_cache = output_cache.clone();
         let mut nodes = {
             crate::layout_work::record(|work| work.semantics_executions += 1);
-            let started = Instant::now();
+            let started = start_widget_timing();
             let observations = ObservationScope::new(
                 parent_ctx.window_id(),
                 self.id,
@@ -1720,7 +1719,7 @@ impl WidgetPod {
                 self.id,
                 self.widget.debug_name(),
                 WidgetTimingPhase::Semantics,
-                started.elapsed(),
+                started,
             );
             parent_ctx.output_reusable &= child_ctx.output_reusable;
             let can_reuse = child_ctx.output_reusable;

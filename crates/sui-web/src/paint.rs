@@ -543,17 +543,24 @@ impl JsObjectCallbacks {
     /// The object's method `name`, or `None` when the object has no such property.
     fn method(&self, name: &str) -> Result<Option<Function>> {
         let key = JsValue::from_str(name);
-        if !Reflect::has(&self.object, &key)? {
+        let value = Reflect::get(&self.object, &key)?;
+        // Only an `undefined` value needs the second boundary crossing to tell
+        // a missing property from one explicitly set to `undefined`.
+        if value.is_undefined() && !Reflect::has(&self.object, &key)? {
             return Ok(None);
         }
-        Reflect::get(&self.object, &key)?
+        value
             .dyn_into::<Function>()
             .map(Some)
             .map_err(|_| invalid_arg(format!("{name} must be a function")))
     }
 
-    fn call(&self, method: &Function, args: &[JsValue]) -> Result<JsValue> {
-        method.apply(&self.object, &args.iter().collect::<Array>())
+    fn call1(&self, method: &Function, arg: JsValue) -> Result<JsValue> {
+        method.call1(&self.object, &arg)
+    }
+
+    fn call2(&self, method: &Function, first: JsValue, second: JsValue) -> Result<JsValue> {
+        method.call2(&self.object, &first, &second)
     }
 }
 
@@ -740,12 +747,10 @@ impl JsObjectCallbacks {
         };
         // Anything but `true` or `false` (such as no return value) means the
         // event was not handled.
-        let handled = self.call(
+        let handled = self.call2(
             &event_fn,
-            &[
-                JsEvent::from_binding(BindingEvent::from(event)).into(),
-                context.into(),
-            ],
+            JsEvent::from_binding(BindingEvent::from(event)).into(),
+            context.into(),
         )?;
         Ok(handled.as_bool().unwrap_or(false))
     }
@@ -756,12 +761,10 @@ impl JsObjectCallbacks {
         child_sizes: &[Size],
     ) -> Result<Size> {
         if let Some(measure) = self.method("measureWithChildren")? {
-            let size = self.call(
+            let size = self.call2(
                 &measure,
-                &[
-                    JsConstraints::from(constraints).into(),
-                    js_sizes(child_sizes).into(),
-                ],
+                JsConstraints::from(constraints).into(),
+                js_sizes(child_sizes).into(),
             )?;
             return Ok(Size::from(class_value::<JsSize>(&size)?));
         }
@@ -771,7 +774,7 @@ impl JsObjectCallbacks {
             });
             return Ok(constraints.clamp(natural));
         };
-        let size = self.call(&measure, &[JsConstraints::from(constraints).into()])?;
+        let size = self.call1(&measure, JsConstraints::from(constraints).into())?;
         Ok(Size::from(class_value::<JsSize>(&size)?))
     }
 
@@ -783,9 +786,10 @@ impl JsObjectCallbacks {
         let Some(arrange) = self.method("arrange")? else {
             return Ok(None);
         };
-        let bounds = self.call(
+        let bounds = self.call2(
             &arrange,
-            &[JsRect::from(bounds).into(), js_sizes(child_sizes).into()],
+            JsRect::from(bounds).into(),
+            js_sizes(child_sizes).into(),
         )?;
         Ok(Some(
             class_array::<JsRect>(&bounds)?
@@ -803,7 +807,7 @@ impl JsObjectCallbacks {
             return Ok((Vec::new(), Vec::new()));
         };
         let paint = JsPaint::new(bounds);
-        self.call(&paint_fn, &[paint.clone().into()])?;
+        self.call1(&paint_fn, paint.clone().into())?;
         let commands = paint.finish().map_err(value_error)?;
         Ok((commands, paint.take_images()))
     }
@@ -819,7 +823,7 @@ impl JsObjectCallbacks {
             return Ok(None);
         };
         let semantics = JsSemantics::new(widget_id, bounds, focused, child_count);
-        self.call(&semantics_fn, &[semantics.clone().into()])?;
+        self.call1(&semantics_fn, semantics.clone().into())?;
         Ok(Some(semantics.take_commands()))
     }
 

@@ -1369,9 +1369,10 @@ impl DesktopApp {
         // A focused VSync window must keep presenting even when its retained UI
         // is unchanged. Otherwise windowed VRR can lower the whole monitor's
         // refresh rate while the user is interacting with an idle view. Android
-        // has no shared desktop monitor to protect; continuous presentation
-        // there wastes CPU/GPU and battery even when the scene is unchanged.
-        let keep_presenting = !cfg!(target_os = "android")
+        // and the web have no shared desktop monitor to protect (the browser
+        // owns presentation pacing); continuous presentation there wastes
+        // CPU/GPU and battery even when the scene is unchanged.
+        let keep_presenting = !cfg!(any(target_os = "android", target_arch = "wasm32"))
             && self.renderer.vsync_enabled()
             && self
                 .windows

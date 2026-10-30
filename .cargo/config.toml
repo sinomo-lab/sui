@@ -1,2 +1,7 @@
 [alias]
 xtask = "run -p xtask --"
+
+# Every browser and Node release with WebGPU also supports fixed-width SIMD,
+# which tiny-skia, swash, and lyon use for rasterization and path math.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

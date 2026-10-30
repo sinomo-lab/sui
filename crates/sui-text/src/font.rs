@@ -524,7 +524,7 @@ impl TextSystemState {
 
         for (handle, font) in &font_registry.fonts {
             let ids =
-                font_db.load_font_source(fontdb::Source::Binary(Arc::new(font.bytes().to_vec())));
+                font_db.load_font_source(fontdb::Source::Binary(Arc::new(font.shared_bytes())));
             let mut family_name = None;
             for id in ids {
                 let face_info = font_db.face(id).ok_or_else(|| {
@@ -697,19 +697,25 @@ fn load_bundled_fallback_fonts(font_db: &mut fontdb::Database) {
 
 #[cfg(any(target_arch = "wasm32", target_os = "android", test))]
 fn load_bundled_portable_fallback_fonts(font_db: &mut fontdb::Database) {
-    let sans_ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(
-        include_bytes!("../assets/NotoSans-Regular.ttf").to_vec(),
-    )));
+    // Share the embedded bytes instead of copying them into the heap; wasm
+    // linear memory never shrinks, so a copy would cost megabytes for good.
+    fn load_static(font_db: &mut fontdb::Database, bytes: &'static [u8]) -> Vec<fontdb::ID> {
+        font_db
+            .load_font_source(fontdb::Source::Binary(Arc::new(bytes)))
+            .into_iter()
+            .collect()
+    }
+
+    let sans_ids = load_static(font_db, include_bytes!("../assets/NotoSans-Regular.ttf"));
     let _ = set_sans_serif_family_from_loaded_faces(font_db, &sans_ids);
 
-    let serif_ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(
-        include_bytes!("../assets/NotoSerif-Variable.ttf").to_vec(),
-    )));
+    let serif_ids = load_static(font_db, include_bytes!("../assets/NotoSerif-Variable.ttf"));
     let _ = set_serif_family_from_loaded_faces(font_db, &serif_ids);
 
-    let mono_ids = font_db.load_font_source(fontdb::Source::Binary(Arc::new(
-        include_bytes!("../assets/NotoSansMono-Variable.ttf").to_vec(),
-    )));
+    let mono_ids = load_static(
+        font_db,
+        include_bytes!("../assets/NotoSansMono-Variable.ttf"),
+    );
     let _ = set_monospace_family_from_loaded_faces(font_db, &mono_ids);
 
     // Keep complete script fonts available without browser downloads or system fonts.
@@ -717,7 +723,7 @@ fn load_bundled_portable_fallback_fonts(font_db: &mut fontdb::Database) {
         include_bytes!("../assets/NotoSansArabic-Regular.ttf").as_slice(),
         include_bytes!("../assets/NotoSansHebrew-Regular.ttf").as_slice(),
     ] {
-        font_db.load_font_source(fontdb::Source::Binary(Arc::new(bytes.to_vec())));
+        load_static(font_db, bytes);
     }
 }
 

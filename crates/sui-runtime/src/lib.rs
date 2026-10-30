@@ -24,6 +24,8 @@ use std::{
     },
 };
 
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use sui_core::{
     AsyncWakeToken, Clipboard, ClipboardBackend, CursorGrabMode, CustomEvent, DirtyRegion,
     DragEvent, DragEventKind, DragOutcome, DragPayload, DragScopeId, DragSessionId, DropEffect,
@@ -4188,9 +4190,9 @@ impl WindowState {
         };
 
         let current_snapshot = self.graph.snapshot();
-        let previous_nodes: HashMap<_, _> =
+        let previous_nodes: FxHashMap<_, _> =
             previous.nodes.iter().map(|node| (node.id, node)).collect();
-        let current_nodes: HashMap<_, _> = current_snapshot
+        let current_nodes: FxHashMap<_, _> = current_snapshot
             .nodes
             .iter()
             .map(|node| (node.id, node))
@@ -4199,7 +4201,7 @@ impl WindowState {
             .keys()
             .chain(current_nodes.keys())
             .copied()
-            .collect::<HashSet<_>>();
+            .collect::<FxHashSet<_>>();
         let mut output_widgets = Vec::new();
         let mut repaint_candidates = HashSet::new();
         let mut transform_candidates = Vec::new();
@@ -5077,13 +5079,13 @@ impl WindowState {
 #[derive(Default)]
 struct WidgetGraph {
     root: WidgetId,
-    nodes: HashMap<WidgetId, WidgetNodeSnapshot>,
+    nodes: FxHashMap<WidgetId, WidgetNodeSnapshot>,
     order: Vec<WidgetId>,
-    host_surface_order: HashMap<WidgetId, Vec<WidgetId>>,
-    host_order_policy: HashMap<WidgetId, StackOrderPolicy>,
-    overlay_options: HashMap<WidgetId, OverlayOptions>,
-    overlay_parents: HashMap<WidgetId, Option<WidgetId>>,
-    overlay_surfaces: HashMap<WidgetId, Vec<WidgetId>>,
+    host_surface_order: FxHashMap<WidgetId, Vec<WidgetId>>,
+    host_order_policy: FxHashMap<WidgetId, StackOrderPolicy>,
+    overlay_options: FxHashMap<WidgetId, OverlayOptions>,
+    overlay_parents: FxHashMap<WidgetId, Option<WidgetId>>,
+    overlay_surfaces: FxHashMap<WidgetId, Vec<WidgetId>>,
     child_buffers: Vec<Vec<WidgetId>>,
 }
 
@@ -5099,13 +5101,13 @@ impl WidgetGraph {
     fn empty(root: WidgetId) -> Self {
         Self {
             root,
-            nodes: HashMap::new(),
+            nodes: FxHashMap::default(),
             order: Vec::new(),
-            host_surface_order: HashMap::new(),
-            host_order_policy: HashMap::new(),
-            overlay_options: HashMap::new(),
-            overlay_parents: HashMap::new(),
-            overlay_surfaces: HashMap::new(),
+            host_surface_order: FxHashMap::default(),
+            host_order_policy: FxHashMap::default(),
+            overlay_options: FxHashMap::default(),
+            overlay_parents: FxHashMap::default(),
+            overlay_surfaces: FxHashMap::default(),
             child_buffers: Vec::new(),
         }
     }

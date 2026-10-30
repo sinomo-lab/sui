@@ -89,7 +89,48 @@ fn web_build(release: bool) -> Result<(), String> {
     if !status.success() {
         return Err("wasm-bindgen failed".to_string());
     }
+    if release {
+        optimize_wasm(&root, &out_dir.join("sui_web_bg.wasm"))?;
+    }
     println!("built {}", relative_display(&root, &out_dir));
+    Ok(())
+}
+
+/// Shrink a release module in place with Binaryen's `wasm-opt`
+/// (`$WASM_OPT`, or `wasm-opt` on the `PATH`). Skipped with a note when no
+/// `wasm-opt` is installed, since the unoptimized module still works.
+fn optimize_wasm(root: &Path, module: &Path) -> Result<(), String> {
+    let explicit = env::var_os("WASM_OPT").map(PathBuf::from);
+    let command = explicit
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("wasm-opt"));
+    let before = fs::metadata(module)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let status = match process::Command::new(&command)
+        .arg("-Os")
+        .arg("-o")
+        .arg(module)
+        .arg(module)
+        .status()
+    {
+        Ok(status) => status,
+        Err(error) if explicit.is_none() && error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "note: wasm-opt was not found, so {} is not size-optimized;                  install Binaryen or set WASM_OPT",
+                relative_display(root, module)
+            );
+            return Ok(());
+        }
+        Err(error) => return Err(format!("failed to run {}: {error}", command.display())),
+    };
+    if !status.success() {
+        return Err("wasm-opt failed".to_string());
+    }
+    let after = fs::metadata(module)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    println!("wasm-opt: {before} -> {after} bytes");
     Ok(())
 }
 

@@ -98,6 +98,22 @@ Versioning, with the usual expectation that the API may change during the
   and `RegisteredFont::family_name`; `font_bytes` and `register_font_bytes`
   now fail for data that is not a font.
 
+### Performance
+
+- In the browser, a focused canvas no longer wakes on every display frame
+  while nothing changes, matching Android.
+- Bundled fallback fonts on the web and Android, and fonts registered by the
+  app, are shared with the text system instead of copied into the heap.
+- Release web builds run Binaryen's `wasm-opt -Os` (Trunk for the demo,
+  `cargo xtask web build --release` for the JavaScript package when
+  `wasm-opt` is installed or `WASM_OPT` is set) and enable WebAssembly SIMD.
+  The demo module drops from 16.6 MB to 11.7 MB.
+- Per-widget layout, paint, and semantics phases only read the clock when
+  `SUI_PROFILE_WIDGET_TIMINGS` is set, and the layout graph uses a faster
+  hasher for widget IDs.
+- JavaScript widget callbacks and class-instance checks cross the
+  WebAssembly boundary fewer times per call.
+
 ## [0.5.0] - 2026-10-08
 
 This release publishes the Python binding on PyPI as `sinomo-ui`, brings its

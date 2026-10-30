@@ -21,6 +21,7 @@ layout-diagnostics = []
 
 [dependencies]
 lru = { workspace = true }
+rustc-hash = { workspace = true }
 sui-animation = { workspace = true }
 sui-core = { workspace = true }
 sui-layout = { workspace = true }
