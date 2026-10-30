@@ -122,15 +122,12 @@ pub(crate) struct TargetContents {
 }
 
 /// Whether native windows on this platform redraw only what changed, into a
-/// persistent texture copied to the swapchain. Desktop GPUs copy a frame in
-/// a fraction of a millisecond; on tile-based mobile GPUs reading the kept
-/// frame back and copying it can cost more than redrawing, so they redraw
-/// everything until measured on devices.
-pub(crate) const PERSISTENT_SWAPCHAIN_REDRAW: bool = cfg!(not(any(
-    target_os = "android",
-    target_os = "ios",
-    target_arch = "wasm32"
-)));
+/// persistent texture copied to the swapchain. The copy costs desktop GPUs a
+/// fraction of a millisecond and a tile-based Mali-G76 about 1.5 ms at
+/// 1080×2280, well below a full redraw on both. Browsers never draw straight
+/// to the swapchain: their canvases have no sRGB formats, so frames already
+/// redraw partially through the intermediate target.
+pub(crate) const PERSISTENT_SWAPCHAIN_REDRAW: bool = cfg!(not(target_arch = "wasm32"));
 
 /// The region of a target showing `previous` that must be redrawn to show
 /// `current` instead.
