@@ -37,8 +37,8 @@ pub use app::UiHandle;
 pub use app::{App, ResourceRegistry, Window};
 
 pub use composites::{
-    ActionTilePaint, BottomSheet, BrowserTabBar, CalloutPaint, CodePanelPaint, CodeTextLine,
-    CodeTextPaint, CodeTextSpan, CommandButtonFill, CommandButtonPaint, CommandGroup,
+    ActionTileGeometry, ActionTilePaint, BottomSheet, BrowserTabBar, CalloutPaint, CodePanelPaint,
+    CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonFill, CommandButtonPaint, CommandGroup,
     CommandPalette, ContextMenu, ContextMenuHandle, Dialog, DisclosureButtonPaint, DockPanel,
     EmptyState, EmptyStatePaint, FieldGroup, FormRow, FormSection, FramedField, HairlineEdge, Menu,
     MenuItem, PanelSection, Popover, PopoverAlignment, PresetStrip, ProgressBar, PropertyRow,
@@ -217,13 +217,15 @@ pub use sui_widgets::{
     WidgetEffectRole, WidgetLuminanceRole, WidgetMaterialRole, detail_row_height_for_value,
     paint_canvas_grid, paint_coverage_dots, paint_coverage_dots_with_config, paint_detail_row_at,
     paint_leading_label_cell, paint_placement_badge, paint_progress_bar, paint_status_badge,
-    paint_text, paint_text_block, paint_text_cell, paint_text_line, paint_theme_glow,
-    paint_theme_inset_shadow, paint_theme_shadow, place_overlay, resolve_effect_role,
-    resolve_luminance_role, resolve_material_role, resolve_semantic_color,
+    paint_text, paint_text_block, paint_text_cell, paint_text_line, paint_text_line_elided,
+    paint_theme_glow, paint_theme_inset_shadow, paint_theme_shadow, place_overlay,
+    resolve_effect_role, resolve_luminance_role, resolve_material_role, resolve_semantic_color,
     resolve_widget_hdr_style, wrap_text_lines,
 };
+pub use sui_widgets::{
+    ElidedLine, Paragraph, TextOverflow, TextPlacement, TextShaper, VerticalAlign,
+};
 pub use sui_widgets::{KeyedStack, Presence, PresenceTransition};
-pub use sui_widgets::{Paragraph, TextPlacement, TextShaper, VerticalAlign};
 
 /// Marker trait for type-indexed application theme extensions.
 pub trait ThemeExtension: Any + Send + Sync {}
@@ -849,9 +851,11 @@ pub mod prelude {
         VirtualTableColumn, VirtualTableRowActivationKind, VirtualTableRowContext,
         VirtualTableSortDirection, VirtualTableState, VirtualViewportSnapshot, WakeEvent,
         WeakObserver, Widget, WidgetChildren, WidgetPod, WidgetShader, Window, WindowCursorState,
-        WindowRenderOptions, paint_text, paint_text_line,
+        WindowRenderOptions, paint_text, paint_text_line, paint_text_line_elided,
     };
-    pub use crate::{Paragraph, TextAlign, TextPlacement, TextShaper, VerticalAlign};
+    pub use crate::{
+        ElidedLine, Paragraph, TextAlign, TextOverflow, TextPlacement, TextShaper, VerticalAlign,
+    };
 }
 
 #[cfg(test)]

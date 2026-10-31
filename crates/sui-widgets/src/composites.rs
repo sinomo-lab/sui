@@ -48,6 +48,7 @@ pub use navigation::SegmentedControlItem;
 pub use navigation::TabBar;
 pub use navigation::TabBarItem;
 pub use navigation::Tabs;
+pub use painting::ActionTileGeometry;
 pub use painting::ActionTilePaint;
 pub use painting::CalloutPaint;
 pub use painting::CodePanelPaint;

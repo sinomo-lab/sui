@@ -7,6 +7,7 @@ use sui_runtime::{MeasureCtx, PaintCtx, window_render_options};
 use sui_text::{
     TextAlign, TextDocument, TextLayout, TextLayoutRequest, TextMeasurement, TextStyle, TextWrap,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 pub(crate) struct AlignedTextLayout {
     pub(crate) rect: Rect,
@@ -480,6 +481,203 @@ pub fn paint_text_line(
     ctx.draw_text(fallback_rect, text.to_string(), style.clone());
 }
 
+/// What a widget does with a label too wide for its space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextOverflow {
+    /// Paint the label as the widget always has, cut off at the edge of its
+    /// space.
+    #[default]
+    Clip,
+    /// Paint the label on one line, ending in "…" where it is cut, as an
+    /// [`ElidedLine`] does.
+    Ellipsis,
+}
+
+const ELLIPSIS: &str = "\u{2026}";
+
+/// How far past its width a line may measure and still count as fitting, so
+/// rounding doesn't elide text that fits.
+const FIT_TOLERANCE: f32 = 0.01;
+
+/// One line of text fitted to a width, ending in "…" when it is cut.
+///
+/// Text that fits is kept whole. Longer text keeps as much of its start as
+/// fits, cut between characters, followed by "…", so it never ends in a
+/// glyph cut in half. A width too narrow even for "…" keeps the first
+/// character, which [`paint`](Self::paint) clips, so the text never
+/// disappears without a trace. Of text with line breaks, the first line is
+/// shown, followed by "…".
+///
+/// Fit the line in `measure` or `arrange` and keep it, or fit and paint it in
+/// one go with [`paint_text_line_elided`]. Give accessibility the full text,
+/// not the shown one.
+#[derive(Debug, Clone, Default)]
+pub struct ElidedLine {
+    text: String,
+    style: TextStyle,
+    elided: bool,
+    width: f32,
+}
+
+impl ElidedLine {
+    /// Fit `text` on one line `max_width` wide. An infinite width keeps the
+    /// whole first line.
+    pub fn new(
+        shaper: &(impl TextShaper + ?Sized),
+        text: &str,
+        style: &TextStyle,
+        max_width: f32,
+    ) -> Self {
+        let line_end = text.find(['\n', '\r']);
+        let line = &text[..line_end.unwrap_or(text.len())];
+        let more_lines = line_end.is_some();
+        let fitted = |text: String, elided: bool, width: f32| Self {
+            text,
+            style: style.clone(),
+            elided,
+            width,
+        };
+        let fits = |width: f32| width <= max_width + FIT_TOLERANCE;
+        let Some(full) = single_line_layout(shaper, line, style) else {
+            // Without a layout nothing can be measured, so show the line.
+            return fitted(line.to_string(), more_lines, 0.0);
+        };
+        let full_width = full.measurement().width;
+        if !more_lines && (!max_width.is_finite() || fits(full_width)) {
+            return fitted(line.to_string(), false, full_width);
+        }
+        let width_of = |text: &str| {
+            single_line_layout(shaper, text, style).map(|layout| layout.measurement().width)
+        };
+        let ellipsis_width = width_of(ELLIPSIS).unwrap_or(0.0);
+
+        // The width of each character, from the clusters of the whole line,
+        // to guess how many fit before the "…".
+        let boundaries = line
+            .grapheme_indices(true)
+            .map(|(start, _)| start)
+            .chain([line.len()])
+            .collect::<Vec<_>>();
+        let mut widths = vec![0.0_f32; boundaries.len() - 1];
+        for cluster in full.clusters() {
+            let index = boundaries
+                .partition_point(|&boundary| boundary <= cluster.byte_range.start)
+                .saturating_sub(1);
+            if let Some(width) = widths.get_mut(index) {
+                *width += cluster.rect.width();
+            }
+        }
+        let budget = max_width - ellipsis_width;
+        let mut kept = 0;
+        let mut kept_width = 0.0;
+        for width in &widths {
+            if kept_width + width > budget + FIT_TOLERANCE {
+                break;
+            }
+            kept_width += width;
+            kept += 1;
+        }
+        if !more_lines {
+            // The whole line didn't fit, so at least its last character goes.
+            kept = kept.min(widths.len().saturating_sub(1));
+        }
+
+        // Kerning and shaping across the cut can make the guess too wide, so
+        // measure it and give up characters until it fits.
+        while kept > 0 {
+            let start = line[..boundaries[kept]].trim_end();
+            if start.is_empty() {
+                break;
+            }
+            let shown = format!("{start}{ELLIPSIS}");
+            match width_of(&shown) {
+                Some(width) if fits(width) => return fitted(shown, true, width),
+                Some(_) => kept -= 1,
+                None => return fitted(shown, true, 0.0),
+            }
+        }
+        if fits(ellipsis_width) || line.is_empty() {
+            return fitted(ELLIPSIS.to_string(), true, ellipsis_width);
+        }
+        let first = line.graphemes(true).next().unwrap_or(line);
+        fitted(first.to_string(), true, width_of(first).unwrap_or(0.0))
+    }
+
+    /// The text shown: all of it, or its start followed by "…".
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Whether some of the text is not shown.
+    pub fn is_elided(&self) -> bool {
+        self.elided
+    }
+
+    /// The width the shown text takes.
+    pub fn width(&self) -> f32 {
+        self.width
+    }
+
+    /// Paint the line in `rect` as [`paint_text_line`] does, clipped to the
+    /// rect's width when even the "…" didn't fit.
+    pub fn paint(&self, ctx: &mut PaintCtx, rect: Rect, align: TextAlign) {
+        self.paint_with_color(ctx, rect, align, self.style.color);
+    }
+
+    /// Paint like [`paint`](Self::paint), in `color` instead of the style's.
+    pub fn paint_with_color(&self, ctx: &mut PaintCtx, rect: Rect, align: TextAlign, color: Color) {
+        let style = TextStyle {
+            color,
+            ..self.style.clone()
+        };
+        let overflows = self.width > rect.width() + FIT_TOLERANCE;
+        if overflows {
+            // Clip the sides only, so tall glyphs in a tight rect keep their
+            // ink.
+            let slack = style.line_height.max(rect.height());
+            ctx.push_clip_rect(Rect::new(
+                rect.x(),
+                rect.y() - slack,
+                rect.width().max(0.0),
+                rect.height() + slack * 2.0,
+            ));
+        }
+        paint_text_line(ctx, rect, &self.text, &style, align);
+        if overflows {
+            ctx.pop_clip();
+        }
+    }
+}
+
+/// Paint `text` on one line in `rect` as [`paint_text_line`] does, fitted to
+/// the rect's width as an [`ElidedLine`]: cut text ends in "…" rather than in
+/// a glyph cut in half.
+pub fn paint_text_line_elided(
+    ctx: &mut PaintCtx,
+    rect: Rect,
+    text: &str,
+    style: &TextStyle,
+    align: TextAlign,
+) {
+    ElidedLine::new(ctx, text, style, rect.width()).paint(ctx, rect, align);
+}
+
+/// `text` laid out on one unwrapped line, to measure.
+fn single_line_layout(
+    shaper: &(impl TextShaper + ?Sized),
+    text: &str,
+    style: &TextStyle,
+) -> Option<TextLayout> {
+    let mut layout_style = style.clone();
+    layout_style.color = Color::WHITE;
+    let mut document = TextDocument::from_plain_text(text.to_string(), layout_style);
+    for paragraph in &mut document.paragraphs {
+        paragraph.style.align = TextAlign::Left;
+        paragraph.style.wrap = TextWrap::NoWrap;
+    }
+    shaper.shape_document(TextLayoutRequest::new(document)).ok()
+}
+
 pub(crate) fn paint_aligned_text_contained(
     ctx: &mut PaintCtx,
     rect: Rect,
@@ -724,9 +922,10 @@ mod tests {
     use sui_text::{TextAlign, TextStyle};
 
     use super::{
-        HorizontalTextAlignmentMode, Paragraph, TextPlacement, VerticalAlign,
-        aligned_text_layout_for_text_with_mode, paint_text,
+        ELLIPSIS, ElidedLine, HorizontalTextAlignmentMode, Paragraph, TextPlacement, VerticalAlign,
+        aligned_text_layout_for_text_with_mode, paint_text, paint_text_line_elided,
     };
+    use unicode_segmentation::UnicodeSegmentation;
 
     type Paint = Box<dyn Fn(&mut PaintCtx)>;
     type Measure = Box<dyn Fn(&mut MeasureCtx)>;
@@ -950,6 +1149,158 @@ mod tests {
         assert_eq!(drawn.text, PARAGRAPH);
         assert_eq!(drawn.size, paragraph.size());
         assert!((drawn.origin.y - 7.0).abs() < 0.001, "{drawn:?}");
+    }
+
+    /// Fit each text in each width during measurement.
+    fn fit(texts: &[&str], widths: &[f32]) -> Vec<(String, f32, ElidedLine)> {
+        let fitted = Rc::new(RefCell::new(Vec::new()));
+        let results = Rc::clone(&fitted);
+        let texts = texts
+            .iter()
+            .map(|text| text.to_string())
+            .collect::<Vec<_>>();
+        let widths = widths.to_vec();
+        render(Probe {
+            measure: Some(Box::new(move |ctx| {
+                let mut results = results.borrow_mut();
+                results.clear();
+                for text in &texts {
+                    for &width in &widths {
+                        let line = ElidedLine::new(ctx, text, &style(), width);
+                        results.push((text.clone(), width, line));
+                    }
+                }
+            })),
+            paint: Box::new(|_| {}),
+        });
+        fitted.take()
+    }
+
+    fn full_width(text: &str) -> f32 {
+        fit(&[text], &[f32::INFINITY])[0].2.width()
+    }
+
+    #[test]
+    fn an_elided_line_keeps_text_that_fits() {
+        let text = "Channels";
+        let width = full_width(text);
+        for max_width in [width, width + 40.0, f32::INFINITY] {
+            let (_, _, line) = &fit(&[text], &[max_width])[0];
+            assert_eq!(line.text(), text);
+            assert!(!line.is_elided());
+            assert!((line.width() - width).abs() < 0.001, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn an_elided_line_cuts_between_characters_and_ends_in_an_ellipsis() {
+        let texts = [
+            "The user asks to reply exactly V5_OK",
+            "Cafe\u{301} cre\u{300}me bru\u{302}le\u{301}e",
+            "\u{1F469}\u{200D}\u{1F469}\u{200D}\u{1F467} family \u{1F44D}\u{1F3FD} ok",
+            "\u{5E9}\u{5DC}\u{5D5}\u{5DD} \u{5E2}\u{5D5}\u{5DC}\u{5DD} \u{5D8}\u{5D5}\u{5D1}",
+            "Mixed \u{5E2}\u{5D1}\u{5E8}\u{5D9}\u{5EA} and English text",
+        ];
+        let ellipsis = full_width(ELLIPSIS);
+        let widths = (0..=60).map(|step| step as f32 * 6.0).collect::<Vec<_>>();
+        for (text, max_width, line) in fit(&texts, &widths) {
+            let width = full_width(&text);
+            if !line.is_elided() {
+                assert!(
+                    width <= max_width + 0.01,
+                    "{text:?} in {max_width}: {line:?}"
+                );
+                assert_eq!(line.text(), text);
+                continue;
+            }
+            assert!(width > max_width, "{text:?} in {max_width} fits: {line:?}");
+            if max_width < ellipsis {
+                let first = text.graphemes(true).next().unwrap();
+                assert_eq!(line.text(), first, "{text:?} in {max_width}");
+                continue;
+            }
+            assert!(
+                line.width() <= max_width + 0.01,
+                "{text:?} in {max_width}: {line:?}"
+            );
+            let start = line
+                .text()
+                .strip_suffix(ELLIPSIS)
+                .unwrap_or_else(|| panic!("{text:?} in {max_width}: {line:?}"));
+            assert!(text.starts_with(start), "{text:?} in {max_width}: {line:?}");
+            assert!(
+                text.grapheme_indices(true)
+                    .any(|(index, _)| index == start.len())
+                    || start.is_empty(),
+                "{text:?} in {max_width} is cut inside a character: {line:?}"
+            );
+            assert_eq!(start, start.trim_end(), "{text:?} in {max_width}: {line:?}");
+        }
+    }
+
+    #[test]
+    fn an_elided_line_keeps_as_many_characters_as_fit() {
+        let text = "abcdefghijklmnopqrstuvwxyz";
+        let width = full_width(text);
+        for (_, max_width, line) in fit(&[text], &[width * 0.3, width * 0.6, width - 1.0]) {
+            let kept = line.text().strip_suffix(ELLIPSIS).unwrap();
+            let one_more = format!("{}{ELLIPSIS}", &text[..kept.len() + 1]);
+            assert!(
+                full_width(&one_more) > max_width,
+                "one more character would have fit in {max_width}: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_elided_line_shows_the_first_line_of_several() {
+        let (_, _, line) = &fit(&["First line\nSecond line"], &[f32::INFINITY])[0];
+        assert_eq!(line.text(), "First line\u{2026}");
+        assert!(line.is_elided());
+    }
+
+    #[test]
+    fn a_line_too_narrow_for_an_ellipsis_shows_its_first_character_clipped() {
+        let rect = Rect::new(20.0, 30.0, 2.0, 20.0);
+        let clips = Rc::new(RefCell::new(Vec::new()));
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Text").root(Probe {
+                measure: None,
+                paint: Box::new(move |ctx| {
+                    paint_text_line_elided(ctx, rect, "Channels", &style(), TextAlign::Start);
+                }),
+            }))
+            .build()
+            .unwrap();
+        let window_id = runtime.window_ids()[0];
+        let output = runtime.render(window_id).unwrap();
+        let registry = output.frame.text_layout_registry.as_ref();
+        let mut stack = Vec::new();
+        output
+            .frame
+            .scene
+            .visit_commands(&mut |command| match command {
+                SceneCommand::PushClip { rect } => stack.push(*rect),
+                SceneCommand::PopClip => {
+                    stack.pop();
+                }
+                SceneCommand::DrawShapedText(text) => {
+                    let layout = text.resolve(registry).unwrap();
+                    clips
+                        .borrow_mut()
+                        .push((layout.text().to_string(), stack.last().copied()));
+                }
+                _ => {}
+            });
+        let [(text, Some(clip))] = &clips.borrow()[..] else {
+            panic!("one clipped text is drawn: {:?}", clips.borrow());
+        };
+        assert_eq!(text, "C");
+        assert_eq!((clip.x(), clip.width()), (rect.x(), rect.width()));
+        assert!(
+            clip.y() < rect.y() && clip.max_y() > rect.max_y(),
+            "{clip:?}"
+        );
     }
 
     #[test]

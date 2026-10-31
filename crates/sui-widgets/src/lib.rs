@@ -57,23 +57,23 @@ pub use collection::{
     VirtualListSelectionMode, VirtualListState, VirtualViewportSnapshot,
 };
 pub use composites::{
-    ActionCard, ActionTilePaint, BottomSheet, BrowserTabBar, CalloutPaint, CodePanelPaint,
-    CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonFill, CommandButtonPaint, CommandGroup,
-    CommandPalette, ContextMenu, ContextMenuHandle, CoverageDots, CoverageDotsConfig, DetailRow,
-    Dialog, DisclosureButtonPaint, DockPanel, EmptyState, EmptyStatePaint, FieldGroup, FormRow,
-    FormSection, FramedField, HairlineEdge, Menu, MenuItem, PanelSection, PlacementBadge,
-    PlacementBadgePaint, Popover, PopoverAlignment, PresetStrip, ProgressBar, PropertyRow,
-    PropertyRowLayout, SectionLabel, SectionLabelPaint, SectionPanelGeometry, SectionPanelPaint,
-    SegmentedControl, SegmentedControlItem, ShadowBox, SheetState, SideSheet, SideSheetPlacement,
-    Spinner, StatusBadge, StatusBar, StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance,
-    SurfaceBorder, SurfaceElevation, SurfaceRole, TabBar, TabBarItem, Tabs, ToolPalette,
-    ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment, TooltipPlacement,
-    detail_row_height_for_value, paint_action_tile, paint_border, paint_callout, paint_code_lines,
-    paint_code_panel, paint_command_button, paint_coverage_dots, paint_coverage_dots_with_config,
-    paint_detail_row_at, paint_disclosure_button, paint_empty_state, paint_hairline,
-    paint_placement_badge, paint_placement_badge_with, paint_progress_bar, paint_rounded_panel,
-    paint_rounded_rect, paint_section_label, paint_section_label_detail, paint_section_panel,
-    paint_status_badge,
+    ActionCard, ActionTileGeometry, ActionTilePaint, BottomSheet, BrowserTabBar, CalloutPaint,
+    CodePanelPaint, CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonFill,
+    CommandButtonPaint, CommandGroup, CommandPalette, ContextMenu, ContextMenuHandle, CoverageDots,
+    CoverageDotsConfig, DetailRow, Dialog, DisclosureButtonPaint, DockPanel, EmptyState,
+    EmptyStatePaint, FieldGroup, FormRow, FormSection, FramedField, HairlineEdge, Menu, MenuItem,
+    PanelSection, PlacementBadge, PlacementBadgePaint, Popover, PopoverAlignment, PresetStrip,
+    ProgressBar, PropertyRow, PropertyRowLayout, SectionLabel, SectionLabelPaint,
+    SectionPanelGeometry, SectionPanelPaint, SegmentedControl, SegmentedControlItem, ShadowBox,
+    SheetState, SideSheet, SideSheetPlacement, Spinner, StatusBadge, StatusBar, StatusBarHost,
+    StatusBarSegment, Surface, SurfaceAppearance, SurfaceBorder, SurfaceElevation, SurfaceRole,
+    TabBar, TabBarItem, Tabs, ToolPalette, ToolPaletteItem, Toolbar, Tooltip, TooltipAlignment,
+    TooltipPlacement, detail_row_height_for_value, paint_action_tile, paint_border, paint_callout,
+    paint_code_lines, paint_code_panel, paint_command_button, paint_coverage_dots,
+    paint_coverage_dots_with_config, paint_detail_row_at, paint_disclosure_button,
+    paint_empty_state, paint_hairline, paint_placement_badge, paint_placement_badge_with,
+    paint_progress_bar, paint_rounded_panel, paint_rounded_rect, paint_section_label,
+    paint_section_label_detail, paint_section_panel, paint_status_badge,
 };
 pub use containers::{
     Align, Background, ContentExtent, Dock, FixedPaneSplit, Flex, MeasuredBottomDock, Overflow,
@@ -139,8 +139,8 @@ pub use selection::{
     SelectionOwnerId, SelectionPayload, SelectionPoint, SelectionScope, TextSelectionInfo,
 };
 pub use text_align::{
-    Paragraph, TextPlacement, TextShaper, VerticalAlign, paint_text, paint_text_line,
-    wrap_text_lines,
+    ElidedLine, Paragraph, TextOverflow, TextPlacement, TextShaper, VerticalAlign, paint_text,
+    paint_text_line, paint_text_line_elided, wrap_text_lines,
 };
 pub use text_command::{TEXT_COMMAND, TextCommand};
 pub use text_surface::{

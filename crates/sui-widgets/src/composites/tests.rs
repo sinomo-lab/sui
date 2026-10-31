@@ -6,23 +6,24 @@ use std::{
 
 use super::Tabs;
 use super::{
-    ActionCard, ActionTilePaint, BottomSheet, BrowserTabBar, CalloutPaint, CodePanelPaint,
-    CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonPaint, CommandGroup, ContextMenu,
-    CoverageDots, DetailRow, Dialog, DisclosureButtonPaint, DockPanel, EmptyState, FieldGroup,
-    FormRow, FormSection, FramedField, HairlineEdge, Menu, MenuItem, PanelSection, PlacementBadge,
-    PlacementBadgePaint, Popover, PopoverAlignment, PresetStrip, ProgressBar, PropertyRow,
-    PropertyRowLayout, SectionLabel, SectionLabelPaint, SectionPanelPaint, SegmentedControl,
-    SegmentedControlItem, SheetState, SideSheet, SideSheetPlacement, Spinner, StatusBadge,
-    StatusBar, StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance, TabBar, TabBarItem,
-    ToolPalette, ToolPaletteItem, Toolbar, paint_action_tile, paint_border, paint_callout,
-    paint_code_lines, paint_code_panel, paint_command_button, paint_disclosure_button,
-    paint_hairline, paint_placement_badge_with, paint_rounded_panel, paint_section_label,
-    paint_section_label_detail, paint_section_panel, text_token_style,
+    ActionCard, ActionTileGeometry, ActionTilePaint, BottomSheet, BrowserTabBar, CalloutPaint,
+    CodePanelPaint, CodeTextLine, CodeTextPaint, CodeTextSpan, CommandButtonPaint, CommandGroup,
+    ContextMenu, CoverageDots, DetailRow, Dialog, DisclosureButtonPaint, DockPanel, EmptyState,
+    FieldGroup, FormRow, FormSection, FramedField, HairlineEdge, Menu, MenuItem, PanelSection,
+    PlacementBadge, PlacementBadgePaint, Popover, PopoverAlignment, PresetStrip, ProgressBar,
+    PropertyRow, PropertyRowLayout, SectionLabel, SectionLabelPaint, SectionPanelPaint,
+    SegmentedControl, SegmentedControlItem, SheetState, SideSheet, SideSheetPlacement, Spinner,
+    StatusBadge, StatusBar, StatusBarHost, StatusBarSegment, Surface, SurfaceAppearance, TabBar,
+    TabBarItem, ToolPalette, ToolPaletteItem, Toolbar, paint_action_tile, paint_border,
+    paint_callout, paint_code_lines, paint_code_panel, paint_command_button,
+    paint_disclosure_button, paint_hairline, paint_placement_badge_with, paint_rounded_panel,
+    paint_section_label, paint_section_label_detail, paint_section_panel, text_token_style,
 };
 use crate::FloatingStack;
 use crate::{
     DefaultTheme, HdrThemeMode, Padding, ScrollView, SelectionScope, SemanticColorToken,
-    SemanticTone, SizedBox, Stack, TEXT_COMMAND, TextArea, TextCommand, ThemeTextToken,
+    SemanticTone, SizedBox, Stack, TEXT_COMMAND, TextArea, TextCommand, TextOverflow,
+    ThemeTextToken,
 };
 use sui_core::{
     Color, Event, ImageHandle, KeyState, KeyboardEvent, Point, PointerButton, PointerButtons,
@@ -294,6 +295,141 @@ fn segmented_control_selection_thumb_is_evenly_inset() {
     assert!(
         !fills.contains(&theme.palette.accent),
         "segmented controls should use a raised neutral thumb without a tab underline"
+    );
+}
+
+/// A segmented control `width` wide with `labels`, rendered.
+fn segmented(width: f32, labels: [&str; 3], text_overflow: TextOverflow) -> RenderOutput {
+    let theme = DefaultTheme::default();
+    render(
+        crate::SizedBox::new()
+            .width(width)
+            .height(theme.metrics.tab_height)
+            .child(
+                SegmentedControl::new("Conversation kind")
+                    .theme(theme)
+                    .segments(labels)
+                    .text_overflow(text_overflow),
+            ),
+    )
+}
+
+#[test]
+fn eliding_segments_fit_their_labels_before_eliding_them() -> Result<(), String> {
+    let labels = ["All", "Chats", "Channels"];
+    let padding = DefaultTheme::default().metrics.tab_padding;
+    let wide = segmented(600.0, labels, TextOverflow::Clip);
+    let natural = labels.map(|label| {
+        text_layout_for(&wide, label).measurement().width + padding.left + padding.right
+    });
+
+    // Room for every label, but not in equal thirds.
+    let width = natural.iter().sum::<f32>() + 2.0;
+    assert!(width / 3.0 < natural[2], "{natural:?} fit equal thirds");
+    let clipped = segmented(width, labels, TextOverflow::Clip);
+    let channels = text_layout_for(&clipped, "Channels");
+    assert!(
+        channels.lines().len() > 1,
+        "the clipped label wraps in its third"
+    );
+    let fitted = segmented(width, labels, TextOverflow::Ellipsis);
+    for label in labels {
+        let layout = text_layout_for(&fitted, label);
+        assert_eq!(layout.lines().len(), 1, "{label} is whole on one line");
+    }
+    assert!(
+        drawn_texts(&fitted)
+            .iter()
+            .all(|text| !text.ends_with('\u{2026}'))
+    );
+
+    // A tap where the equal third for Channels would not start yet.
+    let theme = DefaultTheme::default();
+    let changes = Rc::new(RefCell::new(Vec::new()));
+    let on_change = Rc::clone(&changes);
+    let (mut runtime, window_id) = build_runtime(
+        crate::SizedBox::new()
+            .width(width)
+            .height(theme.metrics.tab_height)
+            .child(
+                SegmentedControl::new("Conversation kind")
+                    .theme(theme)
+                    .segments(labels)
+                    .text_overflow(TextOverflow::Ellipsis)
+                    .on_change(move |index, _| on_change.borrow_mut().push(index)),
+            ),
+    );
+    let _ = runtime
+        .render(window_id)
+        .map_err(|error| error.to_string())?;
+    let tap = Point::new(
+        ((width - natural[2]) + width * 2.0 / 3.0) * 0.5,
+        theme.metrics.tab_height * 0.5,
+    );
+    for (kind, pressed) in [
+        (PointerEventKind::Down, true),
+        (PointerEventKind::Up, false),
+    ] {
+        runtime
+            .handle_event(window_id, primary_pointer(kind, tap, pressed))
+            .map_err(|error| error.to_string())?;
+    }
+    assert_eq!(changes.borrow().as_slice(), &[2]);
+
+    // Too narrow for every label: only the widest elides.
+    let cap = natural[1] + 4.0;
+    assert!(natural[0] <= cap && cap < natural[2], "{natural:?}");
+    let narrow = segmented(
+        natural[0] + natural[1] + cap,
+        labels,
+        TextOverflow::Ellipsis,
+    );
+    let texts = drawn_texts(&narrow);
+    assert!(texts.contains(&"All".to_string()), "{texts:?}");
+    assert!(texts.contains(&"Chats".to_string()), "{texts:?}");
+    let channels = texts
+        .iter()
+        .find(|text| text.ends_with('\u{2026}'))
+        .unwrap_or_else(|| panic!("Channels elides: {texts:?}"));
+    assert!("Channels".starts_with(channels.trim_end_matches('\u{2026}')));
+    let names = narrow
+        .semantics
+        .iter()
+        .filter(|node| node.role == SemanticsRole::RadioButton)
+        .filter_map(|node| node.name.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(names, labels.map(String::from));
+    Ok(())
+}
+
+#[test]
+fn browser_tab_labels_are_clipped_unless_they_elide() {
+    const NAME: &str = "a-rather-long-document-name.rs";
+    let tabs = |text_overflow| {
+        render(
+            BrowserTabBar::new("Documents")
+                .tabs([NAME, "b.rs"])
+                .max_tab_width(140.0)
+                .text_overflow(text_overflow),
+        )
+    };
+    let clipped = tabs(TextOverflow::Clip);
+    assert!(drawn_texts(&clipped).contains(&NAME.to_string()));
+
+    let elided = tabs(TextOverflow::Ellipsis);
+    let texts = drawn_texts(&elided);
+    let shown = texts
+        .iter()
+        .find(|text| text.ends_with('\u{2026}'))
+        .unwrap_or_else(|| panic!("the long name elides: {texts:?}"));
+    assert!(NAME.starts_with(shown.trim_end_matches('\u{2026}')));
+    assert!(texts.contains(&"b.rs".to_string()));
+    assert_eq!(text_layout_for(&elided, shown).lines().len(), 1);
+    assert!(
+        elided
+            .semantics
+            .iter()
+            .any(|node| node.name.as_deref() == Some(NAME))
     );
 }
 
@@ -2180,6 +2316,125 @@ fn action_tile_paint_supports_leading_semantic_status_dot() {
         "leading status dot should reserve the standard leading slot: {:?}",
         title.rect
     );
+}
+
+struct ActionTileGeometryFixture {
+    theme: DefaultTheme,
+    size: Size,
+    subtitle: Option<&'static str>,
+    style: ActionTilePaint,
+    geometry: Rc<Cell<Option<ActionTileGeometry>>>,
+}
+
+impl ActionTileGeometryFixture {
+    fn new(theme: DefaultTheme, size: Size, subtitle: Option<&'static str>) -> Self {
+        Self {
+            theme,
+            size,
+            subtitle,
+            style: ActionTilePaint::neutral(),
+            geometry: Rc::new(Cell::new(None)),
+        }
+    }
+}
+
+impl Widget for ActionTileGeometryFixture {
+    fn measure(&mut self, _ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        constraints.clamp(self.size)
+    }
+
+    fn paint(&self, ctx: &mut PaintCtx) {
+        self.geometry.set(Some(paint_action_tile(
+            ctx,
+            &self.theme,
+            ctx.bounds(),
+            "Activity",
+            self.subtitle,
+            Some(crate::IconGlyph::Sparkles),
+            self.style,
+        )));
+    }
+}
+
+const LONG_SUBTITLE: &str = "The user asks to reply exactly V5_OK and nothing else";
+
+#[test]
+fn action_tile_subtitles_are_clipped_unless_they_elide() {
+    let theme = DefaultTheme::default();
+    let size = Size::new(240.0, ActionTileGeometry::height(&theme, true));
+    let style = ActionTilePaint::neutral().trailing_width(60.0);
+
+    let clipped = render(ActionTileGeometryFixture {
+        style,
+        ..ActionTileGeometryFixture::new(theme, size, Some(LONG_SUBTITLE))
+    });
+    let subtitle_rect = clip_rect_for_text(&clipped, LONG_SUBTITLE);
+    assert!(
+        text_layout_for(&clipped, LONG_SUBTITLE).measurement().width > subtitle_rect.width(),
+        "the subtitle overflows the tile: {subtitle_rect:?}"
+    );
+
+    let fixture = ActionTileGeometryFixture {
+        style: style.text_overflow(TextOverflow::Ellipsis),
+        ..ActionTileGeometryFixture::new(theme, size, Some(LONG_SUBTITLE))
+    };
+    let geometry = Rc::clone(&fixture.geometry);
+    let elided = render(fixture);
+    let subtitle_rect = geometry.get().unwrap().subtitle_rect.unwrap();
+    let shown = drawn_texts(&elided)
+        .into_iter()
+        .find(|text| text.ends_with('\u{2026}'))
+        .expect("the subtitle ends in an ellipsis");
+    assert!(LONG_SUBTITLE.starts_with(shown.trim_end_matches('\u{2026}')));
+    assert!(
+        text_layout_for(&elided, &shown).measurement().width <= subtitle_rect.width() + 0.01,
+        "{shown:?} fits {subtitle_rect:?}"
+    );
+    assert!(text_run_for(&elided, &shown).rect.x() >= subtitle_rect.x() - 1.0);
+    assert!(drawn_texts(&elided).contains(&"Activity".to_string()));
+}
+
+#[test]
+fn action_tile_geometry_sizes_tiles_for_the_theme_text() {
+    for scale in [1.0, 1.6] {
+        let mut theme = DefaultTheme::default();
+        for token in [&mut theme.text.sm, &mut theme.text.xs] {
+            token.size *= scale;
+            token.line_height *= scale;
+        }
+        for subtitle in [None, Some("background-agent")] {
+            let height = ActionTileGeometry::height(&theme, subtitle.is_some());
+            let fixture = ActionTileGeometryFixture {
+                style: ActionTilePaint::neutral().trailing_width(60.0),
+                ..ActionTileGeometryFixture::new(theme, Size::new(240.0, height), subtitle)
+            };
+            let geometry = Rc::clone(&fixture.geometry);
+            let output = render(fixture);
+            let geometry = geometry.get().unwrap();
+
+            assert_eq!(geometry.compact, subtitle.is_none(), "{scale} {subtitle:?}");
+            let text_bottom = geometry
+                .subtitle_rect
+                .unwrap_or(geometry.title_rect)
+                .max_y();
+            assert!(
+                text_bottom <= height + 0.01,
+                "{scale} {subtitle:?}: {geometry:?} in {height}"
+            );
+            let title = text_visual_center_for(&output, "Activity");
+            assert!(
+                (geometry.title_rect.y()..=geometry.title_rect.max_y()).contains(&title),
+                "{scale} {subtitle:?}: title at {title} outside {geometry:?}"
+            );
+            if let (Some(subtitle), Some(rect)) = (subtitle, geometry.subtitle_rect) {
+                let center = text_visual_center_for(&output, subtitle);
+                assert!((rect.y()..=rect.max_y()).contains(&center), "{rect:?}");
+            }
+            assert_eq!(geometry.trailing_rect.width(), 60.0);
+            assert_eq!(geometry.trailing_rect.height(), height);
+            assert!((geometry.title_rect.max_x() - geometry.trailing_rect.x()).abs() < 0.001);
+        }
+    }
 }
 
 struct CalloutPaintFixture {
@@ -4732,6 +4987,23 @@ fn first_text_run(output: &RenderOutput) -> sui_text::TextRun {
             _ => None,
         })
         .expect("text draw command present")
+}
+
+fn drawn_texts(output: &RenderOutput) -> Vec<String> {
+    let mut texts = Vec::new();
+    output
+        .frame
+        .scene
+        .visit_commands(&mut |command| match command {
+            sui_scene::SceneCommand::DrawText(run) => texts.push(run.text.clone()),
+            sui_scene::SceneCommand::DrawShapedText(run) => {
+                if let Some(layout) = run.resolve(output.frame.text_layout_registry.as_ref()) {
+                    texts.push(layout.text().to_string());
+                }
+            }
+            _ => {}
+        });
+    texts
 }
 
 fn text_run_for(output: &RenderOutput, text: &str) -> sui_text::TextRun {

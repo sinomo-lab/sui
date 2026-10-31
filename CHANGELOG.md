@@ -61,6 +61,21 @@ Versioning, with the usual expectation that the API may change during the
   nothing. A touch press on a `Button` or `IconButton` is also judged by where
   the button was when the finger went down, so other relayouts during a tap
   no longer cancel it. Mouse presses are unchanged.
+- Added `ElidedLine` and `paint_text_line_elided`, which fit a line of text to
+  a width: text that doesn't fit keeps as much of its start as fits, cut
+  between characters, and ends in "…" instead of in a glyph cut in half. A
+  width too narrow even for "…" shows the first character, clipped.
+- `SegmentedControl`, `BrowserTabBar`, and `ActionTilePaint` take a
+  `text_overflow` option. They still clip labels by default;
+  `TextOverflow::Ellipsis` elides them instead. With it, `SegmentedControl`
+  also widens segments whose labels need more than an equal share, taking
+  room from segments that need less, so only labels that can't fit at all are
+  elided, and taps follow the segments as drawn.
+- Added `ActionTileGeometry`, where `paint_action_tile` puts a tile's icon,
+  title, subtitle, and trailing slot, and `ActionTileGeometry::height`, the
+  height a tile needs for the theme's text sizes. `paint_action_tile` returns
+  the geometry it painted with. `ActionTilePaint` has a new public field, so
+  code that builds it as a struct literal must set `text_overflow`.
 - Updated dependencies, including PyO3 0.30, napi 3.16, resvg 0.49, and
   wasm-bindgen 0.2.130; building the browser package needs
   `wasm-bindgen-cli` 0.2.130.

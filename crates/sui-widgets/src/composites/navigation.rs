@@ -17,7 +17,7 @@ use crate::controls::draw_icon_glyph;
 use crate::draw::{inset_rect, measure_text};
 use crate::frame::{draw_control_frame, draw_control_shape, draw_focus_ring, physical_pixels};
 use crate::paint_theme_shadow;
-use crate::text_align::paint_text;
+use crate::text_align::{TextOverflow, paint_text, paint_text_line_elided};
 use std::sync::Arc;
 use sui_core::Event;
 use sui_core::ImageHandle;
@@ -860,6 +860,7 @@ pub struct BrowserTabBar {
     pub(super) name: String,
     pub(super) tabs: Vec<String>,
     max_tab_width: f32,
+    text_overflow: TextOverflow,
     pub(super) tabs_reader: Option<Box<dyn Fn() -> Vec<String>>>,
     pub(super) selected: Option<usize>,
     pub(super) selected_reader: Option<Box<dyn Fn() -> Option<usize>>>,
@@ -892,6 +893,7 @@ impl BrowserTabBar {
             name: name.into(),
             tabs: Vec::new(),
             max_tab_width: f32::INFINITY,
+            text_overflow: TextOverflow::Clip,
             tabs_reader: None,
             selected: None,
             selected_reader: None,
@@ -950,6 +952,13 @@ impl BrowserTabBar {
     /// Bound document labels while keeping the close control visible.
     pub fn max_tab_width(mut self, width: f32) -> Self {
         self.max_tab_width = width.max(0.0);
+        self
+    }
+
+    /// Set what a label too wide for its tab does. Labels are clipped by
+    /// default; [`TextOverflow::Ellipsis`] ends them in "…" instead.
+    pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
+        self.text_overflow = text_overflow;
         self
     }
 
@@ -1230,6 +1239,16 @@ impl BrowserTabBar {
         )
     }
 
+    /// Paint a tab's label in `rect` as the text overflow says.
+    fn paint_label(&self, ctx: &mut PaintCtx, rect: Rect, label: &str, style: &TextStyle) {
+        match self.text_overflow {
+            TextOverflow::Clip => paint_text(ctx, rect, label, style, TextAlign::Start),
+            TextOverflow::Ellipsis => {
+                paint_text_line_elided(ctx, rect, label, style, TextAlign::Start);
+            }
+        }
+    }
+
     pub(super) fn label_rect_for(&self, tab_rect: Rect) -> Rect {
         let theme = self.resolved_theme();
         let padding = theme.metrics.tab_padding;
@@ -1438,13 +1457,7 @@ impl Widget for BrowserTabBar {
             let color = palette.text_muted;
             let text_style = theme.text_style(color.with_alpha(color.alpha * fade));
             ctx.push_clip_rect(slot);
-            paint_text(
-                ctx,
-                self.label_rect_for(full),
-                &closing.label,
-                &text_style,
-                TextAlign::Start,
-            );
+            self.paint_label(ctx, self.label_rect_for(full), &closing.label, &text_style);
             ctx.pop_clip();
         }
         for (index, tab) in self.tabs.iter().enumerate() {
@@ -1495,12 +1508,11 @@ impl Widget for BrowserTabBar {
             let text_slot = self.label_rect_for(rect);
             let pressed_offset = press_amount * interaction.pressed_offset;
             ctx.push_clip_rect(text_slot);
-            paint_text(
+            self.paint_label(
                 ctx,
                 text_slot.translate(Vector::new(0.0, pressed_offset)),
                 tab,
                 &text_style,
-                TextAlign::Start,
             );
             ctx.pop_clip();
 
@@ -1640,6 +1652,47 @@ pub(super) fn browser_tab_close_semantics_id(parent: WidgetId, index: usize) -> 
     )
 }
 
+/// Split `total` between items that would like `natural` widths. When they
+/// all fit, items narrower than an equal share split what the wider ones
+/// leave, so equal shares that fit stay equal. When they don't, the widest
+/// are cut to one shared width, so narrow items keep theirs.
+fn fitted_shares(natural: &[f32], total: f32) -> Vec<f32> {
+    let mut sorted = natural.to_vec();
+    let mut remaining = total;
+    let mut left = natural.len();
+    if natural.iter().sum::<f32>() <= total {
+        sorted.sort_by(|a, b| b.total_cmp(a));
+        for width in sorted {
+            if left == 0 || width <= remaining / left as f32 {
+                break;
+            }
+            remaining -= width;
+            left -= 1;
+        }
+        let share = if left == 0 {
+            0.0
+        } else {
+            remaining / left as f32
+        };
+        natural.iter().map(|width| width.max(share)).collect()
+    } else {
+        sorted.sort_by(f32::total_cmp);
+        for width in sorted {
+            if left == 0 || width > remaining / left as f32 {
+                break;
+            }
+            remaining -= width;
+            left -= 1;
+        }
+        let cap = if left == 0 {
+            0.0
+        } else {
+            (remaining / left as f32).max(0.0)
+        };
+        natural.iter().map(|width| width.min(cap)).collect()
+    }
+}
+
 pub struct SegmentedControl {
     pub(super) theme: Box<DefaultTheme>,
     pub(super) theme_reader: Option<Box<dyn Fn() -> DefaultTheme>>,
@@ -1658,6 +1711,7 @@ pub struct SegmentedControl {
     pub(super) press_animation: Progress,
     pub(super) focus_animation: Progress,
     pub(super) label_measurements: Vec<TextMeasurement>,
+    pub(super) text_overflow: TextOverflow,
     pub(super) on_change: Option<SegmentedControlChange>,
     pub(super) on_change_with_ctx: Option<SegmentedControlContextChange>,
 }
@@ -1721,6 +1775,7 @@ impl SegmentedControl {
             press_animation: Progress::new(0.0),
             focus_animation: Progress::new(0.0),
             label_measurements: Vec::new(),
+            text_overflow: TextOverflow::Clip,
             on_change: None,
             on_change_with_ctx: None,
         }
@@ -1737,6 +1792,16 @@ impl SegmentedControl {
         F: Fn() -> DefaultTheme + 'static,
     {
         self.theme_reader = Some(Box::new(theme));
+        self
+    }
+
+    /// Set what labels too wide for their segments do. By default every
+    /// segment gets an equal share of the width and labels are clipped.
+    /// With [`TextOverflow::Ellipsis`], segments first share the width by
+    /// their labels, so a long label takes room a short one doesn't need,
+    /// and only labels that still don't fit end in "…".
+    pub fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
+        self.text_overflow = text_overflow;
         self
     }
 
@@ -1862,17 +1927,32 @@ impl SegmentedControl {
         self.resolved_theme().metrics.tab_height
     }
 
+    /// How wide each segment is in `width`: equal shares, or shares fitted
+    /// to the labels when they elide.
+    pub(super) fn segment_widths(&self, width: f32) -> Vec<f32> {
+        let count = self.segments.len();
+        if self.text_overflow == TextOverflow::Clip || self.label_measurements.len() != count {
+            return vec![width / count.max(1) as f32; count];
+        }
+        let padding = self.resolved_theme().metrics.tab_padding;
+        let natural = self
+            .label_measurements
+            .iter()
+            .map(|measurement| measurement.width + padding.left + padding.right)
+            .collect::<Vec<_>>();
+        fitted_shares(&natural, width)
+    }
+
     pub(super) fn segment_rect(&self, bounds: Rect, index: usize) -> Option<Rect> {
         if index >= self.segments.len() {
             return None;
         }
-        let count = self.segments.len().max(1);
-        let width = bounds.width() / count as f32;
-        let x = bounds.x() + width * index as f32;
-        let width = if index + 1 == count {
+        let widths = self.segment_widths(bounds.width());
+        let x = bounds.x() + widths[..index].iter().sum::<f32>();
+        let width = if index + 1 == widths.len() {
             bounds.max_x() - x
         } else {
-            width
+            widths[index]
         };
         Some(Rect::new(
             x,
@@ -1886,9 +1966,14 @@ impl SegmentedControl {
         if !bounds.contains(position) || self.segments.is_empty() {
             return None;
         }
-        let slot_width = (bounds.width() / self.segments.len() as f32).max(1.0);
-        let index = ((position.x - bounds.x()) / slot_width).floor() as usize;
-        Some(index.min(self.segments.len() - 1))
+        let mut end = bounds.x();
+        for (index, width) in self.segment_widths(bounds.width()).iter().enumerate() {
+            end += width;
+            if position.x < end {
+                return Some(index);
+            }
+        }
+        Some(self.segments.len() - 1)
     }
 
     pub(super) fn resolved_theme(&self) -> DefaultTheme {
@@ -2183,14 +2268,24 @@ impl Widget for SegmentedControl {
             };
             let text_slot = inset_rect(rect, padding);
             let pressed_offset = press_amount * interaction.pressed_offset;
+            let label_rect = text_slot.translate(Vector::new(0.0, pressed_offset));
             ctx.push_clip_rect(text_slot);
-            paint_text(
-                ctx,
-                text_slot.translate(Vector::new(0.0, pressed_offset)),
-                &segment.label,
-                &text_style,
-                TextAlign::Center,
-            );
+            match self.text_overflow {
+                TextOverflow::Clip => paint_text(
+                    ctx,
+                    label_rect,
+                    &segment.label,
+                    &text_style,
+                    TextAlign::Center,
+                ),
+                TextOverflow::Ellipsis => paint_text_line_elided(
+                    ctx,
+                    label_rect,
+                    &segment.label,
+                    &text_style,
+                    TextAlign::Center,
+                ),
+            }
             ctx.pop_clip();
         }
     }

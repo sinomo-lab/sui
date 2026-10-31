@@ -9,6 +9,7 @@ use crate::draw::{measure_text, mix_color};
 use crate::frame::{draw_control_shape, physical_pixels, snap_to_pixels, stroke_border};
 use crate::text_align::paint_text;
 use crate::text_align::paint_text_line;
+use crate::text_align::{TextOverflow, paint_text_line_elided};
 use sui_core::Color;
 use sui_core::Path;
 use sui_core::Rect;
@@ -461,6 +462,9 @@ pub struct ActionTilePaint {
     pub padding_x: Option<f32>,
     pub leading_width: f32,
     pub trailing_width: f32,
+    /// What a title or subtitle too wide for the tile does. Clipped by
+    /// default.
+    pub text_overflow: TextOverflow,
 }
 
 impl ActionTilePaint {
@@ -481,6 +485,7 @@ impl ActionTilePaint {
             padding_x: None,
             leading_width: 0.0,
             trailing_width: 0.0,
+            text_overflow: TextOverflow::Clip,
         }
     }
 
@@ -501,6 +506,7 @@ impl ActionTilePaint {
             padding_x: None,
             leading_width: 0.0,
             trailing_width: 0.0,
+            text_overflow: TextOverflow::Clip,
         }
     }
 
@@ -571,6 +577,13 @@ impl ActionTilePaint {
 
     pub const fn trailing_width(mut self, trailing_width: f32) -> Self {
         self.trailing_width = trailing_width;
+        self
+    }
+
+    /// Set what a title or subtitle too wide for the tile does.
+    /// [`TextOverflow::Ellipsis`] ends it in "…" instead of cutting a glyph.
+    pub const fn text_overflow(mut self, text_overflow: TextOverflow) -> Self {
+        self.text_overflow = text_overflow;
         self
     }
 }
@@ -820,6 +833,129 @@ pub fn paint_callout(
     ctx.pop_clip();
 }
 
+/// A tile this tall or shorter shows only its title.
+const ACTION_TILE_COMPACT_HEIGHT: f32 = 46.0;
+/// The space above a tile's title and below its subtitle.
+const ACTION_TILE_TEXT_INSET_Y: f32 = 8.0;
+
+/// Where [`paint_action_tile`] puts each part of a tile. Build it to size a
+/// tile for the theme's text, or to place a control in the slot that
+/// [`ActionTilePaint::trailing_width`] keeps clear; painting uses the same
+/// geometry.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ActionTileGeometry {
+    /// Whether the title is alone, centered vertically, without the subtitle.
+    /// A tile without a subtitle, or 46 or less tall, is compact.
+    pub compact: bool,
+    /// The icon, or the leading tone dot.
+    pub leading_rect: Option<Rect>,
+    pub title_rect: Rect,
+    /// Where the subtitle goes, unless the tile is compact.
+    pub subtitle_rect: Option<Rect>,
+    /// The trailing slot, inside the tile's padding and its full height.
+    pub trailing_rect: Rect,
+}
+
+impl ActionTileGeometry {
+    pub fn new(
+        theme: &DefaultTheme,
+        rect: Rect,
+        has_icon: bool,
+        has_subtitle: bool,
+        style: ActionTilePaint,
+    ) -> Self {
+        let padding_x = style
+            .padding_x
+            .unwrap_or_else(|| theme.metrics.button_padding.left.max(10.0))
+            .max(0.0)
+            .min(rect.width() * 0.45);
+        let compact = rect.height() <= ACTION_TILE_COMPACT_HEIGHT || !has_subtitle;
+        let icon_label_gap = theme.metrics.icon_label_gap.max(7.0);
+        let mut text_x = rect.x() + padding_x;
+        let leading_rect = if has_icon {
+            let base_icon_side: f32 = if compact { 14.0 } else { 17.0 };
+            let icon_side = base_icon_side
+                .min((rect.height() - 14.0).max(10.0))
+                .max(0.0);
+            let icon_y = if compact {
+                rect.y() + (rect.height() - icon_side) * 0.5
+            } else {
+                rect.y() + 12.0
+            };
+            let icon_rect = Rect::new(text_x, icon_y, icon_side, icon_side);
+            text_x = icon_rect.max_x() + icon_label_gap;
+            Some(icon_rect)
+        } else if style.leading_tone_dot.is_some() {
+            let dot_side = 8.0_f32.min((rect.height() - 12.0).max(4.0)).max(4.0);
+            let dot_rect = Rect::new(
+                text_x,
+                if compact {
+                    rect.y() + (rect.height() - dot_side) * 0.5
+                } else {
+                    rect.y() + 15.0_f32.min((rect.height() - dot_side).max(0.0))
+                },
+                dot_side,
+                dot_side,
+            );
+            text_x += style.leading_width.max(dot_side + icon_label_gap);
+            Some(dot_rect)
+        } else {
+            text_x += style.leading_width.max(0.0);
+            None
+        };
+
+        let trailing_width = style.trailing_width.max(0.0);
+        let text_width = (rect.max_x() - text_x - padding_x - trailing_width).max(0.0);
+        let title_rect = if compact {
+            Rect::new(text_x, rect.y(), text_width, rect.height())
+        } else {
+            Rect::new(
+                text_x,
+                rect.y() + ACTION_TILE_TEXT_INSET_Y,
+                text_width,
+                theme.text.sm.line_height.max(1.0),
+            )
+        };
+        let subtitle_rect = (!compact).then(|| {
+            Rect::new(
+                text_x,
+                title_rect.max_y() + theme.metrics.action_card_text_gap.min(3.0),
+                text_width,
+                theme.text.xs.line_height.max(1.0),
+            )
+        });
+        Self {
+            compact,
+            leading_rect,
+            title_rect,
+            subtitle_rect,
+            trailing_rect: Rect::new(
+                rect.max_x() - padding_x - trailing_width,
+                rect.y(),
+                trailing_width,
+                rect.height(),
+            ),
+        }
+    }
+
+    /// The height a tile needs to fit its title, and its subtitle when it has
+    /// one, at the theme's text sizes.
+    pub fn height(theme: &DefaultTheme, has_subtitle: bool) -> f32 {
+        let title = theme.text.sm.line_height.max(1.0);
+        if !has_subtitle {
+            return title + ACTION_TILE_TEXT_INSET_Y * 2.0;
+        }
+        let height = ACTION_TILE_TEXT_INSET_Y * 2.0
+            + title
+            + theme.metrics.action_card_text_gap.min(3.0)
+            + theme.text.xs.line_height.max(1.0);
+        // Taller than a compact tile, so the subtitle shows.
+        height.max(ACTION_TILE_COMPACT_HEIGHT + 1.0)
+    }
+}
+
+/// Paint a tile with a title, an optional subtitle and an optional leading
+/// icon, and return where its parts went.
 pub fn paint_action_tile(
     ctx: &mut PaintCtx,
     theme: &DefaultTheme,
@@ -828,9 +964,10 @@ pub fn paint_action_tile(
     subtitle: Option<&str>,
     icon: Option<IconGlyph>,
     style: ActionTilePaint,
-) {
+) -> ActionTileGeometry {
+    let geometry = ActionTileGeometry::new(theme, rect, icon.is_some(), subtitle.is_some(), style);
     if rect.width() <= 0.0 || rect.height() <= 0.0 {
-        return;
+        return geometry;
     }
 
     let palette = theme.palette;
@@ -875,64 +1012,30 @@ pub fn paint_action_tile(
         border,
     );
 
-    let padding_x = style
-        .padding_x
-        .unwrap_or_else(|| theme.metrics.button_padding.left.max(10.0))
-        .max(0.0)
-        .min(rect.width() * 0.45);
-    let compact = rect.height() <= 46.0 || subtitle.is_none();
-    let base_icon_side: f32 = if compact { 14.0 } else { 17.0 };
-    let icon_side = base_icon_side
-        .min((rect.height() - 14.0).max(10.0))
-        .max(0.0);
-    let icon_y = if compact {
-        rect.y() + (rect.height() - icon_side) * 0.5
-    } else {
-        rect.y() + 12.0
-    };
-    let mut text_x = rect.x() + padding_x;
-    if let Some(icon) = icon {
-        let icon_rect = Rect::new(rect.x() + padding_x, icon_y, icon_side, icon_side);
-        let icon_color = style.icon_color.unwrap_or_else(|| {
-            if style.enabled {
-                if style.highlighted || style.hovered {
-                    effective_tone
+    if let Some(leading_rect) = geometry.leading_rect {
+        if let Some(icon) = icon {
+            let icon_color = style.icon_color.unwrap_or_else(|| {
+                if style.enabled {
+                    if style.highlighted || style.hovered {
+                        effective_tone
+                    } else {
+                        palette.text_muted
+                    }
                 } else {
-                    palette.text_muted
+                    palette.text.with_alpha(0.34)
                 }
-            } else {
-                palette.text.with_alpha(0.34)
-            }
-        });
-        draw_icon_glyph(ctx, icon, icon_rect, icon_color);
-        text_x = icon_rect.max_x() + theme.metrics.icon_label_gap.max(7.0);
-    } else if let Some(dot_tone) = style.leading_tone_dot {
-        let dot_side = 8.0_f32.min((rect.height() - 12.0).max(4.0)).max(4.0);
-        let leading_width = style
-            .leading_width
-            .max(dot_side + theme.metrics.icon_label_gap.max(7.0));
-        let dot_rect = Rect::new(
-            rect.x() + padding_x,
-            if compact {
-                rect.y() + (rect.height() - dot_side) * 0.5
-            } else {
-                rect.y() + 15.0_f32.min((rect.height() - dot_side).max(0.0))
-            },
-            dot_side,
-            dot_side,
-        );
-        ctx.fill(
-            Path::rounded_rect(dot_rect, dot_side * 0.5),
-            theme.semantic_tone_color(dot_tone),
-        );
-        text_x += leading_width;
-    } else if style.leading_width > 0.0 {
-        text_x += style.leading_width;
+            });
+            draw_icon_glyph(ctx, icon, leading_rect, icon_color);
+        } else if let Some(dot_tone) = style.leading_tone_dot {
+            ctx.fill(
+                Path::rounded_rect(leading_rect, leading_rect.width() * 0.5),
+                theme.semantic_tone_color(dot_tone),
+            );
+        }
     }
 
-    let text_width = (rect.max_x() - text_x - padding_x - style.trailing_width.max(0.0)).max(0.0);
-    if text_width <= 0.0 {
-        return;
+    if geometry.title_rect.width() <= 0.0 {
+        return geometry;
     }
 
     let title_color = style.title_color.unwrap_or_else(|| {
@@ -955,37 +1058,43 @@ pub fn paint_action_tile(
     title_style.weight = FontWeight::SEMIBOLD;
     let title_style = numeric_text_style_if_numeric(title, title_style);
     let subtitle_style = text_token_style(theme, theme.text.xs, subtitle_color);
+    let elide = style.text_overflow == TextOverflow::Ellipsis;
 
-    if compact {
-        let title_rect = Rect::new(text_x, rect.y(), text_width, rect.height());
+    let title_rect = geometry.title_rect;
+    if elide {
+        paint_text_line_elided(ctx, title_rect, title, &title_style, TextAlign::Start);
+    } else {
         ctx.push_clip_rect(title_rect);
-        paint_text(ctx, title_rect, title, &title_style, TextAlign::Start);
-        ctx.pop_clip();
-        return;
-    }
-
-    let title_rect = Rect::new(text_x, rect.y() + 8.0, text_width, title_style.line_height);
-    ctx.push_clip_rect(title_rect);
-    paint_text_line(ctx, title_rect, title, &title_style, TextAlign::Start);
-    ctx.pop_clip();
-
-    if let Some(subtitle) = subtitle {
-        let subtitle_rect = Rect::new(
-            text_x,
-            title_rect.max_y() + theme.metrics.action_card_text_gap.min(3.0),
-            text_width,
-            subtitle_style.line_height,
-        );
-        ctx.push_clip_rect(subtitle_rect);
-        paint_text_line(
-            ctx,
-            subtitle_rect,
-            subtitle,
-            &subtitle_style,
-            TextAlign::Start,
-        );
+        if geometry.compact {
+            paint_text(ctx, title_rect, title, &title_style, TextAlign::Start);
+        } else {
+            paint_text_line(ctx, title_rect, title, &title_style, TextAlign::Start);
+        }
         ctx.pop_clip();
     }
+
+    if let (Some(subtitle), Some(subtitle_rect)) = (subtitle, geometry.subtitle_rect) {
+        if elide {
+            paint_text_line_elided(
+                ctx,
+                subtitle_rect,
+                subtitle,
+                &subtitle_style,
+                TextAlign::Start,
+            );
+        } else {
+            ctx.push_clip_rect(subtitle_rect);
+            paint_text_line(
+                ctx,
+                subtitle_rect,
+                subtitle,
+                &subtitle_style,
+                TextAlign::Start,
+            );
+            ctx.pop_clip();
+        }
+    }
+    geometry
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

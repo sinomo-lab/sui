@@ -263,6 +263,14 @@ by hand:
   starts at its top; in a rect with room for one line, the first line sits
   where it would on its own. Use `paint_text_line` for fields that show one
   line, such as values and menu rows, so their text never wraps.
+- `paint_text_line_elided(ctx, rect, text, &style, TextAlign::Start)` paints
+  one line like `paint_text_line`, fitted to the rect's width: text that
+  doesn't fit keeps as much of its start as fits and ends in "…", rather than
+  being cut at the edge mid-glyph. A rect too narrow even for "…" shows the
+  first character, clipped, so the text never vanishes silently. To fit the
+  line in `measure` and know whether it was cut, build an
+  `ElidedLine::new(ctx, text, &style, max_width)` and call its `paint`. Give
+  accessibility the full text, not `ElidedLine::text`.
 - `Paragraph::new(ctx, text, &style, align, max_width)` lays text out once, in
   `measure`, so `paint` draws exactly the lines whose size was reported:
 
@@ -280,6 +288,24 @@ fn paint(&self, ctx: &mut PaintCtx) {
 
 Text laid out in a box with an infinite height starts at the top and is sized
 to its lines; an infinite width does not wrap.
+
+Built-in widgets clip labels too wide for their space, as they always have.
+`SegmentedControl`, `BrowserTabBar`, and `ActionTilePaint` elide them instead
+with `.text_overflow(TextOverflow::Ellipsis)`; a `SegmentedControl` set that
+way also gives long labels the room short ones don't need before eliding any.
+To size an action tile or place a control in its trailing slot, build the
+`ActionTileGeometry` that `paint_action_tile` paints with:
+
+```rust,ignore
+let height = ActionTileGeometry::height(&theme, true);
+let geometry = ActionTileGeometry::new(&theme, tile, true, true, style);
+let show = Rect::new(
+    geometry.trailing_rect.max_x() - show_size.width,
+    geometry.trailing_rect.y() + (geometry.trailing_rect.height() - show_size.height) * 0.5,
+    show_size.width,
+    show_size.height,
+);
+```
 
 Use local widget bounds and logical pixels. The platform and renderer own DPI,
 surface formats, color management, and presentation. Keep clip, transform, and
