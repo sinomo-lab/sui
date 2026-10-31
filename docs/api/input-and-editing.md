@@ -173,6 +173,15 @@ Keyboard events remain important for navigation and commands. Custom editors
 should separate navigation/shortcut handling from committed text insertion in
 the same way.
 
+The IME is on while a widget paints a composition rectangle, as a focused
+built-in field does, and on touch screens that shows the soft keyboard. A
+touch that moves focus off an editor, such as a tap on a button below it,
+leaves the keyboard up until the finger lifts, so the layout does not move
+under the tap. A touch press on a `Button` or `IconButton` is also judged by
+where the button was when the finger went down, so a relayout during the tap
+does not cancel it. Build a submit button with `focus_on_press(false)` to keep
+the editor, and its keyboard, after the tap.
+
 ## Relative Mouse Motion and Cursor Grabs
 
 Viewport, camera, and canvas widgets can request host cursor policy directly

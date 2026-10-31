@@ -31,9 +31,9 @@ use sui_core::{
     DragEvent, DragEventKind, DragOutcome, DragPayload, DragScopeId, DragSessionId, DropEffect,
     DropEffects, Error, Event, FontHandle, ImageHandle, InvalidationKind, InvalidationRequest,
     InvalidationTarget, KeyState, KeyboardEvent, Modifiers, Point, PointerButton, PointerButtons,
-    PointerEvent, PointerEventKind, Rect, Result, SemanticsActionRequest, SemanticsEvent,
-    SemanticsNode, Size, TimerToken, Transform, UrlOpener, UrlOpenerBackend, Vector, WakeEvent,
-    WidgetId, WindowEvent, WindowId,
+    PointerEvent, PointerEventKind, PointerKind, Rect, Result, SemanticsActionRequest,
+    SemanticsEvent, SemanticsNode, Size, TimerToken, Transform, UrlOpener, UrlOpenerBackend,
+    Vector, WakeEvent, WidgetId, WindowEvent, WindowId,
 };
 use sui_layout::Constraints;
 use sui_scene::{
@@ -1361,6 +1361,14 @@ struct WindowState {
     next_animation_frame_index: u64,
     pending_animation_wake_count: usize,
     ime_composition_rect: Option<Rect>,
+    /// Touches between their down and up.
+    touches_down: HashSet<u64>,
+    /// The IME area shown when the first of `touches_down` went down, which
+    /// frames keep reporting until the last touch lifts. A tap that moves
+    /// focus off an editor would otherwise dismiss the soft keyboard during
+    /// the tap, and the relayout that follows can move the tapped control
+    /// from under the finger before it lifts.
+    held_ime_composition_rect: Option<Rect>,
     last_tick_time: f64,
     services: HostServices,
     command_sender: CommandSender,
@@ -1455,6 +1463,8 @@ impl WindowState {
             next_animation_frame_index: 0,
             pending_animation_wake_count: 0,
             ime_composition_rect: None,
+            touches_down: HashSet::new(),
+            held_ime_composition_rect: None,
             last_tick_time: 0.0,
             services: HostServices::default(),
             command_sender,
@@ -1588,6 +1598,13 @@ impl WindowState {
             self.pending_animation_wake_count = self.pending_animation_wake_count.saturating_add(1);
         }
         if let Event::Pointer(pointer) = &event {
+            if pointer.pointer_kind == PointerKind::Touch && pointer.kind == PointerEventKind::Down
+            {
+                if self.touches_down.is_empty() {
+                    self.held_ime_composition_rect = self.ime_composition_rect;
+                }
+                self.touches_down.insert(pointer.pointer_id);
+            }
             self.last_pointer_events
                 .insert(pointer.pointer_id, pointer.clone());
         }
@@ -1617,6 +1634,8 @@ impl WindowState {
             self.cancel_all_pointer_captures(&mut invalidations);
             self.pointer_capture.clear();
             self.last_pointer_events.clear();
+            self.touches_down.clear();
+            self.release_ime_hold();
             let position = self.active_drag.as_ref().map(|drag| drag.position);
             if let Some(position) = position {
                 let effects = self.finish_active_drag(position, true);
@@ -1686,6 +1705,7 @@ impl WindowState {
             // containing window. This clear deliberately bypasses modal focus trapping:
             // keeping logical focus would cause the next frame to enable the IME again.
             self.ime_composition_rect = None;
+            self.held_ime_composition_rect = None;
             let effects = self.apply_focus_request_unconstrained(FocusRequest::Clear);
             self.apply_event_effects(effects, &mut invalidations);
             self.finish_event(&event);
@@ -3129,6 +3149,17 @@ impl WindowState {
         }
     }
 
+    /// Once no touch is down, report the IME area the focused editor paints
+    /// again, rendering a frame if the held one goes away.
+    fn release_ime_hold(&mut self) {
+        if self.touches_down.is_empty()
+            && self.held_ime_composition_rect.take().is_some()
+            && self.ime_composition_rect.is_none()
+        {
+            self.schedule.mark(InvalidationKind::Paint);
+        }
+    }
+
     fn finish_event(&mut self, event: &Event) {
         match event {
             Event::Pointer(pointer)
@@ -3139,6 +3170,9 @@ impl WindowState {
             {
                 self.pointer_capture.remove(&pointer.pointer_id);
                 self.last_pointer_events.remove(&pointer.pointer_id);
+                if self.touches_down.remove(&pointer.pointer_id) {
+                    self.release_ime_hold();
+                }
             }
             Event::Wake(WakeEvent::Timer { token, .. }) => {
                 self.delivering_timers.remove(token);
@@ -3875,7 +3909,7 @@ impl WindowState {
             title: self.title.clone(),
             frame,
             semantics: self.last_semantics.clone(),
-            ime_composition_rect: self.ime_composition_rect,
+            ime_composition_rect: self.ime_composition_rect.or(self.held_ime_composition_rect),
             diagnostics,
         }
     }
@@ -6132,6 +6166,9 @@ pub struct RenderOutput {
     pub title: String,
     pub frame: SceneFrame,
     pub semantics: Vec<SemanticsNode>,
+    /// Where the IME's candidate window goes, or `None` to turn the IME and
+    /// any soft keyboard off. After a touch moves focus off an editor, this
+    /// keeps the editor's area until the last finger lifts.
     pub ime_composition_rect: Option<Rect>,
     pub diagnostics: RenderDiagnostics,
 }

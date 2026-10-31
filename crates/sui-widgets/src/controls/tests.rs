@@ -13,7 +13,7 @@ use crate::{
     HdrThemeMode, SemanticColorToken, SemanticTone, WidgetLuminanceRole, resolve_luminance_role,
 };
 use crate::{
-    containers::{SizedBox, Stack},
+    containers::{Align, SizedBox, Stack},
     selection::SelectionScope,
     text_command::{TEXT_COMMAND, TextCommand},
 };
@@ -1559,6 +1559,109 @@ fn a_button_that_focuses_on_press_takes_focus_from_the_editor() -> Result<()> {
     click(&mut runtime, window_id, button_at)?;
 
     assert_ne!(runtime.focused_widget(window_id)?, editor);
+    Ok(())
+}
+
+fn touch(kind: PointerEventKind, at: Point) -> Event {
+    let mut event = primary_pointer(kind, at, kind == PointerEventKind::Down);
+    if let Event::Pointer(pointer) = &mut event {
+        pointer.pointer_kind = PointerKind::Touch;
+    }
+    event
+}
+
+#[test]
+fn tapping_a_button_under_an_editor_keeps_the_keyboard_up_until_the_finger_lifts() -> Result<()> {
+    let presses = Rc::new(Cell::new(0));
+    let on_press = Rc::clone(&presses);
+    let (mut runtime, window_id, (editor, editor_at), (button, button_at)) =
+        editor_and_button(Button::new("Bold").on_press(move || on_press.set(on_press.get() + 1)))?;
+    runtime.handle_event(window_id, touch(PointerEventKind::Down, editor_at))?;
+    runtime.handle_event(window_id, touch(PointerEventKind::Up, editor_at))?;
+    let keyboard = runtime.render(window_id)?.ime_composition_rect;
+    assert!(keyboard.is_some(), "the focused editor shows the keyboard");
+
+    runtime.handle_event(window_id, touch(PointerEventKind::Down, button_at))?;
+    let pressed = runtime.render(window_id)?;
+    let focused = |id| {
+        pressed
+            .semantics
+            .iter()
+            .any(|node| node.id == id && node.state.focused)
+    };
+    assert!(
+        focused(button) && !focused(editor),
+        "the press focuses the button"
+    );
+    assert_eq!(
+        pressed.ime_composition_rect, keyboard,
+        "the keyboard stays up, so nothing moves under the finger"
+    );
+
+    runtime.handle_event(window_id, touch(PointerEventKind::Up, button_at))?;
+    assert_eq!(presses.get(), 1);
+    assert_eq!(runtime.render(window_id)?.ime_composition_rect, None);
+    Ok(())
+}
+
+/// Presses a centered button, grows the window as a closing soft keyboard
+/// would, which moves the button down, and releases where it was pressed.
+/// Returns how many times the button activated.
+fn press_across_a_relayout(pointer_kind: PointerKind) -> Result<usize> {
+    let presses = Rc::new(Cell::new(0));
+    let on_press = Rc::clone(&presses);
+    let mut runtime = Application::new()
+        .window(
+            WindowBuilder::new()
+                .title("Controls")
+                .initial_size(Size::new(320.0, 240.0))
+                .root(Align::center(
+                    Button::new("Create").on_press(move || on_press.set(on_press.get() + 1)),
+                )),
+        )
+        .build()?;
+    let window_id = runtime.window_ids()[0];
+    let button_bounds = |output: &RenderOutput| {
+        output
+            .semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some("Create"))
+            .expect("the button has semantics")
+            .bounds
+    };
+    let before = button_bounds(&runtime.render(window_id)?);
+    let at = super::rect_center(before);
+    let pointer = |kind| {
+        let mut event = primary_pointer(kind, at, kind == PointerEventKind::Down);
+        if let Event::Pointer(pointer) = &mut event {
+            pointer.pointer_kind = pointer_kind;
+        }
+        event
+    };
+
+    runtime.handle_event(window_id, pointer(PointerEventKind::Down))?;
+    runtime.handle_event(
+        window_id,
+        Event::Window(WindowEvent::Resized(Size::new(320.0, 480.0))),
+    )?;
+    let after = button_bounds(&runtime.render(window_id)?);
+    assert!(
+        !after.contains(at),
+        "the relayout moves the button from under the pointer"
+    );
+    runtime.handle_event(window_id, pointer(PointerEventKind::Up))?;
+    Ok(presses.get())
+}
+
+#[test]
+fn a_tap_activates_a_button_that_moved_from_under_the_finger() -> Result<()> {
+    assert_eq!(press_across_a_relayout(PointerKind::Touch)?, 1);
+    Ok(())
+}
+
+#[test]
+fn a_click_does_not_activate_a_button_that_moved_from_under_the_pointer() -> Result<()> {
+    assert_eq!(press_across_a_relayout(PointerKind::Mouse)?, 0);
     Ok(())
 }
 

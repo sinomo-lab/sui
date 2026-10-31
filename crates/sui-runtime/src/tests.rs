@@ -5481,6 +5481,140 @@ fn browser_back_clears_ime_focus_before_becoming_unhandled() {
     );
 }
 
+/// A runtime whose only widget is an editor focused by assistive
+/// technology, so it shows the IME without a pointer touching it.
+fn focused_ime_runtime() -> (Runtime, sui_core::WindowId, WidgetId) {
+    let mut runtime = Application::new()
+        .window(
+            WindowBuilder::new()
+                .title("Touch IME")
+                .root(PaintedChildRoot::new(FocusedImeLeaf)),
+        )
+        .build()
+        .unwrap();
+    let window_id = runtime.window_ids()[0];
+    let editor = runtime
+        .render(window_id)
+        .unwrap()
+        .semantics
+        .iter()
+        .find(|node| node.role == SemanticsRole::TextInput)
+        .expect("focused IME test input")
+        .id;
+    assert!(
+        runtime
+            .handle_semantics_action(window_id, editor, SemanticsActionRequest::Focus)
+            .unwrap()
+    );
+    assert!(
+        runtime
+            .render(window_id)
+            .unwrap()
+            .ime_composition_rect
+            .is_some()
+    );
+    (runtime, window_id, editor)
+}
+
+fn primary_press(pointer_kind: PointerKind, kind: PointerEventKind, pointer_id: u64) -> Event {
+    let mut pointer = PointerEvent::new(kind, Point::new(8.0, 200.0));
+    pointer.pointer_id = pointer_id;
+    pointer.pointer_kind = pointer_kind;
+    pointer.button = Some(PointerButton::Primary);
+    if kind == PointerEventKind::Down {
+        pointer.buttons = PointerButtons::new(1);
+    }
+    Event::Pointer(pointer)
+}
+
+#[test]
+fn a_touch_keeps_the_ime_up_until_the_last_finger_lifts() {
+    let (mut runtime, window_id, editor) = focused_ime_runtime();
+    let shown = runtime.render(window_id).unwrap().ime_composition_rect;
+    let touch = |kind, pointer_id| primary_press(PointerKind::Touch, kind, pointer_id);
+
+    runtime
+        .handle_event(window_id, touch(PointerEventKind::Down, 1))
+        .unwrap();
+    // Focus leaves the editor during the touch, as a tapped button takes it.
+    runtime
+        .handle_semantics_action(window_id, editor, SemanticsActionRequest::Blur)
+        .unwrap();
+    assert_eq!(runtime.focused_widget(window_id).unwrap(), None);
+    assert_eq!(
+        runtime.render(window_id).unwrap().ime_composition_rect,
+        shown,
+        "the keyboard stays up while the finger is down"
+    );
+
+    runtime
+        .handle_event(window_id, touch(PointerEventKind::Down, 2))
+        .unwrap();
+    runtime
+        .handle_event(window_id, touch(PointerEventKind::Up, 2))
+        .unwrap();
+    assert_eq!(
+        runtime.render(window_id).unwrap().ime_composition_rect,
+        shown,
+        "another finger lifting leaves it up"
+    );
+
+    runtime
+        .handle_event(window_id, touch(PointerEventKind::Up, 1))
+        .unwrap();
+    assert!(
+        runtime.needs_render(window_id).unwrap(),
+        "lifting the last finger renders a frame to dismiss the keyboard"
+    );
+    assert_eq!(
+        runtime.render(window_id).unwrap().ime_composition_rect,
+        None
+    );
+}
+
+#[test]
+fn a_cancelled_touch_or_an_unfocused_window_releases_the_ime() {
+    for release in [
+        primary_press(PointerKind::Touch, PointerEventKind::Cancel, 1),
+        Event::Window(WindowEvent::Focused(false)),
+    ] {
+        let (mut runtime, window_id, editor) = focused_ime_runtime();
+        runtime
+            .handle_event(
+                window_id,
+                primary_press(PointerKind::Touch, PointerEventKind::Down, 1),
+            )
+            .unwrap();
+        runtime
+            .handle_semantics_action(window_id, editor, SemanticsActionRequest::Blur)
+            .unwrap();
+        runtime.handle_event(window_id, release.clone()).unwrap();
+        assert_eq!(
+            runtime.render(window_id).unwrap().ime_composition_rect,
+            None,
+            "{release:?} releases the keyboard"
+        );
+    }
+}
+
+#[test]
+fn a_mouse_press_does_not_hold_the_ime() {
+    let (mut runtime, window_id, editor) = focused_ime_runtime();
+    runtime
+        .handle_event(
+            window_id,
+            primary_press(PointerKind::Mouse, PointerEventKind::Down, 1),
+        )
+        .unwrap();
+    runtime
+        .handle_semantics_action(window_id, editor, SemanticsActionRequest::Blur)
+        .unwrap();
+    assert_eq!(
+        runtime.render(window_id).unwrap().ime_composition_rect,
+        None
+    );
+}
+
 #[test]
 fn dispatch_event_reports_widget_handled_browser_back() {
     let (mut runtime, window_id, _, leaf_counters) = build_runtime();

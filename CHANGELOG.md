@@ -54,6 +54,13 @@ Versioning, with the usual expectation that the API may change during the
   selection in a code block scrolled by the wheel now land on the characters
   under the pointer; the first press after a scroll used to hit the text as if
   unscrolled.
+- On touch screens, a tap that moves focus off an editor, such as a tap on a
+  button below it, keeps the soft keyboard up until the finger lifts. The
+  keyboard used to close as the finger went down, and the relayout that
+  followed could move the button from under the finger, so the tap did
+  nothing. A touch press on a `Button` or `IconButton` is also judged by where
+  the button was when the finger went down, so other relayouts during a tap
+  no longer cancel it. Mouse presses are unchanged.
 - Updated dependencies, including PyO3 0.30, napi 3.16, resvg 0.49, and
   wasm-bindgen 0.2.130; building the browser package needs
   `wasm-bindgen-cli` 0.2.130.

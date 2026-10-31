@@ -1,6 +1,6 @@
 use super::{set_hover_animation_target, set_press_animation_target};
 use crate::{DefaultTheme, Progress};
-use sui_core::{Event, KeyState, PointerButton, PointerEventKind};
+use sui_core::{Event, KeyState, PointerButton, PointerEventKind, PointerKind, Rect};
 use sui_runtime::EventCtx;
 use sui_runtime::FrameClock;
 
@@ -56,6 +56,11 @@ pub(super) struct PressInteraction {
     /// Whether a pointer press focuses the control, or leaves focus where it
     /// is.
     pub(super) focus_on_press: bool,
+    /// Where the control was when a touch pressed it. The press is judged
+    /// against that until it ends, so a relayout during the press, such as a
+    /// soft keyboard closing, can't move the control from under a finger
+    /// that stayed put.
+    touch_press_bounds: Option<Rect>,
 }
 
 impl Default for PressInteraction {
@@ -67,6 +72,7 @@ impl Default for PressInteraction {
             press_animation: Progress::new(0.0),
             preview: InteractionPreview::None,
             focus_on_press: true,
+            touch_press_bounds: None,
         }
     }
 }
@@ -94,6 +100,7 @@ impl PressInteraction {
                 let theme = theme();
                 self.hovered = false;
                 self.pressed = false;
+                self.touch_press_bounds = None;
                 set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
                 set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                 ctx.request_paint();
@@ -104,7 +111,8 @@ impl PressInteraction {
 
         match event {
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
-                self.set_hovered(ctx.bounds().contains(pointer.position), ctx, &theme);
+                let bounds = self.touch_press_bounds.unwrap_or(ctx.bounds());
+                self.set_hovered(bounds.contains(pointer.position), ctx, &theme);
             }
             Event::Pointer(_pointer) if matches!(_pointer.kind, PointerEventKind::Enter) => {
                 self.set_hovered(true, ctx, &theme);
@@ -119,6 +127,8 @@ impl PressInteraction {
                 let theme = theme();
                 self.pressed = true;
                 self.hovered = true;
+                self.touch_press_bounds =
+                    (pointer.pointer_kind == PointerKind::Touch).then(|| ctx.bounds());
                 set_hover_animation_target(&mut self.hover_animation, 1.0, &theme, ctx);
                 set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
                 ctx.request_pointer_capture(pointer.pointer_id);
@@ -136,7 +146,8 @@ impl PressInteraction {
                     && (pointer.button == Some(PointerButton::Primary) || self.pressed) =>
             {
                 let theme = theme();
-                let hovered = ctx.bounds().contains(pointer.position);
+                let bounds = self.touch_press_bounds.take().unwrap_or(ctx.bounds());
+                let hovered = bounds.contains(pointer.position);
                 let activate = self.pressed && hovered;
                 self.pressed = false;
                 self.hovered = hovered;
@@ -160,6 +171,7 @@ impl PressInteraction {
                     let theme = theme();
                     self.pressed = false;
                     self.hovered = false;
+                    self.touch_press_bounds = None;
                     set_hover_animation_target(&mut self.hover_animation, 0.0, &theme, ctx);
                     set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx);
                     ctx.release_pointer_capture(pointer.pointer_id);
