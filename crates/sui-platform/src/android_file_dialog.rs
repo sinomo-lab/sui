@@ -24,8 +24,8 @@ use crate::file_dialog::{
     PlatformFile, PlatformFolder,
 };
 
-/// `net.sinomo.ui.platform.FilePicker`, compiled by the build script.
-const FILE_PICKER_DEX: &[u8] = include_bytes!(env!("SUI_ANDROID_DEX"));
+/// `net.sinomo.ui.platform.FilePicker`, compiled by `cargo xtask android dex`.
+const FILE_PICKER_DEX: &[u8] = include_bytes!("../java/classes.dex");
 
 // Matches the mode numbers in FilePicker.java.
 const OPEN_FILE: i32 = 0;

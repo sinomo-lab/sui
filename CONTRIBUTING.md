@@ -98,6 +98,16 @@ cargo check -p sinomo-ui-platform --target x86_64-pc-windows-gnu
 cargo check -p sinomo-ui-demo --target wasm32-unknown-unknown --no-default-features --features web
 ```
 
+Android builds embed the Java helpers in `crates/sui-platform/java` as the
+checked-in `classes.dex`. After changing a helper, rebuild the DEX and commit
+it with the source. This needs a JDK and an Android SDK in `ANDROID_HOME` with
+build tools 35.0.0, whose `d8` the check expects:
+
+```bash
+cargo xtask android dex
+cargo xtask android dex --check
+```
+
 Generate the widget-book artifacts only when the change needs visual review:
 
 ```bash

@@ -4,96 +4,71 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
-## [Unreleased]
+## [0.6.1] - 2026-11-01
+
+This release lets event handlers open URLs, adds file and folder dialogs on
+Android, scrolls text that overflows text fields and code blocks, makes touch
+taps more reliable, and can elide labels that don't fit.
+
+### Upgrading from 0.6.0
+
+- Update the SUI crates together to `0.6.1`. `sinomo-ui-lucide` stays at
+  `1.47.3`.
+- Struct literals of `FileDialogSelection` need `folders` (or
+  `..Default::default()`), and those of `ActionTilePaint` need
+  `text_overflow`.
+- Building the browser package needs `wasm-bindgen-cli` 0.2.130.
 
 ### Rust
 
-- Added `EventCtx::open_url`, which opens a URL in the default browser, mail
-  client, or app registered for its scheme. Call it from a `Link`'s
-  `on_open_with_ctx`, a `RichDocumentView`'s `on_link_with_ctx`, or any other
-  handler, such as a button's. Links still open nothing on their own.
-- `open_url` goes through a shared `UrlOpener` service like the clipboard's,
-  reached with `Runtime::url_opener` and `set_url_opener_backend`. The desktop
-  platform opens URLs through the system's registered handler (with the `open`
-  crate), the web platform in a new tab, and Android with a view activity;
-  runtimes without a platform open nothing. `LocalUrlOpenerBackend` records
-  the URLs a test asked to open.
-- A `UrlPolicy` decides which URLs open. The default opens only absolute
-  `http`, `https`, and `mailto` URLs, so links in untrusted Markdown cannot
-  launch local files, scripts, or arbitrary protocol handlers. Replace it with
-  `App::url_policy(UrlPolicy::new(...))`, extend the default from a custom
-  policy with `UrlPolicy::allows_by_default`, or turn the check off with
-  `UrlPolicy::allow_all`.
-- `NativeFileDialogs` works on Android. Opening and saving show the system
-  document picker, and the chosen files are read and written through their
-  document providers, so they have no `path`. Filters become the MIME types
-  Android knows for their extensions, and a filter with an unknown extension
-  shows every file. Building for Android now needs a JDK and the Android SDK
-  build tools, which compile the small Java helper that receives the picker's
-  result.
-- Folder dialogs return `PlatformFolder` handles in the new
-  `FileDialogSelection::folders`. A folder lists its `entries`, finds a `file`
-  or `folder` by name, and creates them with `create_file` and
-  `create_folder`, so folders work without a filesystem path. Desktop folders
-  wrap their path and still appear in `files` as before; Android uses the
-  system folder picker; and the web uses `showDirectoryPicker`, which
-  Chromium browsers provide, while other browsers return an error. Code that
-  builds a `FileDialogSelection` itself, such as a test's `FileDialogService`,
-  must now set `folders` or use `..Default::default()`.
-- A `TextInput` whose text is wider than the field scrolls it sideways,
-  keeping the caret and the text just typed in view, where it used to pin the
-  caret to the field's edge over hidden text. Clicks, drag selection,
-  selection highlights, and the IME candidate window follow the scrolled text,
-  editable semantics report the offset as `scroll_x`, and `PasswordInput` and
-  `DateTimeInput` scroll the same way. Entered text now starts where the caret
-  measures it from rather than at its first glyph's ink, and read-only text
-  keeps the field's `text_style`, muted.
-- A touch drag that moves mostly sideways on a `RichDocumentView` code block
-  wider than the document pans its code, as a horizontal wheel does, instead
-  of selecting text. Other touch drags behave as before. Clicks and drag
-  selection in a code block scrolled by the wheel now land on the characters
-  under the pointer; the first press after a scroll used to hit the text as if
-  unscrolled.
-- On touch screens, a tap that moves focus off an editor, such as a tap on a
-  button below it, keeps the soft keyboard up until the finger lifts. The
-  keyboard used to close as the finger went down, and the relayout that
-  followed could move the button from under the finger, so the tap did
-  nothing. A touch press on a `Button` or `IconButton` is also judged by where
-  the button was when the finger went down, so other relayouts during a tap
-  no longer cancel it. Mouse presses are unchanged.
-- Added `ElidedLine` and `paint_text_line_elided`, which fit a line of text to
-  a width: text that doesn't fit keeps as much of its start as fits, cut
-  between characters, and ends in "…" instead of in a glyph cut in half. A
-  width too narrow even for "…" shows the first character, clipped.
-- `SegmentedControl`, `BrowserTabBar`, and `ActionTilePaint` take a
-  `text_overflow` option. They still clip labels by default;
-  `TextOverflow::Ellipsis` elides them instead. With it, `SegmentedControl`
-  also widens segments whose labels need more than an equal share, taking
-  room from segments that need less, so only labels that can't fit at all are
-  elided, and taps follow the segments as drawn.
-- Added `ActionTileGeometry`, where `paint_action_tile` puts a tile's icon,
-  title, subtitle, and trailing slot, and `ActionTileGeometry::height`, the
-  height a tile needs for the theme's text sizes. `paint_action_tile` returns
-  the geometry it painted with. `ActionTilePaint` has a new public field, so
-  code that builds it as a struct literal must set `text_overflow`.
+- Added `EventCtx::open_url`, which opens a URL in the default browser or the
+  app registered for its scheme on desktop, Android, and the web. Call it from
+  any handler, such as a `Link`'s `on_open_with_ctx`; links still open nothing
+  on their own. `LocalUrlOpenerBackend` records the URLs a test opens.
+- A `UrlPolicy` decides which URLs open. The default allows only absolute
+  `http`, `https`, and `mailto` URLs, so untrusted Markdown cannot launch
+  local files or other protocol handlers. Install another with
+  `App::url_policy`, extend the default with `UrlPolicy::allows_by_default`,
+  or allow everything with `UrlPolicy::allow_all`.
+- `NativeFileDialogs` works on Android 8.0 and later through the system
+  document picker. Files chosen there have no `path` and are read and written
+  through their document providers.
+- Folder dialogs return `PlatformFolder` handles in
+  `FileDialogSelection::folders`, which list, find, and create entries without
+  a filesystem path, on desktop, Android, and in browsers with
+  `showDirectoryPicker`.
+- `TextInput`, `PasswordInput`, and `DateTimeInput` scroll text wider than the
+  field to keep the caret in view, instead of pinning the caret over hidden
+  text. Editable semantics report the offset as `scroll_x`, and read-only text
+  keeps the field's `text_style`.
+- Sideways touch drags on a wide `RichDocumentView` code block pan the code
+  instead of selecting text, and clicks in a code block scrolled by the wheel
+  now land under the pointer.
+- A tap that moves focus off an editor keeps the soft keyboard up until the
+  finger lifts, so the relayout no longer moves the tapped button away. Touch
+  presses on `Button` and `IconButton` are judged by where the button was when
+  the finger went down.
+- Added `ElidedLine` and `paint_text_line_elided`, which end text too wide for
+  its line in "…". `SegmentedControl`, `BrowserTabBar`, and `ActionTilePaint`
+  take a `text_overflow` option: `TextOverflow::Ellipsis` elides labels
+  instead of clipping them, and `SegmentedControl` then widens the segments
+  that need it.
+- Added `ActionTileGeometry`, which `paint_action_tile` now returns, with
+  `ActionTileGeometry::height` for the height a tile needs.
 - Updated dependencies, including PyO3 0.30, napi 3.16, resvg 0.49, and
-  wasm-bindgen 0.2.130; building the browser package needs
-  `wasm-bindgen-cli` 0.2.130.
+  wasm-bindgen 0.2.130.
 
 ### Python and JavaScript
 
-- Added `open_url(url)` (`openUrl` in JavaScript), which opens a URL under the
-  same default policy; pass it as a link's `on_open` (`onOpen`) to open the
-  link. `set_url_policy` (`setUrlPolicy`) replaces the policy with a callback,
-  and `url_allowed_by_default` (`urlAllowedByDefault`) extends the default.
+- Added `open_url(url)` (`openUrl`), which can serve as a link's `on_open`
+  (`onOpen`), with `set_url_policy` (`setUrlPolicy`) and
+  `url_allowed_by_default` (`urlAllowedByDefault`) to choose which URLs open.
 
 ## [0.6.0] - 2026-10-30
 
 This release makes the JavaScript package async and runs it in browsers on a
 WebAssembly build, removes the APIs deprecated in 0.4, and makes small-change
-frames much cheaper: retained layers scroll on the compositor, draws batch
-across packets with clips applied in shaders, and windows on every platform
-redraw only what changed.
+frames much cheaper, down to redrawing only what changed on every platform.
 
 ### Upgrading from 0.5
 
@@ -104,9 +79,8 @@ redraw only what changed.
 
 ### Breaking changes
 
-- Removed the APIs deprecated in 0.4, as the 0.4 upgrade notes announced.
-  Code that compiled without deprecation warnings is unaffected. Use the
-  replacements the warnings named:
+- Removed the APIs deprecated in 0.4. Code without deprecation warnings is
+  unaffected; the replacements are:
   - Types: `Modal` → `Dialog`, `Drawer` → `SideSheet`, `BusyIndicator` →
     `Spinner`, `ComboBox` → `Select`, `SpinBox` → `NumberInput`,
     `MultilineTextInput` → `TextArea`, `Divider` → `Separator`, `DataGrid` →
@@ -142,160 +116,96 @@ redraw only what changed.
     replacement; `on_change` reports only actual changes.
 - The JavaScript package `@sui/ui` is now ESM and async-first, and needs
   Node.js 20.19 or newer (CommonJS code can still `require` it):
-  - `App.run()` returns a promise and runs the app on Node's event loop
-    instead of blocking; pass `{ onReady(ui) { … } }` instead of calling
+  - `App.run()` returns a promise and runs on Node's event loop instead of
+    blocking; pass `{ onReady(ui) { … } }` instead of calling
     `App.runWithHandle`.
-  - `UiHandle.post`, `callLater`, and `callEvery`, `Timer`, and `UiTaskQueue`
-    are gone; Node's own timers and promises work while the app runs.
-  - `UiHandle.showFileDialog(options)` returns a promise of the paths instead
-    of taking a callback.
-  - Widget factories are `lowerCamelCase` only; the `PascalCase` positional
-    functions such as `Button` are no longer exported.
+  - `UiHandle.post`, `callLater`, `callEvery`, `Timer`, and `UiTaskQueue` are
+    gone; Node's own timers and promises work while the app runs.
+  - `UiHandle.showFileDialog(options)` returns a promise instead of taking a
+    callback.
+  - Widget factories are `lowerCamelCase` only; `PascalCase` functions such
+    as `Button` are no longer exported.
   - `RunningApp.windowId(index)` is now `windowHandle(index)`.
 
 ### JavaScript
 
-- Added a WebAssembly build that runs the same API in browsers: build it with
-  `cargo xtask web build`, and bundlers and browsers load it through the
-  package's `browser` export condition. `App.run({ canvas })` draws on a
-  canvas and keeps it the size of its container.
-- Callbacks may be `async`, and errors from callbacks, including rejected
-  promises, go to `setErrorHandler` (by default `console.error`) without
-  stopping the app.
-- Added promise helpers: `app.once(name)`, `state.changed()`, the
-  `state.changes()` async iterator, and `running.idle()` to wait for async
-  callbacks in tests. `App.run` and listeners take an `AbortSignal`.
-- `app.on` returns a `Subscription`; it and `StateSubscription` are
-  disposable with `using`.
-- Builders such as `Window.root()` and `App.window()` return their object for
-  chaining; `Point`, `Size`, `Rect`, and `Color` have `equals` and `toString`;
-  added `Color.rgba`, `Color.black`, `Color.white`, `version`, and
-  `RunningApp.saveScreenshot`.
+- Added a WebAssembly build of the same API for browsers, built with
+  `cargo xtask web build` and loaded through the package's `browser` export
+  condition. `App.run({ canvas })` draws on a canvas sized to its container.
+- Callbacks may be `async`, and their errors and rejected promises go to
+  `setErrorHandler` (by default `console.error`) without stopping the app.
+- Added `app.once(name)`, `state.changed()`, `state.changes()`, and
+  `running.idle()`, and `App.run` and listeners take an `AbortSignal`.
+  Subscriptions are disposable with `using`.
+- Builders chain; `Point`, `Size`, `Rect`, and `Color` have `equals` and
+  `toString`; added `Color.rgba`, `Color.black`, `Color.white`, `version`,
+  and `RunningApp.saveScreenshot`.
+- Added `app.fontUrl(url)` and `FontHandle.family` (also in Python). Invalid
+  font data now fails at registration.
 - Fixed `rebuildOnChange`, which rendered nothing, and custom widget `event`
-  callbacks that return nothing, whose context requests were dropped.
-- A virtual table's `selected` state that holds a string now receives the
-  selected key as a string, matching the key type of its callbacks.
-- Added `app.fontUrl(url)` to fetch and register a font, and
-  `FontHandle.family` (also in Python) to read a registered font's family
-  name. Invalid font data now fails at registration.
+  callbacks that return nothing, whose context requests were dropped. A
+  virtual table's string `selected` state now receives string keys.
 - Added a `node:test` suite that runs on both the addon and the WebAssembly
   build.
 
 ### Python
 
-- The sdist places the license file at its root, where its metadata declares
-  it. The release workflow checks each sdist's contents and metadata, and
-  runs `twine check`, before uploading it.
-- The examples open interactive desktop windows with `App.run()` instead of
-  printing snapshots, and paint the theme's window background with a root
-  `surface`, as the README's examples now do.
+- The sdist places the license file at its root, as its metadata declares,
+  and the release workflow checks each sdist before uploading it.
+- The examples open interactive windows with `App.run()` instead of printing
+  snapshots.
 
 ### Rust
 
-- Added `DesktopPlatform::start_pumped` and `PumpedDesktop`, and
-  `App::start_pumped_with_handle`, to drive the desktop event loop one turn at
-  a time from another framework's event loop.
-- Added `DesktopPlatform::start_web` and `with_web_canvas`, and
-  `App::start_web_with_handle`, to run in the browser on a chosen canvas and
-  learn when the app exits.
-- Fonts can be WOFF or WOFF2 as well as TrueType or OpenType, in Rust and in
-  the bindings. Added `RegisteredFont::try_from_bytes`, which checks the data,
-  and `RegisteredFont::family_name`; `font_bytes` and `register_font_bytes`
-  now fail for data that is not a font.
-- Offscreen renderers share compiled pipelines, and the shared cache did not
-  tell single-source and dual-source text pipelines apart. A renderer without
-  dual-source blending could leave its text pipeline for later renderers,
-  which then drew LCD text in grayscale. Text pipelines are now cached per
-  variant.
-- On Windows, closing the last window no longer returns from `run` before the
-  window is destroyed, which left it on screen until the process exited.
-- `ContextMenu` keeps its panel positions, and with them its paint,
-  semantics, and hit testing, when a parent such as a toolbar measures it
-  again after arranging it.
-- `VirtualTable` publishes its viewport only when arranged, not when a parent
-  measures provisional sizes, which made layout observers alternate between
-  sizes forever.
-- Touch input no longer opens tooltips, which could cover the menu or action
-  a finger just activated.
+- Added `DesktopPlatform::start_pumped`, `PumpedDesktop`, and
+  `App::start_pumped_with_handle` to drive the desktop event loop from another
+  framework's loop, and `DesktopPlatform::start_web`, `with_web_canvas`, and
+  `App::start_web_with_handle` to run on a chosen browser canvas.
+- Fonts can be WOFF or WOFF2. Added `RegisteredFont::try_from_bytes` and
+  `RegisteredFont::family_name`; `font_bytes` and `register_font_bytes` now
+  fail for data that is not a font.
+- Fixed LCD text drawn in grayscale after a renderer without dual-source
+  blending shared its text pipeline.
+- On Windows, closing the last window no longer leaves it on screen until the
+  process exits.
+- Fixed `ContextMenu` panels misplaced after a parent measured them again, and
+  `VirtualTable` viewport observers alternating between sizes forever.
+- Touch input no longer opens tooltips.
 
 ### Performance
 
-- On Android, a focused window no longer presents every display frame while
-  its UI is unchanged. Desktop windows keep presenting so that variable
-  refresh rate does not lower the monitor's refresh rate.
-- In the browser, a focused canvas no longer wakes on every display frame
-  while nothing changes, matching Android.
-- Bundled fallback fonts on the web and Android, and fonts registered by the
-  app, are shared with the text system instead of copied into the heap.
-- Release web builds run Binaryen's `wasm-opt -Os` (Trunk for the demo,
-  `cargo xtask web build --release` for the JavaScript package when
-  `wasm-opt` is installed or `WASM_OPT` is set) and enable WebAssembly SIMD.
-  The demo module drops from 16.6 MB to 11.7 MB.
-- Per-widget layout, paint, and semantics phases only read the clock when
-  `SUI_PROFILE_WIDGET_TIMINGS` is set, and the layout graph uses a faster
-  hasher for widget IDs.
-- JavaScript widget callbacks and class-instance checks cross the
-  WebAssembly boundary fewer times per call.
-- Scrolling and translating a retained layer is now compositor-only: the
-  renderer reuses the layer's composed geometry and vertex buffers and moves
-  them with a GPU offset, and rectangular clips are applied as scissors.
-- Layout change detection no longer rebuilds a node index for every moved
-  widget, which made each scroll step quadratic in the number of widgets.
-- Translated layout bounds keep their exact size, and descendants that move
-  with their paint boundary within f32 rounding stay composition-only, so
-  retained content far from the origin is no longer repainted on scroll.
-- Text packets only compare the backdrop under themselves, so text scrolling
-  over a uniform background keeps its rasterized glyphs.
+- Windows redraw only the regions that changed, and nothing when none did:
+  browsers, HDR, and wide-gamut outputs through their persistent target, and
+  native SDR windows through a persistent frame copied to the swapchain. The
+  frame costs one window-sized texture, which `trim_memory` frees while the
+  window has no surface.
+- Scrolling and translating a retained layer is compositor-only, including
+  content far from the origin, and text scrolling over a uniform background
+  keeps its rasterized glyphs.
+- Rectangular clips are applied in the scene shaders, and draws are reordered
+  and merged across packets into cached groups, so the 1,200-widget controls
+  grid goes from 1,201 to 22 draw calls per frame. Vertex and instance formats
+  grow by 16 bytes each.
+- Small-change frames skip most whole-tree and whole-scene work, and layout
+  change detection is no longer quadratic in the number of widgets.
+- On Android and in browsers, an unchanged window no longer presents every
+  display frame. Desktop windows keep presenting so that variable refresh rate
+  does not lower the monitor's refresh rate.
+- Suspending a window, such as by backgrounding an Android app, keeps its
+  retained scene, so resuming at the same size shows the existing frame. Added
+  `WgpuRenderer::trim_memory` and `MemoryTrimLevel`, which hosts call on
+  suspend and on the system's memory warning.
+- Path clips use a `Stencil8` attachment discarded after each pass, saving
+  tile-based mobile GPUs a write per clipped pass.
+- The image texture cache expires textures unused for 2 seconds rather than
+  120 frames, within a budget of 64 MB on mobile and 256 MB elsewhere.
+- Release web builds use WebAssembly SIMD and run `wasm-opt -Os` (for the
+  JavaScript package, when `wasm-opt` is installed or `WASM_OPT` is set). The
+  demo module drops from 16.6 MB to 11.7 MB.
+- Bundled and app fonts are shared with the text system instead of copied,
+  per-widget phases read the clock only when `SUI_PROFILE_WIDGET_TIMINGS` is
+  set, and JavaScript callbacks cross the WebAssembly boundary less often.
 - Added `scroll-flat` and `scroll-retained` fixtures to `sui-bench`.
-- Small-change frames do less whole-tree and whole-scene work:
-  - The renderer reorders each fragment's draws so draws that share a
-    pipeline and clip are adjacent, without moving any draw past one it
-    overlaps, and drops clip rectangles that contain the whole draw. The
-    controls grid goes from 1,201 to 647 draw calls per frame.
-  - The runtime keeps the graph from before layout by swapping buffers
-    instead of copying a snapshot, and diffs the two graphs directly.
-  - Stack metadata is only rewritten when it changed, so unchanged frames
-    keep sharing scene command lists with the renderer.
-  - The frame image registry is reused while its images are unchanged, and
-    unused text layouts are pruned in batches rather than every frame.
-  - Appending a scene to an empty one shares its commands instead of copying
-    them, and semantics assembly uses a faster hasher.
-- Rectangular clips are applied in the scene shaders instead of with
-  scissors: every vertex and glyph instance carries its clip in framebuffer
-  pixels, snapped to the same edges a scissor uses, and moves with its
-  fragment. Draws with different clips can then share a draw call, and runs
-  of up to 16 consecutive packets are merged into cached groups that are
-  rebuilt only when a member changes. The 1,200-widget controls grid goes
-  from 647 to 22 draw calls per frame, which matters most in browsers, where
-  each GPU call goes through JavaScript. Vertex and instance formats grow by
-  16 bytes each.
-- Partial redraw: when a window renders through its persistent intermediate
-  target (always in browsers, and for HDR and wide-gamut output), a frame
-  clears and redraws only the region where its packets changed, and redraws
-  nothing when none did. Reordered packets, a resized target, a different
-  image registry, external images, frames drawn straight to the swapchain,
-  and damage over half the target fall back to a full redraw.
-- Native SDR windows (Windows, macOS, Linux, Android, and iOS) redraw
-  partially too: they draw into a persistent frame in the swapchain's format
-  and copy it to the swapchain, when the swapchain accepts copies. Frames
-  that change everything pay for the extra copy. The persistent frame holds
-  one extra window-sized texture, which `trim_memory` frees while the window
-  has no surface.
-- Path clips use a stencil-only `Stencil8` attachment whose contents are
-  discarded after each pass instead of stored, which saves tile-based mobile
-  GPUs a write of the whole attachment per clipped pass.
-- Suspending a window (backgrounding an Android app) releases only its
-  surface and keeps the renderer's retained scene. Resuming with the same
-  size and scale presents the existing frame instead of relaying out and
-  rebuilding everything.
-- Added `WgpuRenderer::trim_memory` and `MemoryTrimLevel`. Desktop and mobile
-  hosts call it with `Background` on suspend, freeing image textures,
-  staging memory, and hidden frames, and with `Critical` on the system's
-  memory warning, also freeing text atlases and the retained scene, which
-  the next frame rebuilds.
-- The image texture cache expires textures unused for 2 seconds instead of
-  120 frames, so 120 Hz displays no longer evict twice as fast, and keeps
-  idle textures within a budget of 64 MB on mobile and 256 MB elsewhere.
 
 ## [0.5.0] - 2026-10-08
 
@@ -319,98 +229,54 @@ Ctrl+C, and state-bound widgets behave correctly in Python and JavaScript.
 
 ### Python
 
-- Published the Python binding on PyPI as `sinomo-ui`: abi3 wheels for
-  CPython 3.10 and newer on Windows x64, macOS arm64 and x64 (macOS 11+), and
-  Linux x64 and aarch64 (glibc 2.28+), plus an sdist. A new release workflow
-  builds them, tests each wheel from a clean install, and publishes with
-  trusted publishing.
+- Published on PyPI as `sinomo-ui`: abi3 wheels for CPython 3.10 and newer on
+  Windows x64, macOS arm64 and x64 (macOS 11+), and Linux x64 and aarch64
+  (glibc 2.28+), plus an sdist.
 - Added `sinomo_ui.aio` with `AsyncRunner`, `run_on_ui`, and `file_dialog` to
   run asyncio coroutines beside the UI loop.
-- Made `Point`, `Size`, `Rect`, `Color`, `Constraints`, and resource and
-  window handles compare and hash by value, gave common objects readable
-  reprs, and made `StateSubscription` a context manager.
-
-- Renamed the Python distribution to `sinomo-ui` and the import package to
-  `sinomo_ui`; use `import sinomo_ui as sui`. The native extension now lives
-  in `sinomo_ui._native` behind a regular Python package, which also exposes
+- Exceptions raised in callbacks are reported with their traceback through
+  `sys.excepthook` or `set_exception_handler`; most used to be discarded.
+- Ctrl+C stops `App.run()` with `KeyboardInterrupt`, and a callback raising
+  `KeyboardInterrupt` or `SystemExit` stops the app and re-raises from
+  `run()`. Added `UiHandle.request_exit()`.
+- Value types such as `Point` and `Color`, and resource and window handles,
+  compare and hash by value; common objects have readable reprs;
+  `StateSubscription` is a context manager; and the package has
   `__version__`.
-- Removed the `PascalCase` widget factory aliases such as `sui.Button`; use
-  the `snake_case` factories such as `sui.button`. `PascalCase` names now
-  always refer to classes.
-- Built wheels against the stable CPython ABI (`abi3`) for Python 3.10 and
-  newer, so one wheel per platform covers every supported interpreter.
-- Reported exceptions raised in callbacks with their full traceback through
-  `sys.excepthook`, or a handler installed with `set_exception_handler`.
-  Previously most were discarded silently.
-- Made Ctrl+C stop `App.run()` with `KeyboardInterrupt`. A callback raising
-  `KeyboardInterrupt` or `SystemExit` now stops the app, and `run()` or the
-  driving `RunningApp` method re-raises it. Added `UiHandle.request_exit()`.
-- Kept `int` values as `int` in `State`; selection widgets write their index
-  back as an `int`.
-- Made `EventContext.request_paint()` callable without a rectangle, as
-  documented; it previously failed and the error was hidden.
+- `State` keeps `int` values as `int`, and `EventContext.request_paint()`
+  works without a rectangle.
 
 ### Python and JavaScript
 
-- Added `UiHandle.call_later` and `call_every` timers, native file dialogs
-  through `UiHandle.show_file_dialog`, app-level `clipboard_text` and
-  `set_clipboard_text`, and `FocusController` with `focus_scope` to move
-  keyboard focus from code. JavaScript gains `UiHandle.requestExit`.
+- Added `UiHandle.call_later` and `call_every`, `UiHandle.show_file_dialog`,
+  app-level `clipboard_text` and `set_clipboard_text`, and `FocusController`
+  with `focus_scope`. JavaScript gains `UiHandle.requestExit`.
 - Added host-driven test helpers: `RunningApp.advance_time`,
-  `settle_animations`, `frame_time`, offscreen `screenshot_png` and
-  `save_screenshot`, a module-level `set_motion_preference`, and `within=`
-  on semantic queries. Role queries accept any spelling of a role name, and
-  `get_one` takes the same filters as `find`.
-- Made `RunningApp.drain_ready_events()` dispatch due timer and animation
-  events; it previously discarded them, so custom-widget timers and
-  animation frames never ran in host-driven tests.
-
-- Made state-bound `dialog` and `popover` open states follow later changes,
-  and write user dismissal back. `dialog` gained `description`, `modal`,
-  `dismiss_on_scrim`, `max_width`, `actions`, and `on_dismiss`; `popover`
-  gained `on_open_change`.
-- Gave `tabs` content panels, an `on_change` callback, and a selection that
-  follows its bound state.
-- Made state-bound labels of buttons, checkboxes, switches, and radio buttons
-  update in place.
-- Added `enabled` to every control that can be disabled, as a boolean or a
-  `State`.
-- Gave `column` and `row` `justify`, `align_items`, and `wrap`, and added
-  `flex_item` for per-child grow, shrink, basis, size limits, and
-  `align_self`, plus `spacer`.
-- Gave `button` `appearance`, `tone`, `icon`, `min_width`, `semantic_name`,
-  and `description`.
-- Gave `label` `color`, `font_size`, `line_height`, `weight`, `single_line`,
-  and `selectable`.
-- Added `ListItem` with detail, trailing text, an icon, and accessibility text;
-  `list_view` accepts it beside plain strings.
-- Gave `grid` explicit column and row tracks (fixed, `auto`, fractions, and
-  `minmax`) and added `grid_cell` for explicit placement and spans.
-- Added `ScrollController` to scroll a `scroll_view` or `virtual_scroll_view`
-  from code and read its offset and extents.
-- Added `rebuild_on_change(states, build)` to rebuild a subtree whenever a
-  watched state changes, and `semantic_name` on `label`, `checkbox`, `switch`,
-  and `radio_button`.
-- Gave `text_input`, `text_area`, and `password_input` `read_only`,
-  `on_submit`, and `on_focus_change`. Semantic snapshots no longer report
-  read-only fields as editable.
-- Bound `VirtualTable` directly as `virtual_table` instead of mapping it to
-  `table`. It realizes only visible rows of a thread-safe `TableModel` of keyed
-  `VirtualTableRow` values that any thread may update, and selects by row key,
-  writing the key back to a bound `State` as an integer.
-  `VirtualTableColumn` sets widths, alignment, resizing, and the sort
-  indicator; `on_row_activate`, `on_header_activate`, `on_column_resize`, and
-  `on_near_end` report keys. Sorting stays application policy: reorder the
-  model and show the direction with `TableModel.set_sort`.
+  `settle_animations`, `frame_time`, `screenshot_png`, `save_screenshot`,
+  `set_motion_preference`, and `within=` on semantic queries.
+  `RunningApp.drain_ready_events()` now dispatches due timers and animation
+  frames instead of discarding them.
+- State-bound `dialog`, `popover`, and `tabs` follow later changes and write
+  the user's changes back, and state-bound labels of buttons, checkboxes,
+  switches, and radio buttons update in place.
+- Widgets gained most of their Rust options: `enabled` on every control;
+  `justify`, `align_items`, `wrap`, `flex_item`, and `spacer` for rows and
+  columns; grid tracks and `grid_cell`; `tabs` panels; more `button`,
+  `label`, and `dialog` options; `ListItem`; and `read_only`, `on_submit`,
+  and `on_focus_change` on text fields.
+- Added `ScrollController`, `rebuild_on_change(states, build)`, and
+  `semantic_name` on labels and toggles.
+- Bound `VirtualTable` as `virtual_table`, which realizes only the visible
+  rows of a thread-safe, keyed `TableModel` and selects by row key.
 
 ### Rust
 
 - Added `UiHandle::request_exit` and `CommandSender::request_exit` to end the
-  platform event loop from application code on any thread.
+  event loop from any thread.
 - Added `Tabs::selected_when`, and `label_when` to `Button`, `Checkbox`,
   `Switch`, and `RadioButton`.
-- Added `FocusScopeState::request_focus`, which moves focus into a scope even
-  when the person put it elsewhere, and re-exported `OsClipboardBackend`.
+- Added `FocusScopeState::request_focus` and re-exported
+  `OsClipboardBackend`.
 
 ## [0.4.1] - 2026-10-04
 
@@ -420,57 +286,42 @@ inertia.
 
 ### Highlights
 
-- Added `Task`, `TaskState`, and `TaskHandle` for background work with progress,
-  results, errors, and stale-worker protection. `refresh` keeps the previous
-  result visible while loading, cancellation restores it, and `TaskHandle::run`
-  completes the task from a future on the application's executor.
+- Added `Task`, `TaskState`, and `TaskHandle` for background work with
+  progress, results, errors, cancellation, and stale-worker protection.
+  `refresh` keeps the previous result visible while loading, and
+  `TaskHandle::run` completes a task from a future.
 - Added `batch` to coalesce notifications, `combine` and `combine_named` to
-  derive values from two to four observables, and `changed().await` to wait for
-  a signal, task, or other observable to change.
-- Added borrowed signal reads and in-place updates with `with`, `modify`, and
-  `mark_changed`, plus pointer-compared and copy-on-write `Arc` updates with
-  `set_arc` and `modify_arc`. Selector clones share one source subscription
-  and a cached result, avoiding repeated work for multiple observers.
-- Skipped clipped glyphs before rasterization and split grayscale masks from
-  color and LCD glyphs. A grayscale atlas page now uses 4 MiB of GPU memory
-  instead of 16 MiB each on the CPU and GPU; only pending uploads keep CPU
-  pixels. Clipping also preserves tall marks and bitmap emoji at line edges.
-- Followed Windows ClearType and Linux fontconfig/Xft smoothing preferences,
-  improved Linux and Android slight hinting and coverage, and loaded Android
-  system fonts with bundled fallbacks. Runtime text-policy changes now update
-  retained text correctly.
-- Added coasting touch scrolling to `ScrollView` and `VirtualScrollView`.
-  Both expose `on_offset_change` and `on_offset_change_with_ctx` for wheel,
-  keyboard, touch, fling, scroll bar, and programmatic moves. The widget book's
-  navigation follows flings and keeps the selected entry after a jump.
+  derive values from two to four observables, and `changed().await` to wait
+  for an observable to change.
+- Added borrowed signal reads and in-place updates (`with`, `modify`,
+  `mark_changed`) and `Arc` updates (`set_arc`, `modify_arc`). Selector clones
+  share one source subscription and cached result.
+- Clipped glyphs are skipped before rasterization, and grayscale glyphs get
+  their own atlas pages, which use 4 MiB of GPU memory instead of 16 MiB on
+  both the CPU and GPU.
+- Text follows Windows ClearType and Linux fontconfig/Xft smoothing
+  preferences, Linux and Android hinting is improved, and Android loads
+  system fonts with bundled fallbacks.
+- `ScrollView` and `VirtualScrollView` coast after touch flings and report
+  every move through `on_offset_change`.
 
 ### Other changes
 
-- Fixed open contours rendering as fans on Adreno 740 under Chrome's Vulkan
-  WebGPU backend and made tooltip borders continuous around their tails.
-- Kept menu and context-menu keyboard shortcuts on one line so long
-  combinations stay aligned and vertically centered.
-- Added download progress while the web demo loads its Wasm module and fonts,
-  with startup errors displayed on the loading screen.
-- Made Chrome text comparisons match the requested grayscale or LCD mode,
-  added aggregate ink and alignment diagnostics, and added a light/dark,
-  scale, and antialiasing comparison matrix.
-- Fixed concurrent selector updates losing changes and reactive diagnostics
-  recording older versions when notifications arrive out of order.
+- Fixed open contours rendering as fans under Chrome's Vulkan WebGPU backend
+  on some mobile GPUs, and made tooltip borders continuous around their tails.
+- Menu keyboard shortcuts stay on one line.
+- The web demo shows download progress and startup errors while it loads.
+- Fixed concurrent selector updates losing changes.
 - Updated accessibility, Python, Node, Wasm, and Linux dependencies.
 
 ### Compatibility and release notes
 
 - Update the SUI crates together to `0.4.1`. `sinomo-ui-lucide` remains at
-  `1.47.1`, with the same bundled Lucide 1.47.0 icons.
-- Selector closures now read signal values while the source is locked; they
-  must not write to that signal. Debug builds report same-signal reentrant
-  writes with a named panic instead of deadlocking. Observers still run
-  synchronously on the writing thread; batching defers them until the batch
-  ends on that thread.
-- Rust 1.90 remains the minimum supported version. Browser support remains
-  alpha, Android remains experimental, and Python and JavaScript bindings
-  remain source-built and are not part of the registry release.
+  `1.47.1`.
+- Selector closures read signal values while the source is locked and must
+  not write to that signal; debug builds panic with a message instead of
+  deadlocking. Observers still run synchronously on the writing thread, or
+  when a `batch` ends.
 
 ## [0.4.0] - 2026-10-01
 
@@ -480,68 +331,56 @@ follows HDR and wide-gamut outputs.
 
 ### Highlights
 
-- Refreshed the default themes. Every palette role is derived in OKLCH from a
-  few source colors: neutrals, primary, secondary, status colors, and a
-  nine-hue decorative palette. Built-in controls are restyled, primary buttons
-  glow in themes with glows, and shadows are exact Gaussian blurs that can sit
-  behind, outside, or inside their box.
+- Refreshed the default themes: every palette role is derived in OKLCH from a
+  few source colors, built-in controls are restyled, and shadows are exact
+  Gaussian blurs that can sit behind, outside, or inside their box.
 - Gave the built-in widgets one API vocabulary, documented in
-  `docs/api/conventions.md`. Every callback has a `_with_ctx` twin; state is
-  `checked`, `selected`, `enabled`, `read_only`, or `open`, set with `p`,
-  `p_when`, or `p_from`; layout uses `gap` and `corner_radius`; color
-  overrides are `colors(...)`; a single child is `child(...)` and data entries
-  are `item(...)`; and on/off flags take a `bool`. Inputs, collections, and
-  items can be disabled.
-- Moved animation into the runtime. `ctx.animate` drives `Motion` and
-  `Progress` values, transitions keep their momentum when retargeted,
-  `AnimationSpec` chooses a tween or a spring, frames follow the display's
-  refresh, and retained layers move, fade, or scale without repainting. An
-  app-wide `MotionPreference` follows the system's reduced-motion setting.
-- Added choreography: `Presence` animates a child in and out, `KeyedStack`
-  keeps a keyed list in step with an observable and staggers its changes,
-  transitions can start after a delay, and timelines gain ping-pong loops,
-  delays, and markers.
+  `docs/api/conventions.md`: every callback has a `_with_ctx` twin, state is
+  set with `p`, `p_when`, or `p_from`, and layout, colors, children, and
+  on/off flags use the same names everywhere.
+- Moved animation into the runtime: `ctx.animate` drives `Motion` and
+  `Progress` values with tweens or springs that keep their momentum when
+  retargeted, retained layers animate without repainting, and
+  `MotionPreference` follows the system's reduced-motion setting.
+- Added `Presence`, `KeyedStack` with staggered changes, delayed transitions,
+  and timeline ping-pong loops, delays, and markers.
 - Tone mapping keeps hue and leaves SDR content alone, Display P3 colors reach
   wide-gamut outputs, HDR themes fall back to what the output can show, and
   apps can capture their own windows.
-- `TextSurface` edits wrapped 20,000-line documents in milliseconds and lays
-  out right-to-left text; `paint_text` places wrapped text as a block; and
-  `Paragraph` lays text out once to measure and paint.
+- `TextSurface` edits large wrapped documents and lays out right-to-left text,
+  `paint_text` places wrapped text as a block, and `Paragraph` lays text out
+  once to measure and paint.
 - Drag and drop follows modifier keys, scrolls near edges, draws custom
   previews, and cancels on Escape; `ReorderableList` reorders from the
   keyboard.
-- Node graphs gain labeled, colored ports with connection rules, undo and redo,
-  copy and paste, and context menus.
+- Node graphs gain labeled, colored ports with connection rules, undo and
+  redo, copy and paste, and context menus.
 - `TestApp` runs headless and in parallel by default and can simulate SDR,
-  wide-gamut, and HDR displays, and headless renderers share one GPU device, so
-  a full workspace test run takes about a quarter of the time.
+  wide-gamut, and HDR displays.
 - The widget book shows all 60 component stories on one page, and most demos
   are redesigned.
 
 ### Other changes
 
 - `interaction_preview` pins hover, press, or focus visuals, and `show_inline`
-  lays tooltips, popovers, context menus, selects, and dialogs out open in
-  place, for documentation and screenshots.
-- `Button::focus_on_press(false)` leaves focus where it is, so a toolbar button
-  can act on the editor being typed in, and
+  lays overlays out open in place, for documentation and screenshots.
+- `Button::focus_on_press(false)` leaves focus where it is, and
   `window_command_dispatches_signal` reports a window's recent commands.
-- `Surface::shadow`, `Surface::glow`, and `ShadowBox` cast theme shadows and
-  glows; `Color::oklch`, `Color::mix_oklab`, `Color::contrast_ratio`, and an
-  OKLCH color picker mode support the new color model.
-- `FloatingWorkspace::transparent` floats views over other content,
-  `FloatingViewConfig::closable` gives a view a close button, and
-  `Widget::hit_test_self` lets a container pass points through.
-- Fixed linear gradients, which now paint every stop and follow translated
-  layers; focus rings around context menus and popovers; adaptive layouts
-  taking focus on their first layout; and `Select`'s accessibility actions.
+- Added `Surface::shadow`, `Surface::glow`, `ShadowBox`, `Color::oklch`,
+  `Color::mix_oklab`, `Color::contrast_ratio`, and an OKLCH color picker mode.
+- Added `FloatingWorkspace::transparent`, `FloatingViewConfig::closable`, and
+  `Widget::hit_test_self`, which lets a container pass points through.
+- Python and JavaScript widget parameters use the same names as Rust.
+- Fixed linear gradients, focus rings around context menus and popovers,
+  adaptive layouts taking focus on their first layout, and `Select`'s
+  accessibility actions.
 
 ### Upgrading from 0.3
 
 - Update the SUI crates together from `0.3` to `0.4`, and `sinomo-ui-lucide` to
   `1.47.1`, which bundles the same Lucide 1.47.0 icons for the `0.4` family.
-- Renamed APIs keep their old names as deprecated aliases, so they compile with
-  a warning that names the replacement. The aliases will be removed in 0.5.
+- Renamed APIs keep their old names as deprecated aliases that name the
+  replacement. The aliases will be removed in 0.5.
 - These changes need code edits:
   - `ThemeColors` is a source model; the `base_*`, `*_content`, `accent`, and
     `neutral` fields are gone, and `error` is now `danger`.
@@ -579,14 +418,6 @@ follows HDR and wide-gamut outputs.
   - `TestApp` runs headless unless a test asks for `live(true)` or
     `visible(true)`.
 
-### Compatibility and release notes
-
-- Rust 1.90 remains the minimum supported version.
-- Linux webview builds require the system WebKitGTK 4.1 development libraries.
-- Browser support remains alpha and Android remains experimental. The Python
-  and JavaScript bindings remain source-built and are not part of this registry
-  release; their widget parameters now use the same names as Rust.
-
 ## [0.3.0] - 2026-09-26
 
 This release adds application and editor surfaces, improves text quality and
@@ -594,92 +425,51 @@ retained rendering, and expands the source-built language bindings.
 
 ### Highlights
 
-- Added retained docking workspaces, editor cursor grabbing and raw mouse motion,
-  safe initial desktop window placement, and GPU interoperability contracts.
-- Expanded Python and JavaScript bindings for the newer Rust widget and editor
-  surfaces. These bindings remain source-built and are not registry publications.
-- Reused paragraph shaping and glyph measurements across layout widths, added
-  size-only text measurement, and reduced repeated Flex layout probes.
-- Retained widget output, scene fragments, renderer packets, GPU batches, and
-  shared scene command storage to reduce repeated frame preparation work.
-- Overlapped GPU preparation with CPU startup and added reproducible widget,
-  frame, shrinkwrap-conversation, and editorial-flow benchmarks.
-- Improved font hinting, transformed text rasterization, LCD coverage and atlas
-  sampling; isolated node-edge animation repaint work and analytic grid dots.
-- Added provider-neutral image icons, bounded browser tabs, compact dialogs,
-  and reserved scrollbar gutters.
-- Updated dependencies and bundled Lucide icons to 1.47.0.
-- Made the Shrinkwrap and Editorial text demos follow shared theme colors,
-  typography, and radii, including theme changes while paused and cached text
-  layouts at unchanged window sizes.
-- Added a size-focused web release profile and kept the demo within the existing
-  12 MiB uncompressed Wasm budget without removing features.
-- Restored Rust 1.90 compatibility, corrected offscreen demo-picker test
-  interactions, and resolved strict workspace Clippy findings.
-- Bundled complete Noto Sans Arabic and Hebrew fallback fonts for offline web
-  and Android text, and corrected caret hit testing across right-to-left runs.
-- Restored corrupted Unicode, emoji, and IME sample text in the demo and its
-  text-editing benchmarks.
-- Continued VSync presentation and animation/timer delivery inside native
-  window move/resize loops, including while the title bar is held still.
-- Preferred compatible Direct3D12 hardware on Windows to improve native window
-  drag pacing, retaining explicit backend selection and automatic fallback.
-- Kept focused, visible VSync windows presenting cached content so an idle UI
-  does not lower a variable-refresh monitor's refresh rate.
-- Reused GPU vertex buffers, upload staging storage, and output-transform
-  resources to avoid repeated allocations and interaction-time frame stalls.
-- Fixed inflated frame-time/FPS readings after idle mouse motion by attributing
-  input costs and latency only to a pending redraw across native and test hosts.
-- Made the demo FPS counter measure host frame cadence, including VSync and
-  idle intervals, while reporting render work separately.
-- Retained action cards independently so hover, press, and focus transitions
-  repaint only the affected cards instead of rebuilding an entire picker grid.
-- Centralized builder/runtime resource registration so rejected duplicate handles
-  preserve the original resource, and shared native/web GPU resource setup.
-- Shared button press, text-change, and caret lifecycle logic across controls;
-  organized composites, binding infrastructure, and renderer internals by feature.
-- Made binding signatures language-neutral with explicit numeric and identifier
-  types, and changed export verification to follow Rust modules and declarations.
-- Fixed selector observer write-back deadlocks and removed obsolete reactive
-  dependencies after completed widget phases while preserving cached phases.
-- Bounded text-layout and renderer path caches, preserving layouts and geometry
-  still owned by live widgets or frames, and avoided full reindexing on collection
-  appends.
-- Matched node-graph spatial bounds to configured Bézier curvature so visible
-  curves remain available for hit testing and culling.
+- Added the `sinomo-ui-nodes` graph-editor library: typed nodes, edges, and
+  handles, controlled or uncontrolled state, custom node widgets, subflows,
+  resizing, reconnection, per-element semantics, animated viewports,
+  controls, and a minimap. The demo gains a node-editor workspace behind the
+  default `nodes` feature.
 - Added the optional `sinomo-ui-webview` crate for WRY-backed native child
-  webviews with retained layout, lifecycle synchronization, thread-safe
-  controls, typed page/title/IPC events, and application-owned browser policy.
-- Prevented synchronous live-test flushes from advancing future animation
-  frames based only on render wall time, avoiding timeouts in repeating demos.
-- Added affine transformed widget subtrees and Canvas-hosted normal widgets.
-  Canvas now uniformly scales paint, input, semantics, text, images, and nested
-  layout by default, with screen-space/custom zoom policies and touch pinch;
-  retained node widgets use the same path.
-- Added the `sinomo-ui-nodes` graph-editor library with typed nodes, edges,
-  handles, controlled and uncontrolled observable state, retained custom node
-  widgets, dynamic measurement, incremental spatial indexing, subflows,
-  resizing, edge reconnection, per-element semantics, lifecycle events,
-  animated viewport and edge behavior, controls, minimap, and graph-owned
-  appearance overrides.
-- Added a comprehensive `sui-demo` node-editor workspace behind the
-  default-enabled `nodes` feature, covering controlled and uncontrolled graphs,
-  retained node controls, every edge family, subflows, editing, indexing,
-  semantics, and viewport telemetry.
+  webviews with typed page, title, and IPC events and application-owned
+  browser policy.
+- Added retained docking workspaces, editor cursor grabbing and raw mouse
+  motion, safe initial window placement, and GPU interoperability contracts.
+- Added affine-transformed widget subtrees and widgets hosted in a `Canvas`,
+  which scales their paint, input, semantics, and layout, with screen-space
+  or custom zoom and touch pinch.
+- Added provider-neutral image icons, bounded browser tabs, compact dialogs,
+  and reserved scroll bar gutters.
+- Text reuses shaping across layout widths, renders hinted, transformed, and
+  LCD text more accurately, bundles Noto Sans Arabic and Hebrew fallbacks for
+  the web and Android, and places the caret correctly across right-to-left
+  runs.
+- Rendering retains widget output, scene fragments, packets, and GPU buffers
+  instead of preparing them again each frame, and GPU setup overlaps CPU
+  startup.
+- On Windows, SUI prefers compatible Direct3D 12 hardware. Native windows keep
+  presenting and animating during move and resize loops, and focused VSync
+  windows keep presenting so an idle UI doesn't lower a variable-refresh
+  monitor's refresh rate.
+- Fixed selector write-back deadlocks, bounded the text-layout and path
+  caches, and made node-graph culling follow edge curvature.
+- Added widget, frame, and text-flow benchmarks; the demo's FPS counter
+  measures host frame cadence, and idle mouse motion no longer inflates
+  frame-time readings.
+- Expanded the source-built Python and JavaScript bindings for the newer
+  widget and editor surfaces.
+- Updated dependencies and bundled Lucide icons to 1.47.0, and restored Rust
+  1.90 compatibility.
 
 ### Compatibility and release notes
 
 - Update SUI crate dependencies together from `0.2` to `0.3`. Lucide keeps its
   independent `1.47.0` version and now depends on the `0.3` SUI family.
-- `Event::RawMouseMotion` and `WindowEvent::Moved` require handling in exhaustive
-  event matches. Public widget appearance/configuration structs gained fields,
-  including `ControlPalette::selection_border`; update explicit struct literals.
-- Rust 1.90 remains the minimum supported version.
-- Linux webview builds require the system WebKitGTK 4.1 development libraries;
-  the Rust bindings do not install the browser engine.
-- Browser support remains alpha and Android remains experimental. Native
-  webviews are an optional crate; Python wheels and Node addons are not part of
-  this Rust registry release.
+- Exhaustive event matches need `Event::RawMouseMotion` and
+  `WindowEvent::Moved`, and struct literals of widget appearance and
+  configuration structs, such as `ControlPalette`, need their new fields.
+- Linux webview builds require the system WebKitGTK 4.1 development
+  libraries.
 
 ## [0.2.1]
 
@@ -778,3 +568,4 @@ Initial public alpha release of the Rust workspace.
 [0.4.1]: https://github.com/sinomo-lab/sui/compare/v0.4.0...v0.4.1
 [0.5.0]: https://github.com/sinomo-lab/sui/compare/v0.4.1...v0.5.0
 [0.6.0]: https://github.com/sinomo-lab/sui/compare/v0.5.0...v0.6.0
+[0.6.1]: https://github.com/sinomo-lab/sui/compare/v0.6.0...v0.6.1

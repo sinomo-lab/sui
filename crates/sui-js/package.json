@@ -1,6 +1,6 @@
 {
   "name": "@sui/ui",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "JavaScript bindings for SUI.",
   "license": "MIT",
   "type": "module",

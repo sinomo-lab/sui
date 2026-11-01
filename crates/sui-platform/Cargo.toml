@@ -52,10 +52,6 @@ accesskit_winit = { workspace = true }
 unicode-segmentation = { workspace = true }
 windows = { version = "0.62.2", features = ["Win32_Devices_Display", "Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
 
-[build-dependencies]
-# Without its `cargo` feature it does not warn about unset SDK variables.
-android-build = { version = "0.1.4", default-features = false }
-
 [dev-dependencies]
 accesskit_consumer = { workspace = true }
 sui-layout = { workspace = true }

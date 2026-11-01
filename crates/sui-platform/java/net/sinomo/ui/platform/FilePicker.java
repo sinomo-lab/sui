@@ -2,7 +2,6 @@ package net.sinomo.ui.platform;
 
 import android.app.Activity;
 import android.app.Application;
-import android.app.Fragment;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.Context;
@@ -27,7 +26,8 @@ import java.util.Locale;
  * headless fragment to the activity. The fragment starts the picker, reports
  * the chosen document URIs to native code, and removes itself.
  */
-public final class FilePicker extends Fragment {
+@SuppressWarnings("deprecation") // A NativeActivity has no AndroidX fragments.
+public final class FilePicker extends android.app.Fragment {
     // Matches the mode numbers in android_file_dialog.rs.
     private static final int OPEN_FILE = 0;
     private static final int OPEN_FILES = 1;

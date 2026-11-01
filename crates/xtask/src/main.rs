@@ -39,11 +39,18 @@ fn run() -> Result<(), String> {
         {
             web_build(true)
         }
+        [command, subcommand] if command == "android" && subcommand == "dex" => android_dex(false),
+        [command, subcommand, flag]
+            if command == "android" && subcommand == "dex" && flag == "--check" =>
+        {
+            android_dex(true)
+        }
         _ => {
             eprintln!("usage: cargo xtask bindings coverage");
             eprintln!("       cargo xtask bindings check");
             eprintln!("       cargo xtask bindings generate [--check]");
             eprintln!("       cargo xtask web build [--release]");
+            eprintln!("       cargo xtask android dex [--check]");
             Err("unknown xtask command".to_string())
         }
     }
@@ -182,6 +189,138 @@ fn wasm_bindgen_install_hint(version: &str) -> String {
         "install the matching CLI with `cargo install wasm-bindgen-cli --version {version}` or \
          point WASM_BINDGEN at it"
     )
+}
+
+/// The Java helpers that Android builds of `sinomo-ui-platform` load at
+/// runtime, and the DEX they are compiled into.
+const ANDROID_JAVA_DIR: &str = "crates/sui-platform/java";
+const ANDROID_DEX: &str = "crates/sui-platform/java/classes.dex";
+
+/// The Android SDK build tools whose `d8` writes the checked-in DEX. Other
+/// versions write different bytes, so `--check` needs this one.
+const ANDROID_BUILD_TOOLS: &str = "35.0.0";
+
+/// Compile the Android Java helpers into `crates/sui-platform/java/classes.dex`,
+/// which the platform crate embeds, so Android builds of it need no JDK or
+/// Android SDK. With `check`, fail instead when the checked-in DEX differs.
+fn android_dex(check: bool) -> Result<(), String> {
+    let root = workspace_root()?;
+    let sdk = env::var_os("ANDROID_HOME")
+        .or_else(|| env::var_os("ANDROID_SDK_ROOT"))
+        .map(PathBuf::from)
+        .ok_or("set ANDROID_HOME to the Android SDK")?;
+    let d8 = sdk
+        .join("build-tools")
+        .join(ANDROID_BUILD_TOOLS)
+        .join(if cfg!(windows) { "d8.bat" } else { "d8" });
+    if !d8.is_file() {
+        return Err(format!(
+            "{} is missing; install it with `sdkmanager \"build-tools;{ANDROID_BUILD_TOOLS}\"`",
+            d8.display()
+        ));
+    }
+    let android_jar = newest_android_jar(&sdk)?;
+    let javac = env::var_os("JAVA_HOME")
+        .map(|home| PathBuf::from(home).join("bin/javac"))
+        .unwrap_or_else(|| PathBuf::from("javac"));
+
+    let mut sources = Vec::new();
+    collect_files_with_extension(&root.join(ANDROID_JAVA_DIR), "java", &mut sources)?;
+    sources.sort();
+    let work = root.join("target/android-dex");
+    let classes_dir = work.join("classes");
+    let dex_dir = work.join("dex");
+    let _ = fs::remove_dir_all(&work);
+    for dir in [&classes_dir, &dex_dir] {
+        fs::create_dir_all(dir)
+            .map_err(|error| format!("failed to create {}: {error}", dir.display()))?;
+    }
+
+    // Compile against the Android platform's own `java.*` classes. Release 8
+    // is obsolete in current JDKs but still the newest that takes a boot
+    // class path.
+    let status = process::Command::new(&javac)
+        .args(["-source", "8", "-target", "8", "-encoding", "UTF-8"])
+        .args(["-Xlint:-options", "-g:source,lines"])
+        .arg("-bootclasspath")
+        .arg(&android_jar)
+        .arg("-d")
+        .arg(&classes_dir)
+        .args(&sources)
+        .status()
+        .map_err(|error| {
+            format!(
+                "failed to run {}: {error}; install a JDK or set JAVA_HOME",
+                javac.display()
+            )
+        })?;
+    if !status.success() {
+        return Err("javac failed".to_string());
+    }
+
+    let mut classes = Vec::new();
+    collect_files_with_extension(&classes_dir, "class", &mut classes)?;
+    classes.sort();
+    let status = process::Command::new(&d8)
+        .args(["--release", "--min-api", "26"])
+        .arg("--lib")
+        .arg(&android_jar)
+        .arg("--output")
+        .arg(&dex_dir)
+        .args(&classes)
+        .status()
+        .map_err(|error| format!("failed to run {}: {error}", d8.display()))?;
+    if !status.success() {
+        return Err("d8 failed".to_string());
+    }
+
+    let built_path = dex_dir.join("classes.dex");
+    let built = fs::read(&built_path)
+        .map_err(|error| format!("failed to read {}: {error}", built_path.display()))?;
+    let dex_path = root.join(ANDROID_DEX);
+    if fs::read(&dex_path).is_ok_and(|existing| existing == built) {
+        println!("{} is up to date", relative_display(&root, &dex_path));
+        return Ok(());
+    }
+    if check {
+        return Err(format!(
+            "{} does not match its Java sources; run `cargo xtask android dex` (with build \
+             tools {ANDROID_BUILD_TOOLS}; a different JDK can also change the output)",
+            dex_path.display()
+        ));
+    }
+    fs::write(&dex_path, &built)
+        .map_err(|error| format!("failed to write {}: {error}", dex_path.display()))?;
+    println!("built {}", relative_display(&root, &dex_path));
+    Ok(())
+}
+
+/// The `android.jar` of the newest platform installed in the SDK. Only its
+/// API declarations are used, so the choice does not change the DEX.
+fn newest_android_jar(sdk: &Path) -> Result<PathBuf, String> {
+    let platforms = sdk.join("platforms");
+    let entries = fs::read_dir(&platforms)
+        .map_err(|error| format!("failed to read {}: {error}", platforms.display()))?;
+    entries
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            let level = path
+                .file_name()?
+                .to_str()?
+                .strip_prefix("android-")?
+                .parse::<u32>()
+                .ok()?;
+            let jar = path.join("android.jar");
+            jar.is_file().then_some((level, jar))
+        })
+        .max_by_key(|(level, _)| *level)
+        .map(|(_, jar)| jar)
+        .ok_or_else(|| {
+            format!(
+                "no Android platform in {}; install one with `sdkmanager \"platforms;android-35\"`",
+                platforms.display()
+            )
+        })
 }
 
 fn bindings_generate(check: bool) -> Result<(), String> {
@@ -1657,7 +1796,7 @@ fn relative_display(root: &Path, path: &Path) -> String {
 fn inventory_public_widgets(root: &Path) -> Result<Vec<PublicWidget>, String> {
     let widgets_root = root.join("crates/sui-widgets/src");
     let mut rust_files = Vec::new();
-    collect_rust_files(&widgets_root, &mut rust_files)?;
+    collect_files_with_extension(&widgets_root, "rs", &mut rust_files)?;
     rust_files.sort();
 
     let mut public_structs: BTreeMap<String, Vec<(String, usize)>> = BTreeMap::new();
@@ -1703,7 +1842,11 @@ fn inventory_public_widgets(root: &Path) -> Result<Vec<PublicWidget>, String> {
     Ok(inventory)
 }
 
-fn collect_rust_files(directory: &Path, output: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect_files_with_extension(
+    directory: &Path,
+    extension: &str,
+    output: &mut Vec<PathBuf>,
+) -> Result<(), String> {
     let entries = fs::read_dir(directory)
         .map_err(|error| format!("failed to read {}: {error}", directory.display()))?;
     for entry in entries {
@@ -1714,8 +1857,8 @@ fn collect_rust_files(directory: &Path, output: &mut Vec<PathBuf>) -> Result<(),
             .file_type()
             .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
         if file_type.is_dir() {
-            collect_rust_files(&path, output)?;
-        } else if file_type.is_file() && path.extension().is_some_and(|value| value == "rs") {
+            collect_files_with_extension(&path, extension, output)?;
+        } else if file_type.is_file() && path.extension().is_some_and(|value| value == extension) {
             output.push(path);
         }
     }

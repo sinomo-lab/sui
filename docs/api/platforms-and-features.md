@@ -152,11 +152,9 @@ point in the current public facade.
 files and the system folder picker for folders; see
 [Overlays and desktop interaction](overlays-and-desktop.md#file-dialogs).
 A NativeActivity cannot receive the picker's result itself, so the platform
-crate compiles a small Java helper to DEX when it builds for Android and loads
-it at runtime, which needs Android 8.0 (API 26) or later. Android builds
-therefore need a JDK and the Android SDK's build tools and platforms. Set
-`ANDROID_HOME` to the SDK, and `JAVA_HOME` to the JDK unless the JDK's `java`
-is on the `PATH`.
+crate embeds a small Java helper, compiled ahead of time to DEX, and loads it
+at runtime, which needs Android 8.0 (API 26) or later. Android builds need no
+JDK or Android SDK build tools for it.
 
 ## WGPU-specific APIs
 
