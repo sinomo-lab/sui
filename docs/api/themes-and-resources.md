@@ -427,7 +427,7 @@ WGPU device.
 
 ## Icons and Accessibility
 
-`App::new()` registers SUI's built-in Lucide resources. Use `Icon` for a
-decorative or labeled glyph and `IconButton` for an action. An icon-only action
+SUI's built-in glyphs use bundled Tabler outline icons, painted as native
+paths. Use `Icon` for a decorative or labeled glyph and `IconButton` for an action. An icon-only action
 must have a meaningful accessible label; its glyph name is not a substitute
 for the action name.

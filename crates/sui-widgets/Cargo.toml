@@ -22,7 +22,7 @@ pulldown-cmark = { workspace = true }
 sui-animation = { workspace = true }
 sui-core = { workspace = true }
 sui-layout = { workspace = true }
-sui-lucide = { workspace = true }
+sui-tabler = { workspace = true }
 sui-reactive = { workspace = true }
 sui-runtime = { workspace = true }
 sui-scene = { workspace = true }

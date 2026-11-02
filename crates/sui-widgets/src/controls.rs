@@ -35,7 +35,6 @@ use sui_core::{
     SemanticsTextRange, SemanticsValue, Size, ToggleState, Vector, WidgetId,
 };
 use sui_layout::{Axis, Constraints, IntrinsicSize, Padding as Insets};
-use sui_lucide::LucideIcon;
 use sui_reactive::Observable;
 use sui_runtime::{
     ArrangeCtx, Command, EventCtx, EventPhase, FrameClock, LayerOptions, MeasureCtx,
@@ -44,6 +43,7 @@ use sui_runtime::{
     StackSurfaceOptions, Widget, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 use sui_scene::{LayerCompositionMode, LayerProperties, StrokeStyle};
+use sui_tabler::TablerIcon;
 use sui_text::{
     FontFeature, PersistentTextLayout, TextAlign, TextCursor, TextMeasurement, TextSelection,
     TextStyle,
@@ -119,69 +119,70 @@ pub enum IconGlyph {
 }
 
 impl IconGlyph {
-    pub const fn lucide_icon(self) -> LucideIcon {
+    /// The bundled Tabler outline icon used to paint this semantic glyph.
+    pub const fn tabler_icon(self) -> TablerIcon {
         match self {
-            Self::Add => LucideIcon::Plus,
-            Self::Remove => LucideIcon::Minus,
-            Self::Check => LucideIcon::Check,
-            Self::ChevronDown => LucideIcon::ChevronDown,
-            Self::ChevronUp => LucideIcon::ChevronUp,
-            Self::ChevronLeft => LucideIcon::ChevronLeft,
-            Self::ChevronRight => LucideIcon::ChevronRight,
-            Self::Close => LucideIcon::X,
-            Self::Maximize => LucideIcon::Maximize,
-            Self::Restore => LucideIcon::Copy,
-            Self::FitView => LucideIcon::ScanSearch,
-            Self::ActualSize => LucideIcon::Scan,
-            Self::MoreHorizontal => LucideIcon::Ellipsis,
-            Self::MoreVertical => LucideIcon::EllipsisVertical,
-            Self::Search => LucideIcon::Search,
-            Self::Undo => LucideIcon::Undo2,
-            Self::Redo => LucideIcon::Redo2,
-            Self::Brush => LucideIcon::Brush,
-            Self::Eraser => LucideIcon::Eraser,
-            Self::PaintBucket => LucideIcon::PaintBucket,
-            Self::Hand => LucideIcon::Hand,
-            Self::Lock => LucideIcon::Lock,
-            Self::Unlock => LucideIcon::LockOpen,
-            Self::Trash => LucideIcon::Trash2,
-            Self::Download => LucideIcon::Download,
-            Self::Sparkles => LucideIcon::Sparkles,
-            Self::Chat => LucideIcon::MessageSquare,
-            Self::History => LucideIcon::History,
-            Self::Folder => LucideIcon::Folder,
-            Self::File => LucideIcon::File,
-            Self::FileText => LucideIcon::FileText,
-            Self::Link => LucideIcon::Link,
-            Self::Send => LucideIcon::Send,
-            Self::ArrowUp => LucideIcon::ArrowUp,
-            Self::Stop => LucideIcon::Square,
-            Self::Attach => LucideIcon::Paperclip,
-            Self::Hourglass => LucideIcon::Hourglass,
-            Self::Alert => LucideIcon::TriangleAlert,
-            Self::Storage => LucideIcon::HardDrive,
-            Self::AudioLines => LucideIcon::AudioLines,
-            Self::Mic => LucideIcon::Mic,
-            Self::MicOff => LucideIcon::MicOff,
-            Self::Camera => LucideIcon::Camera,
-            Self::CameraOff => LucideIcon::CameraOff,
-            Self::Video => LucideIcon::Video,
-            Self::VideoOff => LucideIcon::VideoOff,
-            Self::Phone => LucideIcon::Phone,
-            Self::PhoneOff => LucideIcon::PhoneOff,
-            Self::Monitor => LucideIcon::Monitor,
-            Self::ScreenShare => LucideIcon::ScreenShare,
-            Self::Blocks => LucideIcon::Blocks,
-            Self::Palette => LucideIcon::Palette,
-            Self::Type => LucideIcon::Type,
-            Self::Languages => LucideIcon::Languages,
-            Self::FileCode => LucideIcon::FileCode,
-            Self::Newspaper => LucideIcon::Newspaper,
-            Self::Sun => LucideIcon::Sun,
-            Self::LayoutDashboard => LucideIcon::LayoutDashboard,
-            Self::Move => LucideIcon::Move,
-            Self::PenTool => LucideIcon::PenTool,
-            Self::Workflow => LucideIcon::Workflow,
+            Self::Add => TablerIcon::Plus,
+            Self::Remove => TablerIcon::Minus,
+            Self::Check => TablerIcon::Check,
+            Self::ChevronDown => TablerIcon::ChevronDown,
+            Self::ChevronUp => TablerIcon::ChevronUp,
+            Self::ChevronLeft => TablerIcon::ChevronLeft,
+            Self::ChevronRight => TablerIcon::ChevronRight,
+            Self::Close => TablerIcon::X,
+            Self::Maximize => TablerIcon::Maximize,
+            Self::Restore => TablerIcon::Copy,
+            Self::FitView => TablerIcon::ZoomScan,
+            Self::ActualSize => TablerIcon::Scan,
+            Self::MoreHorizontal => TablerIcon::Dots,
+            Self::MoreVertical => TablerIcon::DotsVertical,
+            Self::Search => TablerIcon::Search,
+            Self::Undo => TablerIcon::ArrowBackUp,
+            Self::Redo => TablerIcon::ArrowForwardUp,
+            Self::Brush => TablerIcon::Brush,
+            Self::Eraser => TablerIcon::Eraser,
+            Self::PaintBucket => TablerIcon::Bucket,
+            Self::Hand => TablerIcon::HandStop,
+            Self::Lock => TablerIcon::Lock,
+            Self::Unlock => TablerIcon::LockOpen,
+            Self::Trash => TablerIcon::Trash,
+            Self::Download => TablerIcon::Download,
+            Self::Sparkles => TablerIcon::Sparkles,
+            Self::Chat => TablerIcon::Message,
+            Self::History => TablerIcon::History,
+            Self::Folder => TablerIcon::Folder,
+            Self::File => TablerIcon::File,
+            Self::FileText => TablerIcon::FileText,
+            Self::Link => TablerIcon::Link,
+            Self::Send => TablerIcon::Send,
+            Self::ArrowUp => TablerIcon::ArrowUp,
+            Self::Stop => TablerIcon::Square,
+            Self::Attach => TablerIcon::Paperclip,
+            Self::Hourglass => TablerIcon::Hourglass,
+            Self::Alert => TablerIcon::AlertTriangle,
+            Self::Storage => TablerIcon::DeviceSdCard,
+            Self::AudioLines => TablerIcon::Waveform,
+            Self::Mic => TablerIcon::Microphone,
+            Self::MicOff => TablerIcon::MicrophoneOff,
+            Self::Camera => TablerIcon::Camera,
+            Self::CameraOff => TablerIcon::CameraOff,
+            Self::Video => TablerIcon::Video,
+            Self::VideoOff => TablerIcon::VideoOff,
+            Self::Phone => TablerIcon::Phone,
+            Self::PhoneOff => TablerIcon::PhoneOff,
+            Self::Monitor => TablerIcon::DeviceDesktop,
+            Self::ScreenShare => TablerIcon::ScreenShare,
+            Self::Blocks => TablerIcon::Blocks,
+            Self::Palette => TablerIcon::Palette,
+            Self::Type => TablerIcon::Typography,
+            Self::Languages => TablerIcon::Language,
+            Self::FileCode => TablerIcon::FileCode,
+            Self::Newspaper => TablerIcon::News,
+            Self::Sun => TablerIcon::Sun,
+            Self::LayoutDashboard => TablerIcon::LayoutDashboard,
+            Self::Move => TablerIcon::ArrowsMove,
+            Self::PenTool => TablerIcon::VectorBezier,
+            Self::Workflow => TablerIcon::Schema,
         }
     }
 }
@@ -9507,7 +9508,7 @@ pub fn draw_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Col
 }
 
 pub(crate) fn draw_icon_glyph(ctx: &mut PaintCtx, glyph: IconGlyph, bounds: Rect, color: Color) {
-    glyph.lucide_icon().paint(ctx, bounds, color);
+    glyph.tabler_icon().paint(ctx, bounds, color);
 }
 
 fn line_path(start: Point, end: Point) -> Path {

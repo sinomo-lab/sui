@@ -140,4 +140,5 @@ security issues should follow the [security policy](https://github.com/sinomo-la
 ## License
 
 SUI is licensed under the [MIT License](https://github.com/sinomo-lab/sui/blob/main/LICENSE).
-The bundled `sinomo-ui-lucide` crate retains its upstream ISC license.
+Bundled Tabler icons are MIT-licensed; their upstream copyright and license
+are retained in `crates/sui-tabler/assets/LICENSE`.

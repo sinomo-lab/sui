@@ -15,7 +15,7 @@ crates/
   sui-demo/
   sui-js/
   sui-layout/
-  sui-lucide/
+  sui-tabler/
   sui-nodes/
   sui-platform/
   sui-python/

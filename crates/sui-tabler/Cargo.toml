@@ -1,0 +1,30 @@
+[package]
+name = "sinomo-ui-tabler"
+version.workspace = true
+description = "Embedded Tabler SVG icon resources for SUI."
+edition.workspace = true
+authors.workspace = true
+categories.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+license-file = "assets/LICENSE"
+build = "build.rs"
+
+[lib]
+name = "sui_tabler"
+doctest = false
+
+[dependencies]
+sui-core = { workspace = true }
+sui-runtime = { workspace = true }
+sui-scene = { workspace = true }
+
+[build-dependencies]
+roxmltree = "0.21.2"
+svgtypes = "0.16.1"
+
+[dev-dependencies]
+sui-layout = { workspace = true }

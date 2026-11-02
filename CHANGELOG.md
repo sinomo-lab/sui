@@ -4,6 +4,19 @@ All notable changes to SUI are documented in this file. SUI follows Semantic
 Versioning, with the usual expectation that the API may change during the
 `0.x` series.
 
+## [Unreleased]
+
+### Icons
+
+- Replace bundled Lucide assets with Tabler Icons 3.50.0 outline icons under
+  MIT, retaining the upstream copyright and license. Built-in `IconGlyph`
+  variants and widget APIs keep their semantic names and use Tabler geometry.
+- Replace the `sinomo-ui-lucide` crate (`sui_lucide`) with
+  `sinomo-ui-tabler` (`sui_tabler`), versioned with the SUI workspace.
+  Direct users should migrate `LucideIcon` to `TablerIcon`, choose Tabler's
+  icon names, and replace `IconGlyph::lucide_icon()` with `tabler_icon()`.
+  Raw image handles use a new Tabler namespace.
+
 ## [0.6.1] - 2026-11-01
 
 This release lets event handlers open URLs, adds file and folder dialogs on

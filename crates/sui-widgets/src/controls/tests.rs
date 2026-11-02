@@ -4,10 +4,11 @@ use std::{
 };
 
 use super::{
-    Button, ButtonAppearance, CARET_BLINK_PERIOD_SECONDS, Checkbox, ChoiceAppearance,
-    DateTimeInput, DefaultTheme, FieldAppearance, Icon, IconButton, IconButtonPaint, IconGlyph,
-    InteractionPreview, Label, Link, NumberInput, PasswordInput, RadioButton, RadioGroup, Select,
-    Separator, Slider, Switch, TextArea, TextInput, paint_icon_button, rect_is_finite,
+    BUILTIN_ICON_GLYPHS, Button, ButtonAppearance, CARET_BLINK_PERIOD_SECONDS, Checkbox,
+    ChoiceAppearance, DateTimeInput, DefaultTheme, FieldAppearance, Icon, IconButton,
+    IconButtonPaint, IconGlyph, InteractionPreview, Label, Link, NumberInput, PasswordInput,
+    RadioButton, RadioGroup, Select, Separator, Slider, Switch, TextArea, TextInput,
+    paint_icon_button, rect_is_finite,
 };
 use crate::{
     HdrThemeMode, SemanticColorToken, SemanticTone, WidgetLuminanceRole, resolve_luminance_role,
@@ -264,7 +265,7 @@ fn solid_stroke_colors(output: &RenderOutput) -> Vec<Color> {
     colors
 }
 
-fn non_lucide_stroke_colors(output: &RenderOutput) -> Vec<Color> {
+fn non_tabler_stroke_colors(output: &RenderOutput) -> Vec<Color> {
     let mut colors = Vec::new();
     output
         .frame
@@ -393,7 +394,7 @@ fn assert_rect_approx_eq(actual: Rect, expected: Rect) {
     );
 }
 
-fn lucide_strokes(output: &RenderOutput) -> Vec<(Rect, Color, sui_scene::StrokeStyle)> {
+fn tabler_strokes(output: &RenderOutput) -> Vec<(Rect, Color, sui_scene::StrokeStyle)> {
     let mut strokes = Vec::new();
     output.frame.scene.visit_commands(&mut |command| {
         if let SceneCommand::StrokePath {
@@ -410,15 +411,35 @@ fn lucide_strokes(output: &RenderOutput) -> Vec<(Rect, Color, sui_scene::StrokeS
     strokes
 }
 
-fn first_lucide_icon_rect(output: &RenderOutput) -> Rect {
-    let (ink_bounds, _, stroke) = lucide_strokes(output)
+fn first_tabler_icon_rect(output: &RenderOutput, glyph: IconGlyph) -> Rect {
+    let (ink_bounds, _, stroke) = tabler_strokes(output)
         .into_iter()
         .next()
-        .expect("Lucide icon should paint as a native stroked path");
-    let side = stroke.width * 12.0;
+        .expect("Tabler icon should paint as a native stroked path");
+    // Recover the SVG viewport from the actual geometry. Tabler glyphs can
+    // have asymmetric ink bounds, so their ink center is not the viewport center.
+    use sui_tabler::TablerPathCommand as Command;
+    let points = glyph
+        .tabler_icon()
+        .path_data()
+        .stroke
+        .iter()
+        .flat_map(|command| match *command {
+            Command::MoveTo(x, y) | Command::LineTo(x, y) => vec![Point::new(x, y)],
+            Command::QuadTo(cx, cy, x, y) => vec![Point::new(cx, cy), Point::new(x, y)],
+            Command::CubicTo(x1, y1, x2, y2, x, y) => {
+                vec![Point::new(x1, y1), Point::new(x2, y2), Point::new(x, y)]
+            }
+            Command::Close => Vec::new(),
+        });
+    let origin = points
+        .reduce(|a, b| Point::new(a.x.min(b.x), a.y.min(b.y)))
+        .expect("icon should contain stroke points");
+    let scale = stroke.width / 2.0;
+    let side = 24.0 * scale;
     Rect::new(
-        ink_bounds.x() + (ink_bounds.width() - side) * 0.5,
-        ink_bounds.y() + (ink_bounds.height() - side) * 0.5,
+        ink_bounds.x() - origin.x * scale,
+        ink_bounds.y() - origin.y * scale,
         side,
         side,
     )
@@ -846,7 +867,7 @@ fn icon_color_when_uses_external_color() -> Result<()> {
 
     let output = runtime.render(window_id)?;
     assert!(
-        lucide_strokes(&output)
+        tabler_strokes(&output)
             .iter()
             .any(|(_, stroke_color, _)| *stroke_color == Color::rgba(0.2, 0.5, 0.9, 1.0))
     );
@@ -2055,7 +2076,7 @@ fn icon_button_appearance_and_tone_use_semantic_tokens() {
     let expected = super::mix_color(Color::TRANSPARENT, soft_fill, theme.interaction.hover_blend);
     assert_color_approx_eq(solid_fill_colors(&output)[0], expected);
     assert!(
-        non_lucide_stroke_colors(&output)
+        non_tabler_stroke_colors(&output)
             .iter()
             .all(|color| color.alpha <= f32::EPSILON)
     );
@@ -2161,7 +2182,7 @@ fn button_with_icon_keeps_label_semantics_and_paints_icon() {
         with_icon.frame.scene.commands().len() > plain.frame.scene.commands().len(),
         "icon button should add visible icon ink"
     );
-    let icon_rect = first_lucide_icon_rect(&with_icon);
+    let icon_rect = first_tabler_icon_rect(&with_icon, IconGlyph::Download);
     let text = text_run_for(&with_icon, "Export");
     let layout = TextSystem::new()
         .shape_text_run(&text, &FontRegistry::new())
@@ -2192,7 +2213,7 @@ fn button_with_icon_preserves_tall_label_measurement_and_icon_centering() {
             .min_width(220.0)
             .min_height(64.0),
     );
-    let icon_rect = first_lucide_icon_rect(&output);
+    let icon_rect = first_tabler_icon_rect(&output, IconGlyph::Download);
     let text = text_run_for(&output, "Export");
     let layout = shaped_text_layout_for(&output, "Export");
     let line = layout
@@ -2376,7 +2397,7 @@ fn button_press_changes_color_without_moving_content() -> Result<()> {
     let rest = runtime.render(window_id)?;
     let rest_background = solid_fill_colors(&rest)[0];
     let rest_label = text_run_for(&rest, "Press").rect;
-    let rest_icon = first_lucide_icon_rect(&rest);
+    let rest_icon = first_tabler_icon_rect(&rest, IconGlyph::Brush);
     let point = Point::new(12.0, 12.0);
 
     runtime.handle_event(
@@ -2389,7 +2410,10 @@ fn button_press_changes_color_without_moving_content() -> Result<()> {
     let pressed = runtime.render(window_id)?;
     assert_ne!(solid_fill_colors(&pressed)[0], rest_background);
     assert_eq!(text_run_for(&pressed, "Press").rect, rest_label);
-    assert_eq!(first_lucide_icon_rect(&pressed), rest_icon);
+    assert_eq!(
+        first_tabler_icon_rect(&pressed, IconGlyph::Brush),
+        rest_icon
+    );
     Ok(())
 }
 
@@ -2924,7 +2948,7 @@ fn icon_button_paint_matches_widget_visual_states() {
         solid_stroke_colors(&output).contains(&theme.palette.selection_border),
         "selected icon button should retain the accent selection border"
     );
-    assert!(!lucide_strokes(&output).is_empty());
+    assert!(!tabler_strokes(&output).is_empty());
 }
 
 #[test]
@@ -2942,8 +2966,8 @@ fn icon_button_press_changes_color_without_moving_icon() {
 
     assert_ne!(solid_fill_colors(&pressed)[0], solid_fill_colors(&rest)[0]);
     assert_eq!(
-        first_lucide_icon_rect(&pressed),
-        first_lucide_icon_rect(&rest)
+        first_tabler_icon_rect(&pressed, IconGlyph::Close),
+        first_tabler_icon_rect(&rest, IconGlyph::Close)
     );
 }
 
@@ -3101,23 +3125,24 @@ fn editor_icon_glyphs_paint_visible_ink() {
 }
 
 #[test]
-fn icon_button_paints_lucide_native_path() {
-    let glyph = IconGlyph::Brush;
-    let handle = glyph.lucide_icon().handle();
-    let output = render(IconButton::new(glyph, "Brush tool"));
+fn icon_button_paints_tabler_native_path() {
+    for glyph in BUILTIN_ICON_GLYPHS {
+        let handle = glyph.tabler_icon().handle();
+        let output = render(IconButton::new(*glyph, "Icon action"));
 
-    assert!(!output.frame.image_registry.contains(handle));
-    assert!(
-        !lucide_strokes(&output).is_empty(),
-        "{glyph:?} should paint native Lucide path geometry"
-    );
-    assert!(
-        !output.frame.scene.commands().iter().any(|command| matches!(
-            command,
-            SceneCommand::DrawImage { source, .. } if source.image == handle
-        )),
-        "{glyph:?} should bypass the raster image path"
-    );
+        assert!(!output.frame.image_registry.contains(handle));
+        assert!(
+            !tabler_strokes(&output).is_empty(),
+            "{glyph:?} should paint native Tabler path geometry"
+        );
+        assert!(
+            !output.frame.scene.commands().iter().any(|command| matches!(
+                command,
+                SceneCommand::DrawImage { source, .. } if source.image == handle
+            )),
+            "{glyph:?} should bypass the raster image path"
+        );
+    }
 }
 
 #[test]
@@ -4081,7 +4106,7 @@ fn text_input_leading_icon_offsets_placeholder_and_keeps_editing() -> Result<()>
     );
 
     let output = runtime.render(window_id)?;
-    let icon_rect = first_lucide_icon_rect(&output);
+    let icon_rect = first_tabler_icon_rect(&output, IconGlyph::Search);
     let placeholder = text_run_for(&output, "Search conversations");
     assert!(
         placeholder.rect.x() >= icon_rect.max_x() + 4.0,
@@ -7720,7 +7745,7 @@ fn select_chevron_icon_centers_in_reserved_slot() {
         super::SELECT_CHEVRON_SLOT_WIDTH,
         select.bounds.height(),
     );
-    let chevron = lucide_strokes(&output)
+    let chevron = tabler_strokes(&output)
         .into_iter()
         .map(|(bounds, _, stroke)| {
             let side = stroke.width * 12.0;
@@ -7732,7 +7757,7 @@ fn select_chevron_icon_centers_in_reserved_slot() {
             )
         })
         .find(|rect| slot.contains(super::rect_center(*rect)))
-        .expect("select chevron should paint as a native Lucide path");
+        .expect("select chevron should paint as a native Tabler path");
 
     assert!((super::rect_center(chevron).x - super::rect_center(slot).x).abs() < 0.75);
     assert!((super::rect_center(chevron).y - super::rect_center(slot).y).abs() < 0.75);

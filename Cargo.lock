@@ -4692,18 +4692,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinomo-ui-lucide"
-version = "1.47.3"
-dependencies = [
- "roxmltree 0.21.2",
- "sinomo-ui-core",
- "sinomo-ui-layout",
- "sinomo-ui-runtime",
- "sinomo-ui-scene",
- "svgtypes",
-]
-
-[[package]]
 name = "sinomo-ui-nodes"
 version = "0.6.1"
 dependencies = [
@@ -4811,6 +4799,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinomo-ui-tabler"
+version = "0.6.1"
+dependencies = [
+ "roxmltree 0.21.2",
+ "sinomo-ui-core",
+ "sinomo-ui-layout",
+ "sinomo-ui-runtime",
+ "sinomo-ui-scene",
+ "svgtypes",
+]
+
+[[package]]
 name = "sinomo-ui-testing"
 version = "0.6.1"
 dependencies = [
@@ -4878,11 +4878,11 @@ dependencies = [
  "sinomo-ui-animation",
  "sinomo-ui-core",
  "sinomo-ui-layout",
- "sinomo-ui-lucide",
  "sinomo-ui-reactive",
  "sinomo-ui-render-wgpu",
  "sinomo-ui-runtime",
  "sinomo-ui-scene",
+ "sinomo-ui-tabler",
  "sinomo-ui-text",
  "unicode-segmentation",
  "web-time",
