@@ -21,8 +21,8 @@ const MIN_SLOT: f32 = 54.0;
 const TITLE: &str = "Room for\nthe unexpected";
 const QUOTE: &str = "A good place leaves room for something unplanned.";
 
-// Original article copy; paragraphs bound the work performed by the rectangular
-// text-layout adapter below. This is a demo compositor, not an exclusion API.
+// Original article copy, flowed by the rectangular text-layout adapter below.
+// This is a demo compositor, not an exclusion API.
 const ARTICLE: &[&str] = &[
     "The city wakes before its streets become busy. A shopkeeper lifts a shutter, a bicycle crosses the square, and the first light finds a narrow garden between two buildings. Nothing here is perfectly still. The useful spaces are the ones that can make room for change.",
     "A garden begins with boundaries, but its character comes from what happens inside them. Paths bend around a tree. A bench catches the afternoon sun. People gather where a wall offers shelter, then drift toward an opening when the weather changes. The plan becomes a conversation with its surroundings.",
@@ -204,11 +204,11 @@ fn flow_article(
         Option<sui::TextLayoutHandle>,
     ) -> sui::Result<PersistentTextLayout>,
 ) -> sui::Result<(Vec<FlowLine>, Cursor)> {
-    // SUI currently lays out rectangular paragraphs. Shape the unconsumed
-    // suffix at this slot's width, display only its first line, and advance
-    // by that line's UTF-8 byte range. This deliberately simple adapter may
-    // lay out more lines than it displays; it is not a next-line engine API.
-    // The first ASCII letter is painted separately as the drop cap.
+    // SUI currently lays out rectangular paragraphs. Shape the start of the
+    // unconsumed text at this slot's width, display only its first line, and
+    // advance by that line's UTF-8 byte range. This is an adapter, not a
+    // next-line engine API. The first ASCII letter is painted separately as
+    // the drop cap.
     let mut cursor = Cursor {
         paragraph: 0,
         byte: 1,
@@ -219,19 +219,29 @@ fn flow_article(
         while y + line_height <= column.max_y() && cursor.paragraph < ARTICLE.len() {
             let mut paragraph_ended = false;
             for slot in line_slots(*column, y, line_height, circles, rectangles) {
-                let text = &ARTICLE[cursor.paragraph][cursor.byte..];
+                let remainder = &ARTICLE[cursor.paragraph][cursor.byte..];
                 let width = (slot.end - slot.start).floor().max(1.0);
-                let shaped = layout(
-                    text,
-                    width,
-                    previous.get(lines.len()).map(|line| line.layout.handle()),
-                )?;
-                let consumed = shaped.lines().first().map_or(0, |line| line.byte_range.end);
-                if consumed == 0 || consumed > text.len() || !text.is_char_boundary(consumed) {
-                    return Err(sui::Error::new(
-                        "editorial line layout did not advance at a UTF-8 boundary",
-                    ));
-                }
+                let handle = previous.get(lines.len()).map(|line| line.layout.handle());
+                // Lines break greedily and words shape on their own, so the
+                // first line comes out the same wherever the text ends after
+                // it. Laying out a line's worth instead of the whole remainder
+                // keeps each slot's work independent of the paragraph's length.
+                let mut limit = line_prefix_bytes(width, line_height);
+                let (text, shaped, consumed) = loop {
+                    let text = prefix_to_word_end(remainder, limit);
+                    let shaped = layout(text, width, handle)?;
+                    let consumed = shaped.lines().first().map_or(0, |line| line.byte_range.end);
+                    if consumed == 0 || consumed > text.len() || !text.is_char_boundary(consumed) {
+                        return Err(sui::Error::new(
+                            "editorial line layout did not advance at a UTF-8 boundary",
+                        ));
+                    }
+                    // A line that holds the whole prefix might have held more.
+                    if consumed < text.len() || text.len() == remainder.len() {
+                        break (text, shaped, consumed);
+                    }
+                    limit *= 2;
+                };
                 // A slot an obstacle narrowed too far for the next word would
                 // split it; leave it empty instead. Whole columns still may,
                 // or a word wider than the column could never be placed.
@@ -269,6 +279,28 @@ fn flow_article(
         }
     }
     Ok((lines, cursor))
+}
+
+/// Bytes that comfortably overfill one line: body text averages well over a
+/// sixth of its line height per byte, so this is about two lines.
+fn line_prefix_bytes(width: f32, line_height: f32) -> usize {
+    ((width / (line_height * 0.15).max(1.0)).ceil() as usize).max(16)
+}
+
+/// `text` up to the first whitespace at or after `limit` bytes, or all of it.
+/// Ending before whitespace keeps every word whole.
+fn prefix_to_word_end(text: &str, limit: usize) -> &str {
+    if limit >= text.len() {
+        return text;
+    }
+    let mut start = limit;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    match text[start..].find(char::is_whitespace) {
+        Some(offset) if start + offset > 0 => &text[..start + offset],
+        _ => text,
+    }
 }
 
 fn editorial_text_style(
@@ -1018,15 +1050,23 @@ mod tests {
                 surface,
                 "page background must use the current surface token"
             );
+            // The first line lays out only the start of the opening paragraph.
+            let opening = &ARTICLE[0][1..];
             for (text, color, size) in [
                 (TITLE, next.palette.text, next.text._6xl.size),
                 ("T", next.palette.accent, next.text._6xl.size),
                 (QUOTE, next.palette.text, next.text.lg.size),
-                (&ARTICLE[0][1..], next.palette.text, next.text.base.size),
+                (opening, next.palette.text, next.text.base.size),
             ] {
                 let (_, style) = styles
                     .iter()
-                    .find(|(value, _)| value == text)
+                    .find(|(value, _)| {
+                        if text == opening {
+                            !value.is_empty() && opening.starts_with(value.as_str())
+                        } else {
+                            value == text
+                        }
+                    })
                     .unwrap_or_else(|| panic!("missing shaped text {text:?}"));
                 assert_eq!(style.color, color);
                 assert_eq!(style.font_size, size);
@@ -1034,7 +1074,7 @@ mod tests {
                     style.font_families,
                     next.serif_text_style(color).font_families
                 );
-                if text == &ARTICLE[0][1..] {
+                if text == opening {
                     assert_eq!(style.line_height, next.text.base.line_height);
                 }
             }
@@ -1070,6 +1110,82 @@ mod tests {
         );
     }
 
+    fn shape_article_line(
+        system: &TextSystem,
+        fonts: &FontRegistry,
+        text: &str,
+        width: f32,
+        handle: Option<sui::TextLayoutHandle>,
+    ) -> sui::Result<PersistentTextLayout> {
+        system.layout_document_persistent(
+            handle,
+            TextLayoutRequest::new(TextDocument::from_plain_text(
+                text,
+                TextStyle {
+                    line_height: LINE_HEIGHT,
+                    ..DefaultTheme::default().serif_text_style(DefaultTheme::default().palette.text)
+                },
+            ))
+            .with_box_size(Size::new(width, LINE_HEIGHT)),
+            fonts,
+        )
+    }
+
+    #[test]
+    fn editorial_lines_match_laying_out_the_whole_remaining_paragraph() -> sui::Result<()> {
+        let system = TextSystem::new();
+        let fonts = FontRegistry::new();
+        for width in [90.0, 140.0, 250.0, 390.0, 620.0] {
+            let columns: Vec<_> = (0..40)
+                .map(|i| Rect::new(i as f32 * (width + 28.0), 0.0, width, 500.0))
+                .collect();
+            let circles = [
+                Circle {
+                    center: Point::new(width * 0.3, 140.0),
+                    radius: 44.0,
+                },
+                Circle {
+                    center: Point::new(width * 0.85, 330.0),
+                    radius: 30.0,
+                },
+            ];
+            let (lines, _) = flow_article(
+                &columns,
+                &circles,
+                &[],
+                &[],
+                LINE_HEIGHT,
+                |text, width, handle| shape_article_line(&system, &fonts, text, width, handle),
+            )?;
+            for line in &lines {
+                let remainder = &ARTICLE[line.paragraph][line.consumed.start..];
+                let whole =
+                    shape_article_line(&system, &fonts, remainder, line.bounds.width(), None)?;
+                let (shown, expected) = (&line.layout.lines()[0], &whole.lines()[0]);
+                assert_eq!(shown.byte_range, expected.byte_range, "{remainder:?}");
+                assert_eq!(shown.rect, expected.rect, "{remainder:?}");
+                assert_eq!(
+                    line.layout.glyphs()[shown.glyph_range.clone()],
+                    whole.glyphs()[expected.glyph_range.clone()],
+                    "{remainder:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn editorial_prefixes_end_at_whole_words() {
+        let text = "one two\u{3000}three";
+        assert_eq!(prefix_to_word_end(text, 0), "one");
+        assert_eq!(prefix_to_word_end(text, 2), "one");
+        assert_eq!(prefix_to_word_end(text, 3), "one");
+        assert_eq!(prefix_to_word_end(text, 5), "one two");
+        // A limit inside a multibyte character moves past it.
+        assert_eq!(prefix_to_word_end(text, 8), text);
+        assert_eq!(prefix_to_word_end(text, 40), text);
+    }
+
     #[test]
     fn editorial_flow_preserves_every_byte_across_slots_and_columns() -> sui::Result<()> {
         let system = TextSystem::new();
@@ -1088,21 +1204,7 @@ mod tests {
                 &[],
                 &[],
                 LINE_HEIGHT,
-                |text, width, handle| {
-                    system.layout_document_persistent(
-                        handle,
-                        TextLayoutRequest::new(TextDocument::from_plain_text(
-                            text,
-                            TextStyle {
-                                line_height: LINE_HEIGHT,
-                                ..DefaultTheme::default()
-                                    .serif_text_style(DefaultTheme::default().palette.text)
-                            },
-                        ))
-                        .with_box_size(Size::new(width, LINE_HEIGHT)),
-                        &fonts,
-                    )
-                },
+                |text, width, handle| shape_article_line(&system, &fonts, text, width, handle),
             )?;
             let mut cursor = Cursor {
                 paragraph: 0,
@@ -1322,9 +1424,64 @@ mod tests {
         Ok(())
     }
 
+    /// Mean runtime, renderer, and text milliseconds, CPU p50 and p95, then
+    /// mean text requests and misses, over 300 frames paced at 60 Hz after 30
+    /// warmup frames.
+    fn paced_frame_profile(
+        runtime: &mut sui::Runtime,
+        window: sui::WindowId,
+        renderer: &mut WgpuRenderer,
+        time: &mut f64,
+    ) -> sui::Result<[f64; 7]> {
+        let mut samples = Vec::new();
+        let (mut runtime_total, mut renderer_total, mut text_us) = (0.0, 0.0, 0.0);
+        let (mut requests, mut misses) = (0, 0);
+        for frame in 0..330 {
+            std::thread::sleep(std::time::Duration::from_millis(17));
+            *time += 1.0 / 60.0;
+            let start = Instant::now();
+            runtime.tick(*time);
+            runtime.handle_event(window, Event::Window(WindowEvent::RedrawRequested))?;
+            for (id, event) in runtime.drain_ready_events() {
+                runtime.handle_event(id, event)?;
+            }
+            let output = runtime.render(window)?;
+            let runtime_ms = start.elapsed().as_secs_f64() * 1000.0;
+            let start = Instant::now();
+            renderer.render(&output.frame)?;
+            let renderer_ms = start.elapsed().as_secs_f64() * 1000.0;
+            if frame >= 30 {
+                runtime_total += runtime_ms;
+                renderer_total += renderer_ms;
+                let text = output.diagnostics.runtime_text_timing;
+                text_us += text.total_time_us as f64;
+                requests += text.request_count;
+                misses += text.cache_miss_count;
+                samples.push(runtime_ms + renderer_ms);
+            }
+        }
+        samples.sort_by(f64::total_cmp);
+        Ok([
+            runtime_total / 300.0,
+            renderer_total / 300.0,
+            text_us / 300000.0,
+            samples[150],
+            samples[285],
+            requests as f64 / 300.0,
+            misses as f64 / 300.0,
+        ])
+    }
+
     #[test]
     #[ignore = "paced CPU frame benchmark; run serially on an idle machine"]
     fn editorial_frame_profile() -> sui::Result<()> {
+        let report =
+            |label: String, [runtime, renderer, text, p50, p95, requests, misses]: [f64; 7]| {
+                println!(
+                    "EDITORIAL {label} frames=300 runtime_mean_ms={runtime:.3} renderer_mean_ms={renderer:.3} text_mean_ms={text:.3} cpu_p50_ms={p50:.3} cpu_p95_ms={p95:.3} text_requests={requests:.0} text_misses={misses:.1} text_timing={}",
+                    std::env::var_os("SUI_PROFILE_TEXT_TIMINGS").is_some()
+                );
+            };
         let state = Signal::new(Motion::default());
         let (mut runtime, window) = runtime(state.clone(), 1280.0)?;
         let mut renderer = WgpuRenderer::new();
@@ -1335,40 +1492,39 @@ mod tests {
                 playing,
                 ..Motion::default()
             });
-            let mut samples = Vec::new();
-            let (mut runtime_total, mut renderer_total, mut text_us) = (0.0, 0.0, 0.0);
-            for frame in 0..330 {
-                std::thread::sleep(std::time::Duration::from_millis(17));
-                time += 1.0 / 60.0;
-                let start = Instant::now();
-                runtime.tick(time);
-                runtime.handle_event(window, Event::Window(WindowEvent::RedrawRequested))?;
-                for (id, event) in runtime.drain_ready_events() {
-                    runtime.handle_event(id, event)?;
-                }
-                let output = runtime.render(window)?;
-                let runtime_ms = start.elapsed().as_secs_f64() * 1000.0;
-                let start = Instant::now();
-                renderer.render(&output.frame)?;
-                let renderer_ms = start.elapsed().as_secs_f64() * 1000.0;
-                if frame >= 30 {
-                    runtime_total += runtime_ms;
-                    renderer_total += renderer_ms;
-                    text_us += output.diagnostics.runtime_text_timing.total_time_us as f64;
-                    samples.push(runtime_ms + renderer_ms);
-                }
-            }
-            samples.sort_by(f64::total_cmp);
-            println!(
-                "EDITORIAL playing={playing} viewport=1280x900 frames=300 runtime_mean_ms={:.3} renderer_mean_ms={:.3} text_mean_ms={:.3} cpu_p50_ms={:.3} cpu_p95_ms={:.3} text_timing={}",
-                runtime_total / 300.0,
-                renderer_total / 300.0,
-                text_us / 300000.0,
-                samples[150],
-                samples[285],
-                std::env::var_os("SUI_PROFILE_TEXT_TIMINGS").is_some()
-            );
+            let profile = paced_frame_profile(&mut runtime, window, &mut renderer, &mut time)?;
+            report(format!("playing={playing} viewport=1280x900"), profile);
         }
+
+        // The demo page scrolls, so each frame flows the whole article.
+        let mut runtime = Application::new()
+            .window(WindowBuilder::new().title("Editorial engine").root(
+                build_editorial_demo_with_theme(crate::app::default_dev_theme_reader()),
+            ))
+            .build()?;
+        let window = runtime.window_ids()[0];
+        // The first layout flows the whole article with cold caches.
+        let start = Instant::now();
+        sui_text::begin_text_timing_collection();
+        runtime.handle_event(
+            window,
+            Event::Window(WindowEvent::Resized(Size::new(1280.0, 720.0))),
+        )?;
+        let first = runtime.render(window)?;
+        let text = first.diagnostics.runtime_text_timing;
+        println!(
+            "EDITORIAL page first_frame_ms={:.3} text_ms={:.3} text_requests={} text_misses={} miss_layout_ms={:.3}",
+            start.elapsed().as_secs_f64() * 1000.0,
+            text.total_time_us as f64 / 1000.0,
+            text.request_count,
+            text.cache_miss_count,
+            text.miss_layout_time_us as f64 / 1000.0,
+        );
+        let mut renderer = WgpuRenderer::new();
+        renderer.render(&first.frame)?;
+        let mut time = 0.0;
+        let profile = paced_frame_profile(&mut runtime, window, &mut renderer, &mut time)?;
+        report("page playing=true viewport=1280x720".to_string(), profile);
         Ok(())
     }
 }
