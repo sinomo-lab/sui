@@ -152,6 +152,9 @@ struct LiveWindowState {
     last_non_redraw_event_at_ms: Option<f64>,
     pointer: PointerState,
     scale_factor: f64,
+    /// Probing the monitor takes milliseconds, so, as on the desktop, it
+    /// happens before the first frame and after the scale changes.
+    display_capabilities_dirty: bool,
     window: Arc<Window>,
 }
 
@@ -879,6 +882,7 @@ impl LiveHarnessApp {
                     last_non_redraw_event_at_ms: None,
                     pointer: PointerState::default(),
                     scale_factor,
+                    display_capabilities_dirty: true,
                     window,
                 },
             );
@@ -1101,13 +1105,17 @@ impl LiveHarnessApp {
                     );
                 }
 
-                let display_capabilities = self
+                if let Some(window) = self
                     .windows
-                    .get(&window_id)
-                    .map(|window| detect_window_display_capabilities(window.window.as_ref()))
-                    .unwrap_or_default();
-                self.renderer
-                    .set_window_display_capabilities(window_id, display_capabilities)?;
+                    .get_mut(&window_id)
+                    .filter(|window| window.display_capabilities_dirty)
+                {
+                    window.display_capabilities_dirty = false;
+                    let display_capabilities =
+                        detect_window_display_capabilities(window.window.as_ref());
+                    self.renderer
+                        .set_window_display_capabilities(window_id, display_capabilities)?;
+                }
                 let PresentedFrame {
                     output,
                     runtime_time_ms,
@@ -1193,6 +1201,7 @@ impl LiveHarnessApp {
             WinitWindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 let suggested_size = self.windows.get_mut(&window_id).map(|window| {
                     window.scale_factor = scale_factor;
+                    window.display_capabilities_dirty = true;
                     physical_size_to_logical_size(window.window.inner_size(), scale_factor)
                 });
                 self.process_event(
