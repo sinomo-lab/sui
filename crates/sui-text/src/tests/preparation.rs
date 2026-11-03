@@ -380,3 +380,101 @@ fn cache_churn_is_byte_bounded_and_does_not_invalidate_pinned_layouts() {
         Some(pinned.layout())
     );
 }
+
+#[test]
+fn size_only_results_are_reused_by_document_and_width_but_not_height() {
+    let system = TextSystem::with_bundled_fonts();
+    let fonts = FontRegistry::new();
+    let document = TextDocument::from_plain_text("reused size measurement", TextStyle::default());
+    let size_at = |width: f32, height: f32| {
+        system
+            .measure_document_size(
+                TextLayoutRequest::new(document.clone()).with_box_size(Size::new(width, height)),
+                &fonts,
+            )
+            .unwrap()
+    };
+    let wide = size_at(320.0, 20.0);
+    let prepared = system.preparation_cache_snapshot().paragraphs;
+    // Box height never affects a size-only measurement, so it shares the result
+    // without consulting paragraph preparation.
+    assert_eq!(size_at(320.0, 500.0), wide);
+    assert_eq!(system.preparation_cache_snapshot().paragraphs, prepared);
+
+    let narrow = size_at(60.0, 20.0);
+    assert!(narrow.height > wide.height, "{narrow:?} should wrap");
+    assert!(system.preparation_cache_snapshot().paragraphs.hits > prepared.hits);
+
+    let larger = TextDocument::from_plain_text(
+        "reused size measurement",
+        TextStyle {
+            font_size: 24.0,
+            line_height: 30.0,
+            ..TextStyle::default()
+        },
+    );
+    let larger = system
+        .measure_document_size(
+            TextLayoutRequest::new(larger).with_box_size(Size::new(320.0, 20.0)),
+            &fonts,
+        )
+        .unwrap();
+    assert!(larger.width > wide.width);
+
+    // Cached sizes match a measurement made from nothing.
+    discard_preparation(&system);
+    assert_eq!(size_at(60.0, 20.0), narrow);
+    assert_eq!(size_at(320.0, 20.0), wide);
+}
+
+#[test]
+fn unchanged_font_registries_keep_their_context_and_cached_sizes() {
+    let system = TextSystem::with_bundled_fonts();
+    let handle = FontHandle::new(7);
+    let mut fonts = FontRegistry::new();
+    fonts.insert(
+        handle,
+        RegisteredFont::from_bytes(include_bytes!("../../assets/NotoSans-Regular.ttf").as_slice()),
+    );
+    let style = TextStyle {
+        font: Some(handle),
+        ..TextStyle::default()
+    };
+    let measured = system
+        .measure_text_size("registered", style.clone(), &fonts)
+        .unwrap();
+    // An equal registry built separately still matches the cached context.
+    let same = fonts.clone();
+    assert_eq!(
+        system
+            .measure_text_size("registered", style.clone(), &same)
+            .unwrap(),
+        measured
+    );
+    assert_eq!(system.font_context_build_count(), 1);
+
+    fonts.insert(
+        handle,
+        RegisteredFont::from_bytes(
+            include_bytes!("../../assets/NotoSansHebrew-Regular.ttf").as_slice(),
+        ),
+    );
+    system
+        .measure_text_size("registered", style, &fonts)
+        .unwrap();
+    assert_eq!(system.font_context_build_count(), 2);
+    assert!(
+        system
+            .font_context
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .context
+            .preparation
+            .sizes
+            .len()
+            == 1,
+        "a new registry starts with an empty size cache"
+    );
+}

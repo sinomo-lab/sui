@@ -247,7 +247,7 @@ impl Surface {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn background_for_role(theme: &DefaultTheme, role: SurfaceRole) -> Color {
@@ -505,7 +505,7 @@ impl ShadowBox {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 }
 
@@ -693,7 +693,7 @@ impl FramedField {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn child_contains(&self, target: WidgetId) -> bool {

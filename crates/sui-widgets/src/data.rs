@@ -340,7 +340,7 @@ impl ListView {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn resolved_row_height(&self) -> f32 {
@@ -1418,7 +1418,7 @@ impl LayerList {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn viewport_rect(&self, bounds: Rect) -> Rect {
@@ -2505,7 +2505,7 @@ impl TreeView {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn resolved_row_height(&self) -> f32 {
@@ -3541,7 +3541,7 @@ impl Table {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn name(&self) -> String {
@@ -4523,7 +4523,7 @@ impl VirtualTable {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn resolved_selected(&self) -> Option<usize> {
@@ -5698,7 +5698,7 @@ impl Breadcrumb {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn activate(&mut self, ctx: &mut EventCtx, index: usize) {

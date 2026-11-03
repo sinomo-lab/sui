@@ -1,13 +1,19 @@
 use std::{
-    collections::hash_map::{DefaultHasher, RandomState},
+    collections::hash_map::DefaultHasher,
     hash::{BuildHasher, Hash, Hasher},
 };
+
+// Buckets are confirmed by comparing whole keys, so the bucket hash only needs
+// to be fast; every label paint looks its layout up.
+use rustc_hash::FxBuildHasher;
 
 use sui_core::{FontHandle, Size};
 
 use crate::{
     font::FaceCacheKey,
-    model::{TextDocument, TextLayout, TextLayoutId, TextParagraphStyle, TextStyle},
+    model::{
+        FontFamilyStack, TextDocument, TextLayout, TextLayoutId, TextParagraphStyle, TextStyle,
+    },
     style::{FontFeatures, FontStretch, FontStyle},
 };
 
@@ -29,7 +35,7 @@ impl From<Size> for SizeCacheKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct TextStyleCacheKey {
     font_handle: Option<u64>,
-    font_families_hash: u64,
+    font_families: Option<FontFamilyStack>,
     font_size_bits: u32,
     line_height_bits: u32,
     weight: u16,
@@ -44,7 +50,7 @@ impl TextStyleCacheKey {
     fn new(style: &TextStyle) -> Self {
         Self {
             font_handle: style.font.map(FontHandle::get),
-            font_families_hash: hash_value(&style.font_families),
+            font_families: style.font_families,
             font_size_bits: style.font_size.to_bits(),
             line_height_bits: style.line_height.to_bits(),
             weight: style.weight.value(),
@@ -207,7 +213,6 @@ const MAX_LAYOUT_BYTES: usize = 32 * 1024 * 1024;
 #[derive(Debug)]
 pub(crate) struct TextLayoutCache {
     entries: lru::LruCache<u64, Vec<TextLayoutCacheEntry>>,
-    hash_builder: RandomState,
     entry_count: usize,
     retained_bytes: usize,
     max_entries: usize,
@@ -309,7 +314,6 @@ impl TextLayoutCache {
     pub(crate) fn with_limits(max_entries: usize, max_bytes: usize) -> Self {
         Self {
             entries: lru::LruCache::unbounded(),
-            hash_builder: RandomState::new(),
             entry_count: 0,
             retained_bytes: 0,
             max_entries,
@@ -333,12 +337,8 @@ impl TextLayoutCache {
         span_face_keys: &[FaceCacheKey],
         box_size: Option<Size>,
     ) -> Option<TextLayout> {
-        let hash = TextLayoutCacheKey::hash_document(
-            &self.hash_builder,
-            document,
-            span_face_keys,
-            box_size,
-        );
+        let hash =
+            TextLayoutCacheKey::hash_document(&FxBuildHasher, document, span_face_keys, box_size);
         let cached = self
             .entries
             .get(&hash)
@@ -365,12 +365,8 @@ impl TextLayoutCache {
         box_size: Option<Size>,
         layout: TextLayout,
     ) {
-        let hash = TextLayoutCacheKey::hash_document(
-            &self.hash_builder,
-            document,
-            span_face_keys,
-            box_size,
-        );
+        let hash =
+            TextLayoutCacheKey::hash_document(&FxBuildHasher, document, span_face_keys, box_size);
         let key = TextLayoutCacheKey::new(document, span_face_keys, box_size);
         let retained_bytes = layout_entry_bytes(&key, &layout);
         if retained_bytes > self.max_bytes || self.max_entries == 0 {
@@ -393,6 +389,144 @@ impl TextLayoutCache {
             });
             self.entry_count += 1;
         }
+        self.retained_bytes += retained_bytes;
+        while self.entry_count > self.max_entries || self.retained_bytes > self.max_bytes {
+            let Some((_, bucket)) = self.entries.pop_lru() else {
+                break;
+            };
+            self.entry_count -= bucket.len();
+            self.retained_bytes -= bucket
+                .iter()
+                .map(|entry| entry.retained_bytes)
+                .sum::<usize>();
+        }
+    }
+}
+
+// Size-only results are a few bytes each; their keys carry the measured text.
+const MAX_SIZE_ENTRIES: usize = 16_384;
+const MAX_SIZE_BYTES: usize = 4 * 1024 * 1024;
+
+/// Measured sizes by document and wrapping width. Box height never affects a
+/// size-only measurement, so it is not part of the key.
+#[derive(Debug)]
+pub(crate) struct TextSizeCache {
+    entries: lru::LruCache<u64, Vec<TextSizeCacheEntry>>,
+    entry_count: usize,
+    retained_bytes: usize,
+    max_entries: usize,
+    max_bytes: usize,
+}
+
+#[derive(Debug)]
+struct TextSizeCacheEntry {
+    key: TextLayoutCacheKey,
+    size: Size,
+    retained_bytes: usize,
+}
+
+/// A key prepared before the document is consumed by measurement.
+pub(crate) struct TextSizeCacheSlot {
+    hash: u64,
+    key: TextLayoutCacheKey,
+}
+
+impl Default for TextSizeCache {
+    fn default() -> Self {
+        Self::with_limits(MAX_SIZE_ENTRIES, MAX_SIZE_BYTES)
+    }
+}
+
+fn width_box(width: Option<f32>) -> Option<Size> {
+    width.map(|width| Size::new(width, 0.0))
+}
+
+impl TextSizeCache {
+    pub(crate) fn with_limits(max_entries: usize, max_bytes: usize) -> Self {
+        Self {
+            entries: lru::LruCache::unbounded(),
+            entry_count: 0,
+            retained_bytes: 0,
+            max_entries,
+            max_bytes,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.entry_count
+    }
+
+    pub(crate) fn get(
+        &mut self,
+        document: &TextDocument,
+        span_face_keys: &[FaceCacheKey],
+        width: Option<f32>,
+    ) -> Option<Size> {
+        let box_size = width_box(width);
+        let hash =
+            TextLayoutCacheKey::hash_document(&FxBuildHasher, document, span_face_keys, box_size);
+        self.entries.get(&hash).and_then(|bucket| {
+            bucket
+                .iter()
+                .find(|entry| {
+                    entry
+                        .key
+                        .matches_document(document, span_face_keys, box_size)
+                })
+                .map(|entry| entry.size)
+        })
+    }
+
+    pub(crate) fn slot(
+        &self,
+        document: &TextDocument,
+        span_face_keys: &[FaceCacheKey],
+        width: Option<f32>,
+    ) -> TextSizeCacheSlot {
+        let box_size = width_box(width);
+        TextSizeCacheSlot {
+            hash: TextLayoutCacheKey::hash_document(
+                &FxBuildHasher,
+                document,
+                span_face_keys,
+                box_size,
+            ),
+            key: TextLayoutCacheKey::new(document, span_face_keys, box_size),
+        }
+    }
+
+    pub(crate) fn insert(&mut self, slot: TextSizeCacheSlot, size: Size) {
+        let TextSizeCacheSlot { hash, key } = slot;
+        let retained_bytes = size_of::<TextSizeCacheEntry>()
+            + size_of::<[usize; 4]>()
+            + allocation_bytes(&key.paragraphs)
+            + key
+                .paragraphs
+                .iter()
+                .map(|paragraph| {
+                    allocation_bytes(&paragraph.spans)
+                        + paragraph
+                            .spans
+                            .iter()
+                            .map(|span| span.text.capacity())
+                            .sum::<usize>()
+                })
+                .sum::<usize>();
+        if retained_bytes > self.max_bytes || self.max_entries == 0 {
+            return;
+        }
+        let bucket = self.entries.get_or_insert_mut(hash, Vec::new);
+        if let Some(existing) = bucket.iter_mut().find(|entry| entry.key == key) {
+            existing.size = size;
+            return;
+        }
+        bucket.push(TextSizeCacheEntry {
+            key,
+            size,
+            retained_bytes,
+        });
+        self.entry_count += 1;
         self.retained_bytes += retained_bytes;
         while self.entry_count > self.max_entries || self.retained_bytes > self.max_bytes {
             let Some((_, bucket)) = self.entries.pop_lru() else {

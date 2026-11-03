@@ -175,7 +175,7 @@ impl Image {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn resolved_background(&self) -> Option<Color> {
@@ -363,7 +363,7 @@ impl SignalMeter {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn is_active(&self) -> bool {
@@ -592,7 +592,7 @@ impl ColorSwatch {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn activate(&mut self, ctx: &mut EventCtx) {
@@ -1018,7 +1018,7 @@ impl ColorPalette {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn grid_columns(&self) -> usize {
@@ -1566,7 +1566,7 @@ impl BrushPreview {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn value_text(kind: &str, spec: BrushPreviewSpec) -> String {
@@ -2296,7 +2296,7 @@ impl ColorPicker {
             .theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme);
+            .unwrap_or_else(|| *self.theme);
         self.appearance.apply(theme)
     }
 
@@ -3179,7 +3179,7 @@ impl SimpleColorPicker {
             .theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme);
+            .unwrap_or_else(|| *self.theme);
         self.appearance.apply(theme)
     }
 

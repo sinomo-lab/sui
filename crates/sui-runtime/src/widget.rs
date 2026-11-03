@@ -1553,7 +1553,7 @@ impl WidgetPod {
             parent_ctx.scene.append_ref(&fragment.scene);
             parent_ctx
                 .widget_paint_bounds
-                .extend(fragment.bounds.iter().map(|(&id, &rect)| (id, rect)));
+                .extend_from_slice(&fragment.bounds);
             parent_ctx.extend_ime_composition_rect(fragment.ime);
             return;
         }
@@ -1616,7 +1616,7 @@ impl WidgetPod {
             transformed.append(scene);
             transformed.push(SceneCommand::PopTransform);
             scene = transformed;
-            for bounds in widget_paint_bounds.values_mut() {
+            for (_, bounds) in &mut widget_paint_bounds {
                 *bounds = relative_transform.transform_rect_bbox(*bounds);
             }
             ime_composition_rect =
@@ -3573,7 +3573,10 @@ pub struct PaintCtx {
     image_registry: Arc<ImageRegistry>,
     scene: Scene,
     images: Vec<(ImageHandle, PaintImageResource)>,
-    widget_paint_bounds: HashMap<WidgetId, Rect>,
+    /// Every painted widget's bounds, in paint order; a later entry for the
+    /// same widget replaces an earlier one. Children append to their parent,
+    /// so a list keeps merging linear in the subtree's size.
+    widget_paint_bounds: Vec<(WidgetId, Rect)>,
     ime_composition_rect: Option<Rect>,
     frame_time: f64,
 }
@@ -3692,7 +3695,7 @@ impl PaintCtx {
             image_registry,
             scene: Scene::new(),
             images: Vec::new(),
-            widget_paint_bounds: HashMap::new(),
+            widget_paint_bounds: Vec::new(),
             ime_composition_rect: None,
             frame_time: 0.0,
         }
@@ -4079,7 +4082,7 @@ impl PaintCtx {
             self.scene.append(scene);
             self.scene.push(SceneCommand::PopTransform);
         }
-        for bounds in widget_paint_bounds.values_mut() {
+        for (_, bounds) in &mut widget_paint_bounds {
             *bounds = transform.transform_rect_bbox(*bounds);
         }
         self.extend_widget_paint_bounds(widget_paint_bounds);
@@ -4195,14 +4198,18 @@ impl PaintCtx {
     }
 
     pub(crate) fn record_widget_paint_bounds(&mut self, widget_id: WidgetId, paint_bounds: Rect) {
-        self.widget_paint_bounds.insert(widget_id, paint_bounds);
+        self.widget_paint_bounds.push((widget_id, paint_bounds));
     }
 
     pub(crate) fn extend_widget_paint_bounds(
         &mut self,
-        widget_paint_bounds: HashMap<WidgetId, Rect>,
+        mut widget_paint_bounds: Vec<(WidgetId, Rect)>,
     ) {
-        self.widget_paint_bounds.extend(widget_paint_bounds);
+        if self.widget_paint_bounds.is_empty() {
+            self.widget_paint_bounds = widget_paint_bounds;
+        } else {
+            self.widget_paint_bounds.append(&mut widget_paint_bounds);
+        }
     }
 
     pub(crate) fn extend_images(&mut self, images: Vec<(ImageHandle, PaintImageResource)>) {
@@ -4220,7 +4227,7 @@ impl PaintCtx {
     ) -> (
         Scene,
         Vec<(ImageHandle, PaintImageResource)>,
-        HashMap<WidgetId, Rect>,
+        Vec<(WidgetId, Rect)>,
         Option<Rect>,
     ) {
         (

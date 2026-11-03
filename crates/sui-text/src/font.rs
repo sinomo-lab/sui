@@ -214,6 +214,15 @@ impl FontRegistry {
         key.sort_unstable_by_key(|(handle, _)| *handle);
         key
     }
+
+    /// Whether `key`, from [`Self::cache_key`], still describes these fonts.
+    pub(crate) fn matches_cache_key(&self, key: &[(FontHandle, FaceCacheKey)]) -> bool {
+        key.len() == self.fonts.len()
+            && self.fonts.iter().all(|(handle, font)| {
+                key.binary_search_by_key(handle, |(handle, _)| *handle)
+                    .is_ok_and(|index| key[index].1 == FaceCacheKey::from_registered_font(font))
+            })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -316,6 +325,18 @@ struct ExplicitFontSpec {
     family_name: String,
 }
 
+/// A theme family stack and the face attributes it was resolved for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct FamilyQueryKey {
+    stack: FontFamilyStack,
+    weight: u16,
+    style: FontStyle,
+    stretch: FontStretch,
+}
+
+/// Distinct stacks are static, so this bound is only a backstop.
+const MAX_RESOLVED_FAMILY_NAMES: usize = 1_024;
+
 #[derive(Debug)]
 pub(crate) struct FontContext {
     pub font_system: FontSystem,
@@ -324,6 +345,9 @@ pub(crate) struct FontContext {
     explicit_fonts: HashMap<FontHandle, ExplicitFontSpec>,
     explicit_faces: HashMap<fontdb::ID, ResolvedTextFace>,
     shared_faces: Arc<Mutex<HashMap<fontdb::ID, ResolvedTextFace>>>,
+    // A database query scans every installed face, and nearly every themed
+    // text request names a stack. The database is fixed for this context.
+    family_names: HashMap<FamilyQueryKey, Option<String>>,
 }
 
 impl FontContext {
@@ -355,7 +379,7 @@ impl FontContext {
     }
 
     pub(crate) fn resolve_span(
-        &self,
+        &mut self,
         span_id: TextSpanId,
         text: String,
         style: &TextStyle,
@@ -366,7 +390,7 @@ impl FontContext {
             })?;
             Some(spec.family_name.clone())
         } else if let Some(families) = style.font_families {
-            resolve_font_family_name(self.font_system.db(), families, style)
+            self.resolve_family_name(families, style)
         } else {
             None
         };
@@ -377,6 +401,24 @@ impl FontContext {
             style: style.clone(),
             family_name,
         })
+    }
+
+    fn resolve_family_name(&mut self, stack: FontFamilyStack, style: &TextStyle) -> Option<String> {
+        let key = FamilyQueryKey {
+            stack,
+            weight: style.weight.value(),
+            style: style.style,
+            stretch: style.stretch,
+        };
+        if let Some(name) = self.family_names.get(&key) {
+            return name.clone();
+        }
+        let name = resolve_font_family_name(self.font_system.db(), stack, style);
+        if self.family_names.len() >= MAX_RESOLVED_FAMILY_NAMES {
+            self.family_names.clear();
+        }
+        self.family_names.insert(key, name.clone());
+        name
     }
 
     pub(crate) fn attrs_for_span<'a>(span: &'a ResolvedSpanInput, metadata: usize) -> Attrs<'a> {
@@ -560,6 +602,7 @@ impl TextSystemState {
             explicit_fonts,
             explicit_faces,
             shared_faces: Arc::clone(&self.shared_faces),
+            family_names: HashMap::new(),
         })
     }
 }

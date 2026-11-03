@@ -12,6 +12,7 @@ use crate::text::TextFrameStats;
 pub struct RetainedPacketRebuildStats {
     pub new_count: usize,
     pub coordinate_space_count: usize,
+    /// Always zero: packets are compared directly rather than by signature.
     pub signature_count: usize,
     pub scene_count: usize,
     pub state_count: usize,
@@ -21,7 +22,6 @@ pub struct RetainedPacketRebuildStats {
 pub(crate) enum PacketRebuildReason {
     NewPacket,
     CoordinateSpace,
-    Signature,
     Scene,
     State,
 }
@@ -47,7 +47,6 @@ impl RetainedPacketRebuildStats {
         match reason {
             PacketRebuildReason::NewPacket => self.new_count += 1,
             PacketRebuildReason::CoordinateSpace => self.coordinate_space_count += 1,
-            PacketRebuildReason::Signature => self.signature_count += 1,
             PacketRebuildReason::Scene => self.scene_count += 1,
             PacketRebuildReason::State => self.state_count += 1,
         }

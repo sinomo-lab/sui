@@ -109,7 +109,7 @@ pub const REACTIVE_CHANGED: CommandKey<()> = CommandKey::new("sui.reactive.chang
 type PaintOutput = (
     Scene,
     Vec<(ImageHandle, PaintImageResource)>,
-    HashMap<WidgetId, Rect>,
+    FxHashMap<WidgetId, Rect>,
     Option<Rect>,
 );
 
@@ -1323,7 +1323,7 @@ struct WindowState {
     viewport_hint: Option<Size>,
     viewport: Option<Size>,
     last_frame: Option<SceneFrame>,
-    last_paint_bounds_by_widget: HashMap<WidgetId, Rect>,
+    last_paint_bounds_by_widget: FxHashMap<WidgetId, Rect>,
     /// The base image registry the last frame's registry was built from.
     last_image_registry_base: Option<Arc<ImageRegistry>>,
     /// Persistent text layouts left after the last prune.
@@ -1436,7 +1436,7 @@ impl WindowState {
             viewport_hint: None,
             viewport: None,
             last_frame: None,
-            last_paint_bounds_by_widget: HashMap::new(),
+            last_paint_bounds_by_widget: FxHashMap::default(),
             last_image_registry_base: None,
             retained_text_layout_count: 0,
             last_semantics: Vec::new(),
@@ -3734,7 +3734,8 @@ impl WindowState {
                             .map(|frame| frame.scene.clone())
                             .unwrap_or_default(),
                         Vec::new(),
-                        self.last_paint_bounds_by_widget.clone(),
+                        // Replaced below once composition updates apply.
+                        std::mem::take(&mut self.last_paint_bounds_by_widget),
                         baseline_ime_composition_rect,
                     )
                 } else {
@@ -4119,7 +4120,13 @@ impl WindowState {
         let _ = self
             .root
             .paint_layer_contents_for(self.root.id(), &mut paint_ctx);
-        paint_ctx.into_parts()
+        let (scene, images, paint_bounds, ime_composition_rect) = paint_ctx.into_parts();
+        (
+            scene,
+            images,
+            paint_bounds.into_iter().collect(),
+            ime_composition_rect,
+        )
     }
 
     fn repaint_dirty_layers(
@@ -4137,7 +4144,8 @@ impl WindowState {
             .map(|frame| frame.scene.clone())
             .unwrap_or_default();
         let mut images = Vec::new();
-        let mut paint_bounds_by_widget = self.last_paint_bounds_by_widget.clone();
+        // The caller stores the result; a full-scene fallback rebuilds it.
+        let mut paint_bounds_by_widget = std::mem::take(&mut self.last_paint_bounds_by_widget);
         let mut ime_composition_rect = baseline_ime_composition_rect;
         let frame_time = self.frame_time();
 
@@ -5234,7 +5242,7 @@ impl WidgetGraph {
         &mut self,
         root: &WidgetPod,
         focused_widget: Option<WidgetId>,
-        paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
+        paint_bounds_by_widget: &FxHashMap<WidgetId, Rect>,
     ) {
         self.root = root.id();
         for (_, mut node) in self.nodes.drain() {
@@ -5281,7 +5289,7 @@ impl WidgetGraph {
 
     fn update_paint_bounds_from_snapshot(
         &mut self,
-        paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
+        paint_bounds_by_widget: &FxHashMap<WidgetId, Rect>,
     ) {
         for node in self.nodes.values_mut() {
             node.geometry.paint_bounds = paint_bounds_by_widget
@@ -5537,7 +5545,7 @@ impl WidgetGraph {
         pod: &WidgetPod,
         parent: Option<WidgetId>,
         focused_widget: Option<WidgetId>,
-        paint_bounds_by_widget: &HashMap<WidgetId, Rect>,
+        paint_bounds_by_widget: &FxHashMap<WidgetId, Rect>,
         context: GraphCollectContext,
         inverse_cache: &mut FxHashMap<[u32; 6], Option<Transform>>,
     ) {
@@ -5738,7 +5746,7 @@ struct CollectChildrenVisitor<'a> {
     graph: &'a mut WidgetGraph,
     parent: WidgetId,
     focused_widget: Option<WidgetId>,
-    paint_bounds_by_widget: &'a HashMap<WidgetId, Rect>,
+    paint_bounds_by_widget: &'a FxHashMap<WidgetId, Rect>,
     context: GraphCollectContext,
     children: Vec<WidgetId>,
     inverse_cache: &'a mut FxHashMap<[u32; 6], Option<Transform>>,

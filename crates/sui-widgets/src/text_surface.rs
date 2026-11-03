@@ -454,7 +454,7 @@ impl TextSurface {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     /// Publish where editing stands to the status signal, if any.

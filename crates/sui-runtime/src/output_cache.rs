@@ -1,7 +1,7 @@
 //! Window-owned, byte-charged reuse of provisional paint and semantics output.
 //! Unaccounted scene payloads and callbacks with side effects use the full path.
 use lru::LruCache;
-use std::{cell::RefCell, collections::HashMap, mem::size_of, rc::Rc, sync::Arc};
+use std::{cell::RefCell, mem::size_of, rc::Rc, sync::Arc};
 use sui_core::{
     DpiInfo, Rect, SemanticsAction, SemanticsNode, SemanticsValue, Transform, WidgetId,
 };
@@ -38,7 +38,7 @@ impl OutputScope {
         id: WidgetId,
         key: GeometryKey,
         scene: &Scene,
-        bounds: &HashMap<WidgetId, Rect>,
+        bounds: &[(WidgetId, Rect)],
         ime: Option<Rect>,
     ) {
         self.current(|cache| cache.put_paint(id, key, scene, bounds, ime));
@@ -60,12 +60,12 @@ pub(crate) struct GeometryKey {
 #[derive(Clone, Debug)]
 pub(crate) struct PaintFragment {
     pub scene: Scene,
-    pub bounds: HashMap<WidgetId, Rect>,
+    pub bounds: Vec<(WidgetId, Rect)>,
     pub ime: Option<Rect>,
 }
 impl PaintFragment {
-    pub fn charge(scene: &Scene, bounds: &HashMap<WidgetId, Rect>) -> Option<usize> {
-        let mut bytes = 512 + 2 * std::mem::size_of_val(scene.commands()) + bounds.capacity() * 64;
+    pub fn charge(scene: &Scene, bounds: &[(WidgetId, Rect)]) -> Option<usize> {
+        let mut bytes = 512 + 2 * std::mem::size_of_val(scene.commands()) + bounds.len() * 64;
         for command in scene.commands() {
             let brush = match command {
                 SceneCommand::FillRect { brush, .. }
@@ -313,7 +313,7 @@ impl OutputCache {
         id: WidgetId,
         key: GeometryKey,
         scene: &Scene,
-        bounds: &HashMap<WidgetId, Rect>,
+        bounds: &[(WidgetId, Rect)],
         ime: Option<Rect>,
     ) {
         if self.paint_active
@@ -322,7 +322,7 @@ impl OutputCache {
         {
             let fragment = PaintFragment {
                 scene: scene.clone(),
-                bounds: bounds.clone(),
+                bounds: bounds.to_vec(),
                 ime,
             };
             self.paints.put(id, key, Rc::new(fragment), bytes);
@@ -566,7 +566,7 @@ mod tests {
             TextLayoutHandle::new(99),
             &layout,
         )));
-        cache.put_paint(id, key, &scene, &HashMap::new(), None);
+        cache.put_paint(id, key, &scene, &[], None);
         assert!(
             cache
                 .paint(id, key, &TextLayoutRegistry::default())

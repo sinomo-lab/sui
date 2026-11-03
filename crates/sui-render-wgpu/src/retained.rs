@@ -2,8 +2,10 @@ use crate::diagnostics::PacketRebuildReason;
 use crate::diagnostics::RetainedPacketRebuildStats;
 use crate::draw::DrawOpArena;
 use crate::geometry::hash_path;
+#[cfg(test)]
 use crate::geometry::hash_point;
 use crate::geometry::hash_rect;
+#[cfg(test)]
 use crate::geometry::hash_transform;
 use crate::geometry::transform_scene_path;
 use crate::path_cache::PathMeshCache;
@@ -19,7 +21,9 @@ use std::hash::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
+#[cfg(test)]
 use sui_core::Color;
+#[cfg(test)]
 use sui_core::ColorSpace;
 use sui_core::Path as ScenePath;
 use sui_core::Point;
@@ -28,6 +32,7 @@ use sui_core::Result;
 use sui_core::Size;
 use sui_core::Transform;
 use sui_core::Vector;
+#[cfg(test)]
 use sui_scene::Brush;
 use sui_scene::LayerProperties;
 use sui_scene::Scene;
@@ -37,6 +42,7 @@ use sui_scene::SceneLayer;
 use sui_scene::SceneLayerId;
 use sui_scene::SceneLayerUpdateKind;
 use sui_scene::TextRenderPolicy;
+#[cfg(test)]
 use sui_text::TextStyle;
 use web_time::Instant;
 
@@ -354,6 +360,7 @@ pub(crate) struct ResolvedRasterState {
 }
 
 impl ResolvedRasterState {
+    #[cfg(test)]
     pub(crate) fn signature(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         hash_transform(&mut hasher, self.current_transform);
@@ -511,7 +518,6 @@ pub(crate) struct RetainedDirectPacket {
     pub(crate) id: RetainedPacketId,
     pub(crate) scene: Scene,
     pub(crate) initial_state: ResolvedRasterState,
-    pub(crate) signature: u64,
     raster_context: RasterContext,
     pub(crate) coordinate_space: PacketCoordinateSpace,
     pub(crate) draw_ops: Arc<DrawOpArena>,
@@ -1591,17 +1597,9 @@ impl RetainedCompositorState {
         {
             return Ok(());
         }
-        let signature_started = self.diagnostics_enabled.then(Instant::now);
-        let signature = packet_signature(
-            &snapshot.scene,
-            &snapshot.initial_state,
-            frame.viewport,
-            frame.surface_size,
-            feather_width,
-        );
-        let signature_time_ms = signature_started
-            .map(|started| started.elapsed().as_secs_f64() * 1000.0)
-            .unwrap_or(0.0);
+        // Compare rather than hash: the raster context covers the viewport,
+        // surface, and feathering, and equality short-circuits where a
+        // signature would hash all of a changed packet just before rebuilding.
         let rebuild_reason = match self.packets.get(&snapshot.id) {
             None => Some(PacketRebuildReason::NewPacket),
             Some(packet) if packet.coordinate_space != coordinate_space => {
@@ -1611,22 +1609,8 @@ impl RetainedCompositorState {
             Some(packet) if !packet.atlas_is_current(text_engine) => {
                 Some(PacketRebuildReason::State)
             }
-            // The signature leaves out the window's text policy.
             Some(packet) if packet.raster_context != raster_context => {
                 Some(PacketRebuildReason::State)
-            }
-            Some(packet) if packet.signature != signature => {
-                if self.diagnostics_enabled {
-                    if packet.scene != snapshot.scene {
-                        Some(PacketRebuildReason::Scene)
-                    } else if packet.initial_state != snapshot.initial_state {
-                        Some(PacketRebuildReason::State)
-                    } else {
-                        Some(PacketRebuildReason::Signature)
-                    }
-                } else {
-                    Some(PacketRebuildReason::Signature)
-                }
             }
             Some(packet) if packet.scene != snapshot.scene => Some(PacketRebuildReason::Scene),
             Some(packet) if packet.initial_state != snapshot.initial_state => {
@@ -1644,13 +1628,10 @@ impl RetainedCompositorState {
                 text_engine,
                 &mut self.path_cache,
                 feather_width,
+                self.diagnostics_enabled,
             )?;
             stats.record_packet_rebuild(reason);
-            stats.record_packet_build_diagnostics(
-                diagnostics,
-                normalize_time_ms,
-                signature_time_ms,
-            );
+            stats.record_packet_build_diagnostics(diagnostics, normalize_time_ms, 0.0);
             if let Some(started) = packet_build_started {
                 let total_time_ms = started.elapsed().as_secs_f64() * 1000.0;
                 stats.packet_build_count += 1;
@@ -1686,7 +1667,6 @@ impl RetainedCompositorState {
                     id: snapshot.id,
                     scene: snapshot.scene,
                     initial_state: snapshot.initial_state,
-                    signature,
                     raster_context,
                     coordinate_space,
                     text_pages: draw_ops
@@ -2363,6 +2343,7 @@ pub(crate) fn descriptor_translation_delta(
     Some(bounds_delta + (current.properties.translation - previous.properties.translation))
 }
 
+#[cfg(test)]
 pub(crate) fn packet_signature(
     scene: &Scene,
     initial_state: &ResolvedRasterState,
@@ -2382,12 +2363,14 @@ pub(crate) fn packet_signature(
     hasher.finish()
 }
 
+#[cfg(test)]
 pub(crate) fn hash_scene(scene: &Scene, hasher: &mut DefaultHasher) {
     for command in scene.commands() {
         hash_scene_command(command, hasher);
     }
 }
 
+#[cfg(test)]
 pub(crate) fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHasher) {
     match command {
         SceneCommand::Clear(color) => {
@@ -2573,6 +2556,7 @@ pub(crate) fn hash_scene_command(command: &SceneCommand, hasher: &mut DefaultHas
     }
 }
 
+#[cfg(test)]
 pub(crate) fn hash_widget_shader(shader: &sui_scene::WidgetShader, hasher: &mut DefaultHasher) {
     match shader {
         sui_scene::WidgetShader::ColorWheel => {
@@ -2632,6 +2616,7 @@ pub(crate) fn hash_widget_shader(shader: &sui_scene::WidgetShader, hasher: &mut 
     }
 }
 
+#[cfg(test)]
 pub(crate) fn hash_text_render_policy(
     policy: sui_scene::TextRenderPolicy,
     hasher: &mut DefaultHasher,
@@ -2704,6 +2689,7 @@ pub(crate) fn hash_text_render_policy(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn hash_brush(brush: &Brush, hasher: &mut DefaultHasher) {
     match brush {
         Brush::Solid(color) => {
@@ -2725,6 +2711,7 @@ pub(crate) fn hash_brush(brush: &Brush, hasher: &mut DefaultHasher) {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn hash_color(color: Color, hasher: &mut DefaultHasher) {
     color.red.to_bits().hash(hasher);
     color.green.to_bits().hash(hasher);
@@ -2732,6 +2719,7 @@ pub(crate) fn hash_color(color: Color, hasher: &mut DefaultHasher) {
     color.alpha.to_bits().hash(hasher);
 }
 
+#[cfg(test)]
 pub(crate) fn hash_optional_color(color: Option<Color>, hasher: &mut DefaultHasher) {
     match color {
         Some(color) => {
@@ -2743,6 +2731,7 @@ pub(crate) fn hash_optional_color(color: Option<Color>, hasher: &mut DefaultHash
     }
 }
 
+#[cfg(test)]
 pub(crate) fn hash_color_space(space: ColorSpace, hasher: &mut DefaultHasher) {
     (match space {
         ColorSpace::Srgb => 0u8,
@@ -2753,6 +2742,7 @@ pub(crate) fn hash_color_space(space: ColorSpace, hasher: &mut DefaultHasher) {
     .hash(hasher);
 }
 
+#[cfg(test)]
 pub(crate) fn hash_text_style(style: &TextStyle, hasher: &mut DefaultHasher) {
     style.font.map(|font| font.get()).hash(hasher);
     style.font_size.to_bits().hash(hasher);

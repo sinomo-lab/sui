@@ -760,7 +760,7 @@ impl Link {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn resolved_text_style(&self, color: Color) -> TextStyle {

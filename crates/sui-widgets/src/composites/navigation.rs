@@ -494,7 +494,7 @@ impl TabBar {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
@@ -1177,7 +1177,7 @@ impl BrowserTabBar {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn close_size(theme: &DefaultTheme) -> f32 {
@@ -1980,7 +1980,7 @@ impl SegmentedControl {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn activate(&mut self, index: usize, ctx: &mut EventCtx) {
@@ -2660,7 +2660,7 @@ impl Tabs {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {

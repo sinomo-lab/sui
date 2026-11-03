@@ -402,7 +402,7 @@ impl Toolbar {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 }
 
@@ -759,7 +759,7 @@ impl CommandGroup {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 }
 
@@ -1145,7 +1145,7 @@ impl ToolPalette {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn resolved_extent(&self, metrics: ControlMetrics) -> f32 {

@@ -87,11 +87,17 @@ pub(crate) fn packet_signature(
     compositor: &RetainedCompositorState,
     container: CompositionContainerId,
 ) -> u64 {
-    compositor.packets[&RetainedPacketId {
+    let packet = &compositor.packets[&RetainedPacketId {
         container,
         segment_index: 0,
-    }]
-        .signature
+    }];
+    crate::retained::packet_signature(
+        &packet.scene,
+        &packet.initial_state,
+        compositor.viewport,
+        compositor.surface_size,
+        f32::from_bits(compositor.feather_width_bits),
+    )
 }
 
 pub(crate) const RGBA_CHANNEL_TOLERANCE: u8 = 1;

@@ -19,6 +19,7 @@ doctest = false
 [dependencies]
 cosmic-text = { workspace = true }
 lru = { workspace = true }
+rustc-hash = { workspace = true }
 rustybuzz = { workspace = true }
 sui-core = { workspace = true }
 ttf-parser = { workspace = true }

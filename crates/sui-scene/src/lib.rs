@@ -3,8 +3,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use sui_core::{
-    Color, ColorSpace, DirtyRegion, Error, ImageHandle, Path, PathElement, Point, Rect, Result,
-    Size, Transform, Vector, WidgetId, WindowId,
+    Color, ColorSpace, DirtyRegion, Error, ImageHandle, Path, PathBuilder, PathElement, Point,
+    Rect, Result, Size, Transform, Vector, WidgetId, WindowId,
 };
 use sui_text::{FontRegistry, ShapedText, ShapedTextWindow, TextLayoutRegistry, TextRun};
 
@@ -1361,7 +1361,7 @@ fn points_bounds(points: &[Point]) -> Rect {
 }
 
 fn translate_path(path: &Path, delta: Vector) -> Path {
-    let mut builder = Path::builder();
+    let mut builder = PathBuilder::with_capacity(path.elements().len());
     for element in path.elements() {
         match element {
             PathElement::MoveTo(point) => {

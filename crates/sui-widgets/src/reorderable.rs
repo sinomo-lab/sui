@@ -352,7 +352,7 @@ impl ReorderableList {
         self.theme_reader
             .as_ref()
             .map(|reader| reader())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn sync_storage(&mut self) {

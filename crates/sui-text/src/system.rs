@@ -185,15 +185,29 @@ impl TextSystem {
     ) -> Result<Size> {
         let started = text_timing_enabled().then(Instant::now);
         let TextLayoutRequest { document, box_size } = request;
-        let flattened = FlattenedTextDocument::new(document.into_normalized());
+        let document = document.into_normalized();
+        // Only a finite width constrains the measurement.
+        let width = box_size
+            .map(|size| size.width)
+            .filter(|width| width.is_finite())
+            .map(|width| width.max(0.0));
+        let span_face_keys = self.resolve_span_face_keys(&document, font_registry)?;
         let result = self.with_font_context(font_registry, |font_context| {
+            let sizes = &mut font_context.preparation.sizes;
+            if let Some(size) = sizes.get(&document, &span_face_keys, width) {
+                return Ok(size);
+            }
+            let slot = sizes.slot(&document, &span_face_keys, width);
+            let flattened = FlattenedTextDocument::new(document);
             let resolved_spans = self.resolve_span_inputs(&flattened, font_context)?;
-            crate::layout::measure_document_size(
+            let size = crate::layout::measure_document_size(
                 &flattened,
                 &resolved_spans,
                 box_size,
                 font_context,
-            )
+            )?;
+            font_context.preparation.sizes.insert(slot, size);
+            Ok(size)
         });
         if let Some(started) = started {
             record_size_timing(started.elapsed().as_micros() as u64);
@@ -437,7 +451,7 @@ impl TextSystem {
     fn resolve_span_inputs(
         &self,
         flattened: &FlattenedTextDocument,
-        font_context: &FontContext,
+        font_context: &mut FontContext,
     ) -> Result<Vec<ResolvedSpanInput>> {
         flattened
             .spans
@@ -531,17 +545,17 @@ impl TextSystem {
         font_registry: &FontRegistry,
         operation: impl FnOnce(&mut FontContext) -> Result<T>,
     ) -> Result<T> {
-        let registry_key = font_registry.cache_key();
         let mut cached = self
             .font_context
             .lock()
             .map_err(|_| Error::new("text font context cache lock was poisoned"))?;
+        // Every text request checks this, so compare without building a key.
         let rebuild = cached
             .as_ref()
-            .is_none_or(|cached| cached.registry_key != registry_key);
+            .is_none_or(|cached| !font_registry.matches_cache_key(&cached.registry_key));
         if rebuild {
             *cached = Some(CachedFontContext {
-                registry_key,
+                registry_key: font_registry.cache_key(),
                 context: self
                     .text_system_state()?
                     .build_font_context(font_registry)?,

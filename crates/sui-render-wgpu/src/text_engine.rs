@@ -26,7 +26,6 @@ use crate::text_policy::StemDarkening;
 use crate::text_policy::TextCoveragePolicy;
 use crate::text_policy::TextHinting;
 use crate::text_policy::TextRenderMode;
-use std::collections::HashMap;
 use std::hash::DefaultHasher;
 use std::hash::Hash;
 use std::hash::Hasher;
@@ -61,7 +60,7 @@ use web_time::Instant;
 
 pub(crate) struct TextEngine {
     pub(crate) system: TextSystem,
-    pub(crate) glyph_cache: HashMap<GlyphCacheKey, CachedGlyphAtlas>,
+    pub(crate) glyph_cache: rustc_hash::FxHashMap<GlyphCacheKey, CachedGlyphAtlas>,
     pub(crate) atlas: TextAtlases,
     pub(crate) swash_scale_context: SwashScaleContext,
     pub(crate) font_aware_hinter: crate::text_hinting::FontAwareHinter,
@@ -124,7 +123,7 @@ impl Default for TextEngine {
     fn default() -> Self {
         Self {
             system: TextSystem::new(),
-            glyph_cache: HashMap::new(),
+            glyph_cache: rustc_hash::FxHashMap::default(),
             atlas: TextAtlases::default(),
             swash_scale_context: SwashScaleContext::new(),
             font_aware_hinter: Default::default(),
@@ -425,6 +424,7 @@ impl TextEngine {
     {
         let mut active_face_index = None;
         let mut swash_face = None;
+        let mut colors = GlyphColorMemo::default();
         let mut active_hint_target = None;
         let text_policy = self.resolved_text_render_policy(state.active_text_render_policy());
         let raster_transform = state.current_transform.then(state.text_raster_transform);
@@ -516,7 +516,7 @@ impl TextEngine {
                     || !state.text_lcd_allowed
                     || glyph_color.alpha.is_nan()
                     || glyph_color.alpha < 1.0
-                    || !crate::text_policy::is_sdr_color(glyph_color)
+                    || !colors.is_sdr(glyph_color)
                     || !lcd_background
                         .is_some_and(|bg| bg.alpha >= 1.0 && crate::text_policy::is_sdr_color(bg))
                     || matches!(text_policy.subpixel_order, TextSubpixelOrder::None)
@@ -576,6 +576,7 @@ impl TextEngine {
                 glyph_color,
                 text_policy.coverage_policy,
                 background,
+                &mut colors,
                 state.current_transform,
                 state.text_raster_transform,
                 inherited_inverse,
@@ -1346,6 +1347,7 @@ pub(crate) fn append_cached_glyph_atlas(
         color,
         TextCoveragePolicy::Linear,
         None,
+        &mut GlyphColorMemo::default(),
         transform,
         Transform::IDENTITY,
         Transform::IDENTITY,
@@ -1357,12 +1359,87 @@ pub(crate) fn append_cached_glyph_atlas(
     }
 }
 
+/// Color work shared by consecutive glyphs. Each conversion costs several
+/// `powf` calls, while a run's glyphs usually share their color, coverage
+/// policy, and the background beneath them.
+#[derive(Debug, Default)]
+pub(crate) struct GlyphColorMemo {
+    color: Option<(Color, [f32; 4], bool)>,
+    coverage: Option<CoverageMemo>,
+}
+
+/// The shader coverage metadata last resolved, and what it was resolved for.
+#[derive(Debug, Clone, Copy)]
+struct CoverageMemo {
+    color: Color,
+    background: Option<Color>,
+    lcd: bool,
+    policy: TextCoveragePolicy,
+    metadata: (f32, f32),
+}
+
+impl GlyphColorMemo {
+    fn converted(&mut self, color: Color) -> ([f32; 4], bool) {
+        match self.color {
+            Some((cached, rgba, sdr)) if cached == color => (rgba, sdr),
+            _ => {
+                let rgba = shader_color(color);
+                let sdr = crate::text_policy::is_sdr_color(color);
+                self.color = Some((color, rgba, sdr));
+                (rgba, sdr)
+            }
+        }
+    }
+
+    fn is_sdr(&mut self, color: Color) -> bool {
+        self.converted(color).1
+    }
+
+    fn coverage(
+        &mut self,
+        color: Color,
+        background: Option<Color>,
+        lcd: bool,
+        policy: TextCoveragePolicy,
+    ) -> (f32, f32) {
+        if let Some(memo) = self.coverage
+            && memo.color == color
+            && memo.background == background
+            && memo.lcd == lcd
+            && memo.policy == policy
+        {
+            return memo.metadata;
+        }
+        let metadata = if lcd
+            && policy == TextCoveragePolicy::Perceptual
+            && background.is_some_and(crate::text_policy::is_sdr_color)
+            && self.is_sdr(color)
+        {
+            (
+                5.0,
+                crate::text_policy::pack_lcd_background(background.unwrap()),
+            )
+        } else {
+            coverage_policy_shader_metadata(policy.resolved_for_text_background(color, background))
+        };
+        self.coverage = Some(CoverageMemo {
+            color,
+            background,
+            lcd,
+            policy,
+            metadata,
+        });
+        metadata
+    }
+}
+
 pub(crate) fn build_text_atlas_instance(
     atlas: &CachedGlyphAtlas,
     glyph: &SceneShapedGlyph,
     color: Color,
     coverage_policy: TextCoveragePolicy,
     background: Option<Color>,
+    colors: &mut GlyphColorMemo,
     transform: Transform,
     inherited_transform: Transform,
     inherited_inverse: Transform,
@@ -1378,7 +1455,7 @@ pub(crate) fn build_text_atlas_instance(
     let rgba = if atlas.is_color {
         [1.0, 1.0, 1.0, -color.clamped().alpha]
     } else {
-        shader_color(color)
+        colors.converted(color).0
     };
     let residual_scale = glyph.scale / atlas.scale.max(f32::EPSILON);
     let left = glyph.origin_x + (atlas.offset.x * residual_scale);
@@ -1403,20 +1480,12 @@ pub(crate) fn build_text_atlas_instance(
     let bottom_left = to_local_ndc(bottom_left);
 
     let atlas_contains_lcd_subpixels = matches!(atlas.color_mode, TextAtlasColorMode::LcdSubpixel);
-    let (coverage_policy_kind, coverage_policy_parameter) = if atlas_contains_lcd_subpixels
-        && coverage_policy == TextCoveragePolicy::Perceptual
-        && background.is_some_and(crate::text_policy::is_sdr_color)
-        && crate::text_policy::is_sdr_color(color)
-    {
-        (
-            5.0,
-            crate::text_policy::pack_lcd_background(background.unwrap()),
-        )
-    } else {
-        coverage_policy_shader_metadata(
-            coverage_policy.resolved_for_text_background(color, background),
-        )
-    };
+    let (coverage_policy_kind, coverage_policy_parameter) = colors.coverage(
+        color,
+        background,
+        atlas_contains_lcd_subpixels,
+        coverage_policy,
+    );
 
     Some(TextAtlasInstance {
         top_left,

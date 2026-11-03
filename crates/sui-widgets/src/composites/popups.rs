@@ -302,7 +302,7 @@ impl Menu {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn set_highlighted(&mut self, highlighted: Option<usize>, ctx: &mut EventCtx) {
@@ -2749,7 +2749,7 @@ impl ContextMenu {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn trigger_rect(&self) -> Rect {

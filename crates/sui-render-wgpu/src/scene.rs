@@ -84,26 +84,33 @@ pub(crate) fn build_direct_packet_with_diagnostics(
     text_engine: &mut TextEngine,
     path_cache: &mut PathMeshCache,
     feather_width: f32,
+    timed: bool,
 ) -> Result<(DrawOpArena, DirectPacketBuildDiagnostics)> {
     let mut diagnostics = DirectPacketBuildDiagnostics::default();
     let mut draw_ops = DrawOpArena::default();
-    let state_init_started = Instant::now();
+    let state_init_started = timed.then(Instant::now);
     let mut state = SceneRasterState::from_resolved(initial_state, &mut draw_ops, frame.viewport)?;
-    diagnostics.raster_state_init_time_ms = state_init_started.elapsed().as_secs_f64() * 1000.0;
+    diagnostics.raster_state_init_time_ms = elapsed_ms(state_init_started);
     let mut builder = SceneDrawOpBuilder {
         frame,
         text_engine,
         path_cache,
         feather_width,
+        timed,
         scratch_vertices: Vec::new(),
         scratch_text_instances: Vec::new(),
         overlay_scratch_vertices: Vec::new(),
         clip_scratch_vertices: Vec::new(),
     };
-    let scene_build_started = Instant::now();
+    let scene_build_started = timed.then(Instant::now);
     builder.build_scene(scene, &mut draw_ops, &mut state, &mut diagnostics)?;
-    diagnostics.scene_build_time_ms = scene_build_started.elapsed().as_secs_f64() * 1000.0;
+    diagnostics.scene_build_time_ms = elapsed_ms(scene_build_started);
     Ok((draw_ops, diagnostics))
+}
+
+/// Milliseconds since `started`, or zero when timing is off.
+fn elapsed_ms(started: Option<Instant>) -> f64 {
+    started.map_or(0.0, |started| started.elapsed().as_secs_f64() * 1000.0)
 }
 
 pub(crate) struct SceneDrawOpBuilder<'a> {
@@ -111,6 +118,9 @@ pub(crate) struct SceneDrawOpBuilder<'a> {
     pub(crate) text_engine: &'a mut TextEngine,
     pub(crate) path_cache: &'a mut PathMeshCache,
     pub(crate) feather_width: f32,
+    /// Time each command for diagnostics. Reading the clock per command is
+    /// a measurable share of packet building, so it is off unless requested.
+    pub(crate) timed: bool,
     pub(crate) scratch_vertices: Vec<Vertex>,
     pub(crate) scratch_text_instances: Vec<TextAtlasInstance>,
     pub(crate) overlay_scratch_vertices: Vec<Vertex>,
@@ -153,7 +163,7 @@ impl SceneDrawOpBuilder<'_> {
     ) -> Result<()> {
         let viewport = self.frame.viewport;
         diagnostics.command_count += 1;
-        let command_started = Instant::now();
+        let command_started = self.timed.then(Instant::now);
         let clip = state
             .clip_stack
             .iter()
@@ -622,7 +632,7 @@ impl SceneDrawOpBuilder<'_> {
             }
         };
 
-        let elapsed_ms = command_started.elapsed().as_secs_f64() * 1000.0;
+        let elapsed_ms = elapsed_ms(command_started);
         match command {
             SceneCommand::Clear(_)
             | SceneCommand::FillRect { .. }

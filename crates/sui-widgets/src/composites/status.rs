@@ -148,7 +148,7 @@ impl EmptyState {
         self.theme_reader
             .as_ref()
             .map(|reader| reader())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn action_rect(
@@ -456,7 +456,7 @@ impl PresetStrip {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn resolved_item_height(&self, metrics: ControlMetrics) -> f32 {
@@ -978,7 +978,7 @@ impl StatusBar {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn resolved_height(&self, metrics: ControlMetrics) -> f32 {
@@ -1402,7 +1402,7 @@ impl StatusBadge {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn label(&self) -> String {

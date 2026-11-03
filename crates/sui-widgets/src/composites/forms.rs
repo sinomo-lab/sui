@@ -198,7 +198,7 @@ impl ActionCard {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn resolved_padding(&self, metrics: ControlMetrics) -> Insets {
@@ -932,7 +932,7 @@ impl PropertyRow {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn with_form_defaults(mut self) -> Self {
@@ -1222,7 +1222,7 @@ impl SectionLabel {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn display_text(&self) -> String {
@@ -1399,7 +1399,7 @@ impl DetailRow {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 }
 
@@ -1789,7 +1789,7 @@ impl FieldGroup {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn resolved_spacing(&self) -> f32 {
@@ -2012,7 +2012,7 @@ impl FormSection {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn resolved_padding(&self, metrics: ControlMetrics) -> Insets {
@@ -2450,7 +2450,7 @@ impl PanelSection {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn resolved_gap(&self, metrics: ControlMetrics) -> f32 {
@@ -2980,7 +2980,7 @@ impl DockPanel {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     pub(super) fn resolved_header_height(&self, metrics: ControlMetrics) -> f32 {

@@ -1,9 +1,8 @@
 //! Conservative solid backdrops for perceptual text coverage. This is paint
 //! metadata, not a framebuffer readback or a second scene renderer.
-use std::{
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+#[cfg(test)]
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use sui_core::{Color, Rect, Transform};
 use sui_scene::{Brush, SceneCommand};
 
@@ -30,6 +29,7 @@ impl TextBackground {
         self.clear
     }
 
+    #[cfg(test)]
     pub(crate) fn fingerprint(&self, hasher: &mut impl Hasher) {
         let mut color = |c: Option<Color>| {
             c.is_some().hash(hasher);

@@ -265,19 +265,19 @@ impl Path {
     }
 
     pub fn rect(rect: Rect) -> Self {
-        let mut builder = Self::builder();
+        let mut builder = PathBuilder::with_capacity(RECT_ELEMENTS);
         builder.push_rect(rect);
         builder.build()
     }
 
     pub fn circle(center: Point, radius: f32) -> Self {
-        let mut builder = Self::builder();
+        let mut builder = PathBuilder::with_capacity(CIRCLE_ELEMENTS);
         builder.push_circle(center, radius);
         builder.build()
     }
 
     pub fn rounded_rect(rect: Rect, radius: f32) -> Self {
-        let mut builder = Self::builder();
+        let mut builder = PathBuilder::with_capacity(ROUNDED_RECT_ELEMENTS);
         builder.push_rounded_rect(rect, radius);
         builder.build()
     }
@@ -307,6 +307,11 @@ impl From<Rect> for Path {
     }
 }
 
+// Elements each shape appends: four sides or quarter arcs, joined, then closed.
+const RECT_ELEMENTS: usize = 5;
+const CIRCLE_ELEMENTS: usize = 6;
+const ROUNDED_RECT_ELEMENTS: usize = 10;
+
 #[derive(Debug, Clone, Default)]
 pub struct PathBuilder {
     elements: Vec<PathElement>,
@@ -317,6 +322,15 @@ pub struct PathBuilder {
 impl PathBuilder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A builder with room for `elements` path elements, for callers that
+    /// know a path's size in advance, such as when copying one.
+    pub fn with_capacity(elements: usize) -> Self {
+        Self {
+            elements: Vec::with_capacity(elements),
+            ..Self::default()
+        }
     }
 
     pub fn move_to(&mut self, to: Point) -> &mut Self {
@@ -357,6 +371,7 @@ impl PathBuilder {
             return self;
         }
 
+        self.elements.reserve(RECT_ELEMENTS);
         self.move_to(rect.origin)
             .line_to(Point::new(rect.max_x(), rect.y()))
             .line_to(Point::new(rect.max_x(), rect.max_y()))
@@ -370,6 +385,7 @@ impl PathBuilder {
             return self;
         }
 
+        self.elements.reserve(CIRCLE_ELEMENTS);
         self.append_arc_segments(center, radius, 0.0, std::f32::consts::TAU, true);
         self.close()
     }
@@ -392,6 +408,7 @@ impl PathBuilder {
         let max_x = rect.max_x();
         let max_y = rect.max_y();
 
+        self.elements.reserve(ROUNDED_RECT_ELEMENTS);
         self.move_to(Point::new(min_x + radius, min_y))
             .line_to(Point::new(max_x - radius, min_y));
         self.append_arc_segments(

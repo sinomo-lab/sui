@@ -339,12 +339,11 @@ pub(crate) fn retained_packet_rebuild_stats_record_each_reason_and_preserve_grou
 
     rebuilds.record_reason(PacketRebuildReason::NewPacket);
     rebuilds.record_reason(PacketRebuildReason::CoordinateSpace);
-    rebuilds.record_reason(PacketRebuildReason::Signature);
     rebuilds.record_reason(PacketRebuildReason::Scene);
     rebuilds.record_reason(PacketRebuildReason::State);
 
-    assert_eq!(rebuilds, RetainedPacketRebuildStats::new(1, 1, 1, 1, 1));
-    assert_eq!(rebuilds.total_count(), 5);
+    assert_eq!(rebuilds, RetainedPacketRebuildStats::new(1, 1, 0, 1, 1));
+    assert_eq!(rebuilds.total_count(), 4);
 }
 
 #[test]

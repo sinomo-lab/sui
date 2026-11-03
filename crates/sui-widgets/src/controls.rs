@@ -1282,7 +1282,7 @@ impl IconButton {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn resolved_size(&self) -> f32 {
@@ -1688,7 +1688,7 @@ impl Button {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn resolved_text_style(&self) -> TextStyle {
@@ -2508,7 +2508,7 @@ impl Checkbox {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn hover_value(&self, clock: &impl FrameClock) -> f32 {
@@ -3066,7 +3066,7 @@ impl Switch {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn toggle(&mut self, ctx: &mut EventCtx) {
@@ -3800,7 +3800,7 @@ impl RadioButton {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn activate(&mut self, ctx: &mut EventCtx) {
@@ -4319,7 +4319,7 @@ impl RadioGroup {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn set_hovered(&mut self, hovered: Option<usize>, ctx: &mut EventCtx) {
@@ -4826,7 +4826,7 @@ impl Slider {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn track_rect(&self, bounds: Rect) -> Rect {
@@ -5327,7 +5327,7 @@ impl NumberInput {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn text_style(&self) -> TextStyle {
@@ -6127,7 +6127,7 @@ impl TextArea {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn apply_editor_result(&mut self, ctx: &mut EventCtx, result: EditorCommandResult) {
@@ -7180,7 +7180,7 @@ impl Select {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn header_height(&self) -> f32 {
@@ -8413,7 +8413,7 @@ impl TextInput {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn single_line_layout_rect(

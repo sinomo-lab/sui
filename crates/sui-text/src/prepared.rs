@@ -208,6 +208,8 @@ pub(crate) struct IntrinsicGlyphMetrics {
 pub(crate) struct PreparationCaches {
     pub paragraphs: ByteCache<PreparedParagraphKey, PreparedParagraphState>,
     pub glyphs: ByteCache<GlyphMetricsKey, IntrinsicGlyphMetrics>,
+    /// Size-only results, which depend on this context's fonts.
+    pub sizes: crate::cache::TextSizeCache,
 }
 
 impl Default for PreparationCaches {
@@ -215,6 +217,7 @@ impl Default for PreparationCaches {
         Self {
             paragraphs: ByteCache::new(512, PARAGRAPH_BYTES),
             glyphs: ByteCache::new(32_768, GLYPH_BYTES),
+            sizes: crate::cache::TextSizeCache::default(),
         }
     }
 }

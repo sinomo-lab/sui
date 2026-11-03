@@ -2895,7 +2895,7 @@ impl ScrollBar {
         self.theme_reader
             .as_ref()
             .map(|reader| reader())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn track_rect(&self, bounds: Rect, clock: &impl FrameClock) -> Rect {
@@ -3944,7 +3944,7 @@ impl ScrollView {
         self.theme_reader
             .as_ref()
             .map(|reader| reader())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn sync_scroll_bar_theme(&self) -> DefaultTheme {
@@ -4320,7 +4320,7 @@ impl VirtualScrollView {
         self.theme_reader
             .as_ref()
             .map(|reader| reader())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn sync_scroll_bar_theme(&self) -> DefaultTheme {

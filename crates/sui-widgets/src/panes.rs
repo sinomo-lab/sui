@@ -567,7 +567,7 @@ impl FloatingWorkspace {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn active_view_ids(&self) -> Vec<u64> {
@@ -986,7 +986,7 @@ impl FloatingViewSurface {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 }
 
@@ -1213,7 +1213,7 @@ impl FloatingViewHost {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn resizing(&self) -> bool {
@@ -1689,7 +1689,7 @@ impl SplitView {
         self.theme_reader
             .as_ref()
             .map(|theme| theme())
-            .unwrap_or(*self.theme)
+            .unwrap_or_else(|| *self.theme)
     }
 
     fn resolved_divider_thickness(&self) -> f32 {
