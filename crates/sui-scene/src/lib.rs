@@ -847,6 +847,36 @@ pub enum SceneCommand {
     },
 }
 
+impl SceneCommand {
+    /// Returns the command category used in diagnostic breakdowns and snapshots.
+    ///
+    /// Both image rectangles and image quads are grouped under `DrawImage`.
+    pub const fn diagnostic_name(&self) -> &'static str {
+        match self {
+            Self::Clear(_) => "Clear",
+            Self::FillRect { .. } => "FillRect",
+            Self::StrokeRect { .. } => "StrokeRect",
+            Self::FillPath { .. } => "FillPath",
+            Self::StrokePath { .. } => "StrokePath",
+            Self::DrawText(_) => "DrawText",
+            Self::DrawShapedText(_) => "DrawShapedText",
+            Self::DrawShapedTextWindow(_) => "DrawShapedTextWindow",
+            Self::DrawImage { .. } | Self::DrawImageQuad { .. } => "DrawImage",
+            Self::DrawShaderRect { .. } => "DrawShaderRect",
+            Self::PushClip { .. } => "PushClip",
+            Self::PushClipPath { .. } => "PushClipPath",
+            Self::PopClip => "PopClip",
+            Self::PushTransform { .. } => "PushTransform",
+            Self::PopTransform => "PopTransform",
+            Self::PushTextRenderPolicy { .. } => "PushTextRenderPolicy",
+            Self::PopTextRenderPolicy => "PopTextRenderPolicy",
+            Self::Layer(_) => "Layer",
+            Self::FillRoundedRect { .. } => "FillRoundedRect",
+            Self::Label { .. } => "Label",
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct Scene {
     commands: Arc<Vec<SceneCommand>>,

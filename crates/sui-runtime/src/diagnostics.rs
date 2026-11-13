@@ -969,7 +969,7 @@ impl SceneStatistics {
             command_count += 1;
             if let Some(breakdown) = &mut command_breakdown {
                 *breakdown
-                    .entry(command_kind(command).to_string())
+                    .entry(command.diagnostic_name().to_string())
                     .or_default() += 1;
             }
 
@@ -1406,31 +1406,6 @@ fn window_scene_statistics_detail_mode_store()
 
 fn window_render_options_store() -> &'static RwLock<HashMap<WindowId, WindowRenderOptions>> {
     WINDOW_RENDER_OPTIONS.get_or_init(|| RwLock::new(HashMap::new()))
-}
-
-fn command_kind(command: &SceneCommand) -> &'static str {
-    match command {
-        SceneCommand::Clear(_) => "Clear",
-        SceneCommand::FillRect { .. } => "FillRect",
-        SceneCommand::StrokeRect { .. } => "StrokeRect",
-        SceneCommand::FillPath { .. } => "FillPath",
-        SceneCommand::StrokePath { .. } => "StrokePath",
-        SceneCommand::DrawText(_) => "DrawText",
-        SceneCommand::DrawShapedText(_) => "DrawShapedText",
-        SceneCommand::DrawShapedTextWindow(_) => "DrawShapedTextWindow",
-        SceneCommand::DrawImage { .. } | SceneCommand::DrawImageQuad { .. } => "DrawImage",
-        SceneCommand::DrawShaderRect { .. } => "DrawShaderRect",
-        SceneCommand::PushClip { .. } => "PushClip",
-        SceneCommand::PushClipPath { .. } => "PushClipPath",
-        SceneCommand::PopClip => "PopClip",
-        SceneCommand::PushTransform { .. } => "PushTransform",
-        SceneCommand::PopTransform => "PopTransform",
-        SceneCommand::PushTextRenderPolicy { .. } => "PushTextRenderPolicy",
-        SceneCommand::PopTextRenderPolicy => "PopTextRenderPolicy",
-        SceneCommand::Layer(_) => "Layer",
-        SceneCommand::FillRoundedRect { .. } => "FillRoundedRect",
-        SceneCommand::Label { .. } => "Label",
-    }
 }
 
 fn layer_update_kind(kind: SceneLayerUpdateKind) -> &'static str {
