@@ -5882,6 +5882,24 @@ fn tab_hover_and_press_chrome_use_theme_motion() -> Result<(), String> {
             .map_err(|error| error.to_string())?;
         assert!(solid_fill_colors(&settled_press).contains(&expected_press));
 
+        // Cancelling retains the pressed visual for its fade-out, then clears it.
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Cancel, second_tab_point, false),
+            )
+            .map_err(|error| error.to_string())?;
+        let cancelling = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(solid_fill_colors(&cancelling).contains(&expected_press));
+        runtime.tick(hover_duration + press_duration + hover_duration.max(press_duration));
+        handle_ready_events(&mut runtime)?;
+        let cancelled = runtime
+            .render(window_id)
+            .map_err(|error| error.to_string())?;
+        assert!(!solid_fill_colors(&cancelled).contains(&expected_press));
+
         Ok(())
     }
 

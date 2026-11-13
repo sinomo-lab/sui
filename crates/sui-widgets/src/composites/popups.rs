@@ -10,7 +10,7 @@ use crate::WidgetMaterialRole;
 use crate::animation::Reveal;
 use crate::binding::Binding;
 use crate::composites::forms::{
-    set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
+    set_focus_animation_target, set_hover_animation_target, set_item_press,
 };
 use crate::composites::indicators::{draw_popover_arrival_overlay, text_token_style, tooltip_tail};
 use crate::composites::toolbars::{
@@ -327,16 +327,14 @@ impl Menu {
             return;
         }
         let theme = self.resolved_theme();
-        self.pressed = pressed;
-        if let Some(index) = pressed {
-            self.press_visual = Some(index);
-            self.press_animation = Progress::new(0.0);
-            set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
-        } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
-            self.press_visual = None;
-        }
-        ctx.request_paint();
-        ctx.request_semantics();
+        set_item_press(
+            &mut self.pressed,
+            &mut self.press_visual,
+            &mut self.press_animation,
+            pressed,
+            &theme,
+            ctx,
+        );
     }
 
     pub(super) fn highlight_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {

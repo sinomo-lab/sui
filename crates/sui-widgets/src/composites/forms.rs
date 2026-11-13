@@ -741,6 +741,28 @@ pub(super) fn set_hover_animation_target(
     )
 }
 
+/// Apply a changed item press, retaining its visual while release animates.
+/// Callers check for an unchanged press before resolving their theme.
+pub(super) fn set_item_press<T: Copy>(
+    current: &mut Option<T>,
+    visual: &mut Option<T>,
+    animation: &mut Progress,
+    pressed: Option<T>,
+    theme: &DefaultTheme,
+    ctx: &mut EventCtx,
+) {
+    *current = pressed;
+    if let Some(item) = pressed {
+        *visual = Some(item);
+        *animation = Progress::new(0.0);
+        set_press_animation_target(animation, 1.0, theme, ctx);
+    } else if !set_press_animation_target(animation, 0.0, theme, ctx) {
+        *visual = None;
+    }
+    ctx.request_paint();
+    ctx.request_semantics();
+}
+
 pub(super) fn set_press_animation_target(
     animation: &mut impl StateMotion,
     target: f32,

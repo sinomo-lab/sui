@@ -5,7 +5,7 @@ use crate::Progress;
 use crate::SemanticTone;
 use crate::binding::Binding;
 use crate::composites::forms::{
-    set_focus_animation_target, set_hover_animation_target, set_press_animation_target,
+    set_focus_animation_target, set_hover_animation_target, set_item_press,
 };
 use crate::controls::draw_icon_glyph;
 use crate::draw::{inset_rect, measure_text, mix_color, rect_center};
@@ -1278,16 +1278,14 @@ impl ToolPalette {
             return;
         }
         let theme = self.resolved_theme();
-        self.pressed = pressed;
-        if let Some(index) = pressed {
-            self.press_visual = Some(index);
-            self.press_animation = Progress::new(0.0);
-            set_press_animation_target(&mut self.press_animation, 1.0, &theme, ctx);
-        } else if !set_press_animation_target(&mut self.press_animation, 0.0, &theme, ctx) {
-            self.press_visual = None;
-        }
-        ctx.request_paint();
-        ctx.request_semantics();
+        set_item_press(
+            &mut self.pressed,
+            &mut self.press_visual,
+            &mut self.press_animation,
+            pressed,
+            &theme,
+            ctx,
+        );
     }
 
     pub(super) fn hover_amount_for(&self, index: usize, clock: &impl FrameClock) -> f32 {
