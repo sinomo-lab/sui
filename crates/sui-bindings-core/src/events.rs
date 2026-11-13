@@ -551,3 +551,263 @@ impl From<&Event> for BindingEvent {
         }
     }
 }
+
+impl BindingPointerEventKind {
+    /// Parse the case-sensitive binding vocabulary without normalizing input.
+    pub fn from_name(value: &str) -> Option<Self> {
+        match value {
+            "down" => Some(Self::Down),
+            "up" => Some(Self::Up),
+            "move" => Some(Self::Move),
+            "scroll" => Some(Self::Scroll),
+            "enter" => Some(Self::Enter),
+            "leave" => Some(Self::Leave),
+            "cancel" => Some(Self::Cancel),
+            _ => None,
+        }
+    }
+
+    /// Return the canonical binding name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Down => "down",
+            Self::Up => "up",
+            Self::Move => "move",
+            Self::Scroll => "scroll",
+            Self::Enter => "enter",
+            Self::Leave => "leave",
+            Self::Cancel => "cancel",
+        }
+    }
+}
+
+impl BindingPointerKind {
+    /// Parse the case-sensitive binding vocabulary without normalizing input.
+    pub fn from_name(value: &str) -> Option<Self> {
+        match value {
+            "mouse" => Some(Self::Mouse),
+            "touch" => Some(Self::Touch),
+            "pen" => Some(Self::Pen),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+
+    /// Return the canonical binding name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Mouse => "mouse",
+            Self::Touch => "touch",
+            Self::Pen => "pen",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl BindingKeyState {
+    /// Parse the case-sensitive binding vocabulary without normalizing input.
+    pub fn from_name(value: &str) -> Option<Self> {
+        match value {
+            "pressed" | "down" => Some(Self::Pressed),
+            "released" | "up" => Some(Self::Released),
+            _ => None,
+        }
+    }
+
+    /// Return the canonical binding name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Pressed => "pressed",
+            Self::Released => "released",
+        }
+    }
+}
+
+impl BindingPointerButton {
+    /// Parse the case-sensitive binding vocabulary without normalizing input.
+    pub fn from_name(value: &str) -> Result<Self, &'static str> {
+        match value {
+            "primary" | "left" => Ok(Self::Primary),
+            "secondary" | "right" => Ok(Self::Secondary),
+            "middle" => Ok(Self::Middle),
+            "back" => Ok(Self::Back),
+            "forward" => Ok(Self::Forward),
+            _ => {
+                if let Some(value) = value.strip_prefix("other:") {
+                    return value
+                        .parse::<u16>()
+                        .map(Self::Other)
+                        .map_err(|_| "other pointer button must fit in u16");
+                }
+                Err(
+                    "pointer button must be 'primary', 'secondary', 'middle', 'back', 'forward', or 'other:<u16>'",
+                )
+            }
+        }
+    }
+
+    /// Return the canonical binding name.
+    pub fn name(self) -> String {
+        match self {
+            Self::Primary => "primary".to_owned(),
+            Self::Secondary => "secondary".to_owned(),
+            Self::Middle => "middle".to_owned(),
+            Self::Back => "back".to_owned(),
+            Self::Forward => "forward".to_owned(),
+            Self::Other(button) => format!("other:{button}"),
+        }
+    }
+}
+
+impl BindingImeEvent {
+    /// Construct an IME event using the JavaScript camelCase/snake_case aliases.
+    pub fn from_js_name(
+        kind: &str,
+        text: Option<String>,
+        cursor_start: Option<usize>,
+        cursor_end: Option<usize>,
+    ) -> Result<Self, &'static str> {
+        Ok(match kind {
+            "compositionStart" | "composition_start" | "start" => BindingImeEvent::CompositionStart,
+            "compositionUpdate" | "composition_update" | "update" => {
+                BindingImeEvent::CompositionUpdate {
+                    text: text.unwrap_or_default(),
+                    cursor_start,
+                    cursor_end,
+                }
+            }
+            "compositionCommit" | "composition_commit" | "commit" => {
+                BindingImeEvent::CompositionCommit {
+                    text: text.unwrap_or_default(),
+                }
+            }
+            "compositionEnd" | "composition_end" | "end" => BindingImeEvent::CompositionEnd,
+            _ => {
+                return Err(
+                    "IME kind must be 'compositionStart', 'compositionUpdate', 'compositionCommit', or 'compositionEnd'",
+                );
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod vocabulary_tests {
+    use super::*;
+
+    #[test]
+    fn event_names_preserve_aliases_and_reject_normalization() {
+        for name in ["down", "up", "move", "scroll", "enter", "leave", "cancel"] {
+            assert_eq!(
+                BindingPointerEventKind::from_name(name).unwrap().name(),
+                name
+            );
+        }
+        for name in ["mouse", "touch", "pen", "unknown"] {
+            assert_eq!(BindingPointerKind::from_name(name).unwrap().name(), name);
+        }
+        for (alias, canonical) in [
+            ("down", "pressed"),
+            ("up", "released"),
+            ("pressed", "pressed"),
+            ("released", "released"),
+        ] {
+            assert_eq!(BindingKeyState::from_name(alias).unwrap().name(), canonical);
+        }
+        for name in ["", "DOWN", " down", "down "] {
+            assert!(BindingPointerEventKind::from_name(name).is_none());
+            assert!(BindingPointerKind::from_name(name).is_none());
+            assert!(BindingKeyState::from_name(name).is_none());
+        }
+    }
+
+    #[test]
+    fn pointer_button_aliases_and_numeric_boundaries_are_preserved() {
+        for (alias, canonical) in [
+            ("left", "primary"),
+            ("right", "secondary"),
+            ("primary", "primary"),
+            ("secondary", "secondary"),
+            ("middle", "middle"),
+            ("back", "back"),
+            ("forward", "forward"),
+            ("other:0", "other:0"),
+            ("other:65535", "other:65535"),
+            ("other:+1", "other:1"),
+        ] {
+            let button = BindingPointerButton::from_name(alias).unwrap();
+            assert_eq!(button.name(), canonical);
+            assert_eq!(BindingPointerButton::from_name(&button.name()), Ok(button));
+        }
+        for value in ["other:", "other:-1", "other:65536", "other: 1"] {
+            assert_eq!(
+                BindingPointerButton::from_name(value),
+                Err("other pointer button must fit in u16")
+            );
+        }
+        assert!(BindingPointerButton::from_name("LEFT").is_err());
+    }
+
+    #[test]
+    fn javascript_ime_aliases_preserve_payloads_and_defaults() {
+        for aliases in [
+            ["compositionStart", "composition_start", "start"],
+            ["compositionUpdate", "composition_update", "update"],
+            ["compositionCommit", "composition_commit", "commit"],
+            ["compositionEnd", "composition_end", "end"],
+        ] {
+            let expected =
+                BindingImeEvent::from_js_name(aliases[0], Some("文".into()), Some(1), Some(2))
+                    .unwrap();
+            for alias in aliases {
+                assert_eq!(
+                    BindingImeEvent::from_js_name(alias, Some("文".into()), Some(1), Some(2))
+                        .unwrap(),
+                    expected
+                );
+            }
+        }
+        assert_eq!(
+            BindingImeEvent::from_js_name("update", None, Some(1), None).unwrap(),
+            BindingImeEvent::CompositionUpdate {
+                text: String::new(),
+                cursor_start: Some(1),
+                cursor_end: None
+            }
+        );
+        for invalid in ["composition-start", "START", " start", ""] {
+            assert!(BindingImeEvent::from_js_name(invalid, None, None, None).is_err());
+        }
+    }
+}
+
+impl BindingImeEvent {
+    /// Return the canonical JavaScript event action name.
+    pub fn js_name(&self) -> &'static str {
+        match self {
+            Self::CompositionStart => "compositionStart",
+            Self::CompositionUpdate { .. } => "compositionUpdate",
+            Self::CompositionCommit { .. } => "compositionCommit",
+            Self::CompositionEnd => "compositionEnd",
+        }
+    }
+}
+
+impl BindingWindowEvent {
+    /// Return the canonical JavaScript event action name.
+    pub fn js_name(&self) -> &'static str {
+        match self {
+            Self::CloseRequested => "closeRequested",
+            Self::Resized(_) => "resized",
+            Self::Moved(_) => "moved",
+            Self::ScaleFactorChanged { .. } => "scaleFactorChanged",
+            Self::Focused(_) => "focused",
+            Self::Occluded(_) => "occluded",
+            Self::SafeAreaChanged { .. } => "safeAreaChanged",
+            Self::ExternalFileHovered(_) => "externalFileHovered",
+            Self::ExternalFileHoverCancelled => "externalFileHoverCancelled",
+            Self::ExternalFileDropped(_) => "externalFileDropped",
+            Self::RedrawRequested => "redrawRequested",
+        }
+    }
+}

@@ -388,7 +388,7 @@ impl PyEvent {
     #[getter]
     pub fn action(&self) -> Option<&'static str> {
         match &self.inner {
-            BindingEvent::Pointer(event) => Some(pointer_event_kind_name(event.kind)),
+            BindingEvent::Pointer(event) => Some(BindingPointerEventKind::name(event.kind)),
             BindingEvent::Ime(event) => Some(ime_event_kind_name(event)),
             BindingEvent::Window(event) => Some(window_event_kind_name(event)),
             BindingEvent::Custom(_)
@@ -439,7 +439,7 @@ impl PyEvent {
     #[getter]
     pub fn button(&self) -> Option<String> {
         match &self.inner {
-            BindingEvent::Pointer(event) => event.button.map(pointer_button_name),
+            BindingEvent::Pointer(event) => event.button.map(BindingPointerButton::name),
             _ => None,
         }
     }
@@ -465,7 +465,7 @@ impl PyEvent {
     #[getter]
     pub fn device_kind(&self) -> Option<&'static str> {
         match &self.inner {
-            BindingEvent::Pointer(event) => Some(pointer_kind_name(event.pointer_kind)),
+            BindingEvent::Pointer(event) => Some(BindingPointerKind::name(event.pointer_kind)),
             _ => None,
         }
     }
@@ -507,7 +507,7 @@ impl PyEvent {
     #[getter]
     pub fn state(&self) -> Option<&'static str> {
         match &self.inner {
-            BindingEvent::Keyboard(event) => Some(key_state_name(event.state)),
+            BindingEvent::Keyboard(event) => Some(BindingKeyState::name(event.state)),
             _ => None,
         }
     }
@@ -5194,100 +5194,22 @@ fn py_value_error(error: PaintValidationError) -> PyErr {
 }
 
 fn parse_pointer_event_kind(value: &str) -> PyResult<BindingPointerEventKind> {
-    match value {
-        "down" => Ok(BindingPointerEventKind::Down),
-        "up" => Ok(BindingPointerEventKind::Up),
-        "move" => Ok(BindingPointerEventKind::Move),
-        "scroll" => Ok(BindingPointerEventKind::Scroll),
-        "enter" => Ok(BindingPointerEventKind::Enter),
-        "leave" => Ok(BindingPointerEventKind::Leave),
-        "cancel" => Ok(BindingPointerEventKind::Cancel),
-        _ => Err(PyValueError::new_err(
-            "pointer event kind must be 'down', 'up', 'move', 'scroll', 'enter', 'leave', or 'cancel'",
-        )),
-    }
-}
-
-fn pointer_event_kind_name(value: BindingPointerEventKind) -> &'static str {
-    match value {
-        BindingPointerEventKind::Down => "down",
-        BindingPointerEventKind::Up => "up",
-        BindingPointerEventKind::Move => "move",
-        BindingPointerEventKind::Scroll => "scroll",
-        BindingPointerEventKind::Enter => "enter",
-        BindingPointerEventKind::Leave => "leave",
-        BindingPointerEventKind::Cancel => "cancel",
-    }
+    BindingPointerEventKind::from_name(value).ok_or_else(|| PyValueError::new_err("pointer event kind must be 'down', 'up', 'move', 'scroll', 'enter', 'leave', or 'cancel'"))
 }
 
 fn parse_pointer_button(value: &str) -> PyResult<BindingPointerButton> {
-    match value {
-        "primary" | "left" => Ok(BindingPointerButton::Primary),
-        "secondary" | "right" => Ok(BindingPointerButton::Secondary),
-        "middle" => Ok(BindingPointerButton::Middle),
-        "back" => Ok(BindingPointerButton::Back),
-        "forward" => Ok(BindingPointerButton::Forward),
-        _ => {
-            if let Some(value) = value.strip_prefix("other:") {
-                return value
-                    .parse::<u16>()
-                    .map(BindingPointerButton::Other)
-                    .map_err(|_| PyValueError::new_err("other pointer button must fit in u16"));
-            }
-            Err(PyValueError::new_err(
-                "pointer button must be 'primary', 'secondary', 'middle', 'back', 'forward', or 'other:<u16>'",
-            ))
-        }
-    }
-}
-
-fn pointer_button_name(value: BindingPointerButton) -> String {
-    match value {
-        BindingPointerButton::Primary => "primary".to_string(),
-        BindingPointerButton::Secondary => "secondary".to_string(),
-        BindingPointerButton::Middle => "middle".to_string(),
-        BindingPointerButton::Back => "back".to_string(),
-        BindingPointerButton::Forward => "forward".to_string(),
-        BindingPointerButton::Other(button) => format!("other:{button}"),
-    }
+    BindingPointerButton::from_name(value).map_err(PyValueError::new_err)
 }
 
 fn parse_pointer_kind(value: &str) -> PyResult<BindingPointerKind> {
-    match value {
-        "mouse" => Ok(BindingPointerKind::Mouse),
-        "touch" => Ok(BindingPointerKind::Touch),
-        "pen" => Ok(BindingPointerKind::Pen),
-        "unknown" => Ok(BindingPointerKind::Unknown),
-        _ => Err(PyValueError::new_err(
-            "pointer_kind must be 'mouse', 'touch', 'pen', or 'unknown'",
-        )),
-    }
-}
-
-fn pointer_kind_name(value: BindingPointerKind) -> &'static str {
-    match value {
-        BindingPointerKind::Mouse => "mouse",
-        BindingPointerKind::Touch => "touch",
-        BindingPointerKind::Pen => "pen",
-        BindingPointerKind::Unknown => "unknown",
-    }
+    BindingPointerKind::from_name(value).ok_or_else(|| {
+        PyValueError::new_err("pointer_kind must be 'mouse', 'touch', 'pen', or 'unknown'")
+    })
 }
 
 fn parse_key_state(value: &str) -> PyResult<BindingKeyState> {
-    match value {
-        "pressed" | "down" => Ok(BindingKeyState::Pressed),
-        "released" | "up" => Ok(BindingKeyState::Released),
-        _ => Err(PyValueError::new_err(
-            "key state must be 'pressed' or 'released'",
-        )),
-    }
-}
-
-fn key_state_name(value: BindingKeyState) -> &'static str {
-    match value {
-        BindingKeyState::Pressed => "pressed",
-        BindingKeyState::Released => "released",
-    }
+    BindingKeyState::from_name(value)
+        .ok_or_else(|| PyValueError::new_err("key state must be 'pressed' or 'released'"))
 }
 
 fn ime_event_kind_name(value: &BindingImeEvent) -> &'static str {

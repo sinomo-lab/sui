@@ -285,27 +285,13 @@ impl JsEvent {
         cursor_start: Option<u32>,
         cursor_end: Option<u32>,
     ) -> Result<Self> {
-        let inner = match kind.as_str() {
-            "compositionStart" | "composition_start" | "start" => BindingImeEvent::CompositionStart,
-            "compositionUpdate" | "composition_update" | "update" => {
-                BindingImeEvent::CompositionUpdate {
-                    text: text.unwrap_or_default(),
-                    cursor_start: cursor_start.map(|value| value as usize),
-                    cursor_end: cursor_end.map(|value| value as usize),
-                }
-            }
-            "compositionCommit" | "composition_commit" | "commit" => {
-                BindingImeEvent::CompositionCommit {
-                    text: text.unwrap_or_default(),
-                }
-            }
-            "compositionEnd" | "composition_end" | "end" => BindingImeEvent::CompositionEnd,
-            _ => {
-                return Err(napi_invalid_arg(
-                    "IME kind must be 'compositionStart', 'compositionUpdate', 'compositionCommit', or 'compositionEnd'",
-                ));
-            }
-        };
+        let inner = BindingImeEvent::from_js_name(
+            &kind,
+            text,
+            cursor_start.map(|value| value as usize),
+            cursor_end.map(|value| value as usize),
+        )
+        .map_err(napi_invalid_arg)?;
         Ok(Self {
             inner: BindingEvent::Ime(inner),
         })
@@ -371,9 +357,11 @@ impl JsEvent {
     #[napi(getter)]
     pub fn action(&self) -> Option<String> {
         match &self.inner {
-            BindingEvent::Pointer(event) => Some(pointer_event_kind_name(event.kind).to_string()),
-            BindingEvent::Ime(event) => Some(ime_event_kind_name(event).to_string()),
-            BindingEvent::Window(event) => Some(window_event_kind_name(event).to_string()),
+            BindingEvent::Pointer(event) => {
+                Some(BindingPointerEventKind::name(event.kind).to_string())
+            }
+            BindingEvent::Ime(event) => Some(BindingImeEvent::js_name(event).to_string()),
+            BindingEvent::Window(event) => Some(BindingWindowEvent::js_name(event).to_string()),
             BindingEvent::Custom(_)
             | BindingEvent::Keyboard(_)
             | BindingEvent::RawMouseMotion(_)
@@ -428,7 +416,7 @@ impl JsEvent {
     #[napi(getter)]
     pub fn button(&self) -> Option<String> {
         match &self.inner {
-            BindingEvent::Pointer(event) => event.button.map(pointer_button_name),
+            BindingEvent::Pointer(event) => event.button.map(BindingPointerButton::name),
             _ => None,
         }
     }
@@ -454,7 +442,9 @@ impl JsEvent {
     #[napi(getter)]
     pub fn device_kind(&self) -> Option<String> {
         match &self.inner {
-            BindingEvent::Pointer(event) => Some(pointer_kind_name(event.pointer_kind).to_owned()),
+            BindingEvent::Pointer(event) => {
+                Some(BindingPointerKind::name(event.pointer_kind).to_owned())
+            }
             _ => None,
         }
     }
@@ -496,7 +486,7 @@ impl JsEvent {
     #[napi(getter)]
     pub fn state(&self) -> Option<String> {
         match &self.inner {
-            BindingEvent::Keyboard(event) => Some(key_state_name(event.state).to_owned()),
+            BindingEvent::Keyboard(event) => Some(BindingKeyState::name(event.state).to_owned()),
             _ => None,
         }
     }
@@ -5148,83 +5138,17 @@ fn scroll_axes_from_js(value: &str) -> Result<BindingScrollAxes> {
 }
 
 fn pointer_event_kind_from_js(value: &str) -> Result<BindingPointerEventKind> {
-    match value {
-        "down" => Ok(BindingPointerEventKind::Down),
-        "up" => Ok(BindingPointerEventKind::Up),
-        "move" => Ok(BindingPointerEventKind::Move),
-        "scroll" => Ok(BindingPointerEventKind::Scroll),
-        "enter" => Ok(BindingPointerEventKind::Enter),
-        "leave" => Ok(BindingPointerEventKind::Leave),
-        "cancel" => Ok(BindingPointerEventKind::Cancel),
-        _ => Err(napi_invalid_arg(
-            "pointer event kind must be 'down', 'up', 'move', 'scroll', 'enter', 'leave', or 'cancel'",
-        )),
-    }
-}
-
-fn pointer_event_kind_name(value: BindingPointerEventKind) -> &'static str {
-    match value {
-        BindingPointerEventKind::Down => "down",
-        BindingPointerEventKind::Up => "up",
-        BindingPointerEventKind::Move => "move",
-        BindingPointerEventKind::Scroll => "scroll",
-        BindingPointerEventKind::Enter => "enter",
-        BindingPointerEventKind::Leave => "leave",
-        BindingPointerEventKind::Cancel => "cancel",
-    }
+    BindingPointerEventKind::from_name(value).ok_or_else(|| napi_invalid_arg("pointer event kind must be 'down', 'up', 'move', 'scroll', 'enter', 'leave', or 'cancel'"))
 }
 
 fn pointer_button_from_js(value: &str) -> Result<BindingPointerButton> {
-    match value {
-        "primary" | "left" => Ok(BindingPointerButton::Primary),
-        "secondary" | "right" => Ok(BindingPointerButton::Secondary),
-        "middle" => Ok(BindingPointerButton::Middle),
-        "back" => Ok(BindingPointerButton::Back),
-        "forward" => Ok(BindingPointerButton::Forward),
-        _ => {
-            if let Some(value) = value.strip_prefix("other:") {
-                return value
-                    .parse::<u16>()
-                    .map(BindingPointerButton::Other)
-                    .map_err(|_| napi_invalid_arg("other pointer button must fit in u16"));
-            }
-            Err(napi_invalid_arg(
-                "pointer button must be 'primary', 'secondary', 'middle', 'back', 'forward', or 'other:<u16>'",
-            ))
-        }
-    }
-}
-
-fn pointer_button_name(value: BindingPointerButton) -> String {
-    match value {
-        BindingPointerButton::Primary => "primary".to_owned(),
-        BindingPointerButton::Secondary => "secondary".to_owned(),
-        BindingPointerButton::Middle => "middle".to_owned(),
-        BindingPointerButton::Back => "back".to_owned(),
-        BindingPointerButton::Forward => "forward".to_owned(),
-        BindingPointerButton::Other(button) => format!("other:{button}"),
-    }
+    BindingPointerButton::from_name(value).map_err(napi_invalid_arg)
 }
 
 fn pointer_kind_from_js(value: &str) -> Result<BindingPointerKind> {
-    match value {
-        "mouse" => Ok(BindingPointerKind::Mouse),
-        "touch" => Ok(BindingPointerKind::Touch),
-        "pen" => Ok(BindingPointerKind::Pen),
-        "unknown" => Ok(BindingPointerKind::Unknown),
-        _ => Err(napi_invalid_arg(
-            "pointerKind must be 'mouse', 'touch', 'pen', or 'unknown'",
-        )),
-    }
-}
-
-fn pointer_kind_name(value: BindingPointerKind) -> &'static str {
-    match value {
-        BindingPointerKind::Mouse => "mouse",
-        BindingPointerKind::Touch => "touch",
-        BindingPointerKind::Pen => "pen",
-        BindingPointerKind::Unknown => "unknown",
-    }
+    BindingPointerKind::from_name(value).ok_or_else(|| {
+        napi_invalid_arg("pointerKind must be 'mouse', 'touch', 'pen', or 'unknown'")
+    })
 }
 
 fn checked_buttons(value: u32) -> Result<u8> {
@@ -5232,45 +5156,8 @@ fn checked_buttons(value: u32) -> Result<u8> {
 }
 
 fn key_state_from_js(value: &str) -> Result<BindingKeyState> {
-    match value {
-        "pressed" | "down" => Ok(BindingKeyState::Pressed),
-        "released" | "up" => Ok(BindingKeyState::Released),
-        _ => Err(napi_invalid_arg(
-            "key state must be 'pressed' or 'released'",
-        )),
-    }
-}
-
-fn key_state_name(value: BindingKeyState) -> &'static str {
-    match value {
-        BindingKeyState::Pressed => "pressed",
-        BindingKeyState::Released => "released",
-    }
-}
-
-fn ime_event_kind_name(value: &BindingImeEvent) -> &'static str {
-    match value {
-        BindingImeEvent::CompositionStart => "compositionStart",
-        BindingImeEvent::CompositionUpdate { .. } => "compositionUpdate",
-        BindingImeEvent::CompositionCommit { .. } => "compositionCommit",
-        BindingImeEvent::CompositionEnd => "compositionEnd",
-    }
-}
-
-fn window_event_kind_name(value: &BindingWindowEvent) -> &'static str {
-    match value {
-        BindingWindowEvent::CloseRequested => "closeRequested",
-        BindingWindowEvent::Resized(_) => "resized",
-        BindingWindowEvent::Moved(_) => "moved",
-        BindingWindowEvent::ScaleFactorChanged { .. } => "scaleFactorChanged",
-        BindingWindowEvent::Focused(_) => "focused",
-        BindingWindowEvent::Occluded(_) => "occluded",
-        BindingWindowEvent::SafeAreaChanged { .. } => "safeAreaChanged",
-        BindingWindowEvent::ExternalFileHovered(_) => "externalFileHovered",
-        BindingWindowEvent::ExternalFileHoverCancelled => "externalFileHoverCancelled",
-        BindingWindowEvent::ExternalFileDropped(_) => "externalFileDropped",
-        BindingWindowEvent::RedrawRequested => "redrawRequested",
-    }
+    BindingKeyState::from_name(value)
+        .ok_or_else(|| napi_invalid_arg("key state must be 'pressed' or 'released'"))
 }
 
 fn color_space_from_js(value: Option<String>) -> Result<ColorSpace> {

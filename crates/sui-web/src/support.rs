@@ -186,83 +186,16 @@ pub(crate) fn scroll_axes_from_js(value: &str) -> Result<BindingScrollAxes> {
 }
 
 pub(crate) fn pointer_event_kind_from_js(value: &str) -> Result<BindingPointerEventKind> {
-    match value {
-        "down" => Ok(BindingPointerEventKind::Down),
-        "up" => Ok(BindingPointerEventKind::Up),
-        "move" => Ok(BindingPointerEventKind::Move),
-        "scroll" => Ok(BindingPointerEventKind::Scroll),
-        "enter" => Ok(BindingPointerEventKind::Enter),
-        "leave" => Ok(BindingPointerEventKind::Leave),
-        "cancel" => Ok(BindingPointerEventKind::Cancel),
-        _ => Err(invalid_arg(
-            "pointer event kind must be 'down', 'up', 'move', 'scroll', 'enter', 'leave', or 'cancel'",
-        )),
-    }
-}
-
-pub(crate) fn pointer_event_kind_name(value: BindingPointerEventKind) -> &'static str {
-    match value {
-        BindingPointerEventKind::Down => "down",
-        BindingPointerEventKind::Up => "up",
-        BindingPointerEventKind::Move => "move",
-        BindingPointerEventKind::Scroll => "scroll",
-        BindingPointerEventKind::Enter => "enter",
-        BindingPointerEventKind::Leave => "leave",
-        BindingPointerEventKind::Cancel => "cancel",
-    }
+    BindingPointerEventKind::from_name(value).ok_or_else(|| invalid_arg("pointer event kind must be 'down', 'up', 'move', 'scroll', 'enter', 'leave', or 'cancel'"))
 }
 
 pub(crate) fn pointer_button_from_js(value: &str) -> Result<BindingPointerButton> {
-    match value {
-        "primary" | "left" => Ok(BindingPointerButton::Primary),
-        "secondary" | "right" => Ok(BindingPointerButton::Secondary),
-        "middle" => Ok(BindingPointerButton::Middle),
-        "back" => Ok(BindingPointerButton::Back),
-        "forward" => Ok(BindingPointerButton::Forward),
-        _ => {
-            if let Some(value) = value.strip_prefix("other:") {
-                return value
-                    .parse::<u16>()
-                    .map(BindingPointerButton::Other)
-                    .map_err(|_| invalid_arg("other pointer button must fit in u16"));
-            }
-            Err(invalid_arg(
-                "pointer button must be 'primary', 'secondary', 'middle', 'back', 'forward', or 'other:<u16>'",
-            ))
-        }
-    }
-}
-
-pub(crate) fn pointer_button_name(value: BindingPointerButton) -> String {
-    match value {
-        BindingPointerButton::Primary => "primary".to_owned(),
-        BindingPointerButton::Secondary => "secondary".to_owned(),
-        BindingPointerButton::Middle => "middle".to_owned(),
-        BindingPointerButton::Back => "back".to_owned(),
-        BindingPointerButton::Forward => "forward".to_owned(),
-        BindingPointerButton::Other(button) => format!("other:{button}"),
-    }
+    BindingPointerButton::from_name(value).map_err(invalid_arg)
 }
 
 pub(crate) fn pointer_kind_from_js(value: &str) -> Result<BindingPointerKind> {
-    match value {
-        "mouse" => Ok(BindingPointerKind::Mouse),
-        "touch" => Ok(BindingPointerKind::Touch),
-        "pen" => Ok(BindingPointerKind::Pen),
-        "unknown" => Ok(BindingPointerKind::Unknown),
-        _ => Err(invalid_arg(
-            "pointerKind must be 'mouse', 'touch', 'pen', or 'unknown'",
-        )),
-    }
-}
-
-pub(crate) fn pointer_kind_name(value: BindingPointerKind) -> &'static str {
-    match value {
-        BindingPointerKind::Mouse => "mouse",
-        BindingPointerKind::Touch => "touch",
-        BindingPointerKind::Pen => "pen",
-        BindingPointerKind::Unknown => "unknown",
-    }
+    BindingPointerKind::from_name(value)
+        .ok_or_else(|| invalid_arg("pointerKind must be 'mouse', 'touch', 'pen', or 'unknown'"))
 }
 
 pub(crate) fn checked_buttons(value: u32) -> Result<u8> {
@@ -270,43 +203,8 @@ pub(crate) fn checked_buttons(value: u32) -> Result<u8> {
 }
 
 pub(crate) fn key_state_from_js(value: &str) -> Result<BindingKeyState> {
-    match value {
-        "pressed" | "down" => Ok(BindingKeyState::Pressed),
-        "released" | "up" => Ok(BindingKeyState::Released),
-        _ => Err(invalid_arg("key state must be 'pressed' or 'released'")),
-    }
-}
-
-pub(crate) fn key_state_name(value: BindingKeyState) -> &'static str {
-    match value {
-        BindingKeyState::Pressed => "pressed",
-        BindingKeyState::Released => "released",
-    }
-}
-
-pub(crate) fn ime_event_kind_name(value: &BindingImeEvent) -> &'static str {
-    match value {
-        BindingImeEvent::CompositionStart => "compositionStart",
-        BindingImeEvent::CompositionUpdate { .. } => "compositionUpdate",
-        BindingImeEvent::CompositionCommit { .. } => "compositionCommit",
-        BindingImeEvent::CompositionEnd => "compositionEnd",
-    }
-}
-
-pub(crate) fn window_event_kind_name(value: &BindingWindowEvent) -> &'static str {
-    match value {
-        BindingWindowEvent::CloseRequested => "closeRequested",
-        BindingWindowEvent::Resized(_) => "resized",
-        BindingWindowEvent::Moved(_) => "moved",
-        BindingWindowEvent::ScaleFactorChanged { .. } => "scaleFactorChanged",
-        BindingWindowEvent::Focused(_) => "focused",
-        BindingWindowEvent::Occluded(_) => "occluded",
-        BindingWindowEvent::SafeAreaChanged { .. } => "safeAreaChanged",
-        BindingWindowEvent::ExternalFileHovered(_) => "externalFileHovered",
-        BindingWindowEvent::ExternalFileHoverCancelled => "externalFileHoverCancelled",
-        BindingWindowEvent::ExternalFileDropped(_) => "externalFileDropped",
-        BindingWindowEvent::RedrawRequested => "redrawRequested",
-    }
+    BindingKeyState::from_name(value)
+        .ok_or_else(|| invalid_arg("key state must be 'pressed' or 'released'"))
 }
 
 pub(crate) fn color_space_from_js(value: Option<String>) -> Result<ColorSpace> {

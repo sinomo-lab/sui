@@ -132,27 +132,13 @@ impl JsEvent {
         cursor_start: Option<u32>,
         cursor_end: Option<u32>,
     ) -> Result<Self> {
-        let inner = match kind.as_str() {
-            "compositionStart" | "composition_start" | "start" => BindingImeEvent::CompositionStart,
-            "compositionUpdate" | "composition_update" | "update" => {
-                BindingImeEvent::CompositionUpdate {
-                    text: text.unwrap_or_default(),
-                    cursor_start: cursor_start.map(|value| value as usize),
-                    cursor_end: cursor_end.map(|value| value as usize),
-                }
-            }
-            "compositionCommit" | "composition_commit" | "commit" => {
-                BindingImeEvent::CompositionCommit {
-                    text: text.unwrap_or_default(),
-                }
-            }
-            "compositionEnd" | "composition_end" | "end" => BindingImeEvent::CompositionEnd,
-            _ => {
-                return Err(invalid_arg(
-                    "IME kind must be 'compositionStart', 'compositionUpdate', 'compositionCommit', or 'compositionEnd'",
-                ));
-            }
-        };
+        let inner = BindingImeEvent::from_js_name(
+            &kind,
+            text,
+            cursor_start.map(|value| value as usize),
+            cursor_end.map(|value| value as usize),
+        )
+        .map_err(invalid_arg)?;
         Ok(Self {
             inner: BindingEvent::Ime(inner),
         })
@@ -224,9 +210,11 @@ impl JsEvent {
     #[wasm_bindgen(getter = action)]
     pub fn action(&self) -> Option<String> {
         match &self.inner {
-            BindingEvent::Pointer(event) => Some(pointer_event_kind_name(event.kind).to_string()),
-            BindingEvent::Ime(event) => Some(ime_event_kind_name(event).to_string()),
-            BindingEvent::Window(event) => Some(window_event_kind_name(event).to_string()),
+            BindingEvent::Pointer(event) => {
+                Some(BindingPointerEventKind::name(event.kind).to_string())
+            }
+            BindingEvent::Ime(event) => Some(BindingImeEvent::js_name(event).to_string()),
+            BindingEvent::Window(event) => Some(BindingWindowEvent::js_name(event).to_string()),
             BindingEvent::Custom(_)
             | BindingEvent::Keyboard(_)
             | BindingEvent::RawMouseMotion(_)
@@ -281,7 +269,7 @@ impl JsEvent {
     #[wasm_bindgen(getter = button)]
     pub fn button(&self) -> Option<String> {
         match &self.inner {
-            BindingEvent::Pointer(event) => event.button.map(pointer_button_name),
+            BindingEvent::Pointer(event) => event.button.map(BindingPointerButton::name),
             _ => None,
         }
     }
@@ -307,7 +295,9 @@ impl JsEvent {
     #[wasm_bindgen(getter = deviceKind)]
     pub fn device_kind(&self) -> Option<String> {
         match &self.inner {
-            BindingEvent::Pointer(event) => Some(pointer_kind_name(event.pointer_kind).to_owned()),
+            BindingEvent::Pointer(event) => {
+                Some(BindingPointerKind::name(event.pointer_kind).to_owned())
+            }
             _ => None,
         }
     }
@@ -349,7 +339,7 @@ impl JsEvent {
     #[wasm_bindgen(getter = state)]
     pub fn state(&self) -> Option<String> {
         match &self.inner {
-            BindingEvent::Keyboard(event) => Some(key_state_name(event.state).to_owned()),
+            BindingEvent::Keyboard(event) => Some(BindingKeyState::name(event.state).to_owned()),
             _ => None,
         }
     }
