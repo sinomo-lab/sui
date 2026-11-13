@@ -60,12 +60,8 @@ use sui_bindings_core::{
     binding_clipboard_text, binding_easing_from_name, binding_file_dialog_mode_from_name,
     binding_flex_justify_from_name, binding_grid_track_from_name, binding_icon_glyph_from_name,
     binding_motion_preference_from_name, binding_open_url_unchecked,
-    binding_safe_area_edges_from_name, binding_semantic_tone_from_name, binding_semantics_busy,
-    binding_semantics_checked, binding_semantics_descriptions, binding_semantics_disabled,
-    binding_semantics_editable_multiline, binding_semantics_expanded, binding_semantics_focused,
-    binding_semantics_hidden, binding_semantics_hovered, binding_semantics_names,
-    binding_semantics_nodes, binding_semantics_role_from_name, binding_semantics_roles,
-    binding_semantics_selected, binding_semantics_values, binding_set_clipboard_text,
+    binding_safe_area_edges_from_name, binding_semantic_tone_from_name,
+    binding_semantics_role_from_name, binding_set_clipboard_text,
     binding_simple_color_picker_mode_from_name, binding_surface_border_from_name,
     binding_surface_elevation_from_name, binding_surface_role_from_name,
     binding_table_column_alignment_from_name, binding_toggle_state_from_name,
@@ -79,9 +75,9 @@ use sui_bindings_core::{
 };
 use sui_crate::{
     Axis, Color, ColorSpace, Constraints, Event, FontStretch, FontStyle, FontWeight, Path,
-    PathBuilder, Point, Rect, RegisteredImage, RuntimeApplication, SceneCommand, SemanticsNode,
-    SemanticsRole, SemanticsValue, ShadowParams, Size, StrokeStyle, TextStyle, ToggleState,
-    Transform, Vector, WidgetId, WindowBuilder,
+    PathBuilder, Point, Rect, RegisteredImage, RuntimeApplication, SemanticsNode, SemanticsRole,
+    SemanticsValue, ShadowParams, Size, StrokeStyle, TextStyle, ToggleState, Transform, Vector,
+    WidgetId, WindowBuilder,
 };
 
 #[pyclass(name = "Point", frozen, module = "sinomo_ui", from_py_object)]
@@ -4745,44 +4741,7 @@ fn render_widget_once(
             .map_err(py_runtime_error)?;
         output = runtime.render(window_id).map_err(py_runtime_error)?;
     }
-    let mut command_count = 0;
-    let mut fill_rect_count = 0;
-    let mut draw_image_count = 0;
-    output.frame.scene.visit_commands(&mut |command| {
-        command_count += 1;
-        match command {
-            SceneCommand::FillRect { .. } => fill_rect_count += 1,
-            SceneCommand::DrawImage { .. } | SceneCommand::DrawImageQuad { .. } => {
-                draw_image_count += 1;
-            }
-            _ => {}
-        }
-    });
-    Ok(PyRenderSnapshot {
-        command_count,
-        semantics_count: output.semantics.len(),
-        semantics_nodes: binding_semantics_nodes(&output.semantics)
-            .into_iter()
-            .map(Into::into)
-            .collect(),
-        semantics_roles: binding_semantics_roles(&output.semantics),
-        semantics_names: binding_semantics_names(&output.semantics),
-        semantics_values: binding_semantics_values(&output.semantics),
-        semantics_descriptions: binding_semantics_descriptions(&output.semantics),
-        semantics_checked: binding_semantics_checked(&output.semantics),
-        semantics_busy: binding_semantics_busy(&output.semantics),
-        semantics_editable_multiline: binding_semantics_editable_multiline(&output.semantics),
-        semantics_disabled: binding_semantics_disabled(&output.semantics),
-        semantics_focused: binding_semantics_focused(&output.semantics),
-        semantics_hidden: binding_semantics_hidden(&output.semantics),
-        semantics_hovered: binding_semantics_hovered(&output.semantics),
-        semantics_selected: binding_semantics_selected(&output.semantics),
-        semantics_expanded: binding_semantics_expanded(&output.semantics),
-        fill_rect_count,
-        draw_image_count,
-        registered_font_count: output.frame.font_registry.len(),
-        registered_image_count: output.frame.image_registry.len(),
-    })
+    Ok(BindingRenderSnapshot::from_render_output(&output).into())
 }
 
 #[pymodule]

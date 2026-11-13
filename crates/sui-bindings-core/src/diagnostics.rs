@@ -1,4 +1,5 @@
 use sui::Point;
+use sui::SceneCommand;
 use sui::SemanticsNode;
 use sui::SemanticsRole;
 use sui::SemanticsValue;
@@ -30,6 +31,45 @@ pub struct BindingRenderSnapshot {
 }
 
 impl BindingRenderSnapshot {
+    /// Summarize rendered commands, semantics, and registered resources.
+    pub fn from_render_output(output: &sui::RenderOutput) -> Self {
+        let mut command_count = 0;
+        let mut fill_rect_count = 0;
+        let mut draw_image_count = 0;
+        output.frame.scene.visit_commands(&mut |command| {
+            command_count += 1;
+            match command {
+                SceneCommand::FillRect { .. } => fill_rect_count += 1,
+                SceneCommand::DrawImage { .. } | SceneCommand::DrawImageQuad { .. } => {
+                    draw_image_count += 1;
+                }
+                _ => {}
+            }
+        });
+        Self {
+            command_count,
+            semantics_count: output.semantics.len(),
+            semantics_nodes: binding_semantics_nodes(&output.semantics),
+            semantics_roles: binding_semantics_roles(&output.semantics),
+            semantics_names: binding_semantics_names(&output.semantics),
+            semantics_values: binding_semantics_values(&output.semantics),
+            semantics_descriptions: binding_semantics_descriptions(&output.semantics),
+            semantics_checked: binding_semantics_checked(&output.semantics),
+            semantics_busy: binding_semantics_busy(&output.semantics),
+            semantics_editable_multiline: binding_semantics_editable_multiline(&output.semantics),
+            semantics_disabled: binding_semantics_disabled(&output.semantics),
+            semantics_focused: binding_semantics_focused(&output.semantics),
+            semantics_hidden: binding_semantics_hidden(&output.semantics),
+            semantics_hovered: binding_semantics_hovered(&output.semantics),
+            semantics_selected: binding_semantics_selected(&output.semantics),
+            semantics_expanded: binding_semantics_expanded(&output.semantics),
+            fill_rect_count,
+            draw_image_count,
+            registered_font_count: output.frame.font_registry.len(),
+            registered_image_count: output.frame.image_registry.len(),
+        }
+    }
+
     pub fn find_nodes(
         &self,
         role: Option<&str>,

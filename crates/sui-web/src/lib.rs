@@ -34,9 +34,9 @@ mod prelude {
     pub(crate) use sui_bindings_core::*;
     pub(crate) use sui_crate::{
         Axis, Color, ColorSpace, Constraints, Event, FontStretch, FontStyle, FontWeight, GridTrack,
-        Path, PathBuilder, Point, Rect, RegisteredImage, RuntimeApplication, SceneCommand,
-        SemanticsNode, SemanticsRole, SemanticsValue, ShadowParams, Size, StrokeStyle, TextStyle,
-        ToggleState, Transform, Vector, WidgetId, WindowBuilder,
+        Path, PathBuilder, Point, Rect, RegisteredImage, RuntimeApplication, SemanticsNode,
+        SemanticsRole, SemanticsValue, ShadowParams, Size, StrokeStyle, TextStyle, ToggleState,
+        Transform, Vector, WidgetId, WindowBuilder,
     };
     pub(crate) use wasm_bindgen::prelude::*;
 

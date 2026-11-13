@@ -418,42 +418,5 @@ pub(crate) fn render_foreign_widget(
             .map_err(runtime_error)?;
         output = runtime.render(window_id).map_err(runtime_error)?;
     }
-    let mut command_count = 0;
-    let mut fill_rect_count = 0;
-    let mut draw_image_count = 0;
-    output.frame.scene.visit_commands(&mut |command| {
-        command_count += 1;
-        match command {
-            SceneCommand::FillRect { .. } => fill_rect_count += 1,
-            SceneCommand::DrawImage { .. } | SceneCommand::DrawImageQuad { .. } => {
-                draw_image_count += 1;
-            }
-            _ => {}
-        }
-    });
-    Ok(JsRenderSnapshot {
-        command_count,
-        semantics_count: output.semantics.len() as u32,
-        semantics_nodes: binding_semantics_nodes(&output.semantics)
-            .into_iter()
-            .map(Into::into)
-            .collect(),
-        semantics_roles: binding_semantics_roles(&output.semantics),
-        semantics_names: binding_semantics_names(&output.semantics),
-        semantics_values: binding_semantics_values(&output.semantics),
-        semantics_descriptions: binding_semantics_descriptions(&output.semantics),
-        semantics_checked: binding_semantics_checked(&output.semantics),
-        semantics_busy: binding_semantics_busy(&output.semantics),
-        semantics_editable_multiline: binding_semantics_editable_multiline(&output.semantics),
-        semantics_disabled: binding_semantics_disabled(&output.semantics),
-        semantics_focused: binding_semantics_focused(&output.semantics),
-        semantics_hidden: binding_semantics_hidden(&output.semantics),
-        semantics_hovered: binding_semantics_hovered(&output.semantics),
-        semantics_selected: binding_semantics_selected(&output.semantics),
-        semantics_expanded: binding_semantics_expanded(&output.semantics),
-        fill_rect_count,
-        draw_image_count,
-        registered_font_count: output.frame.font_registry.len() as u32,
-        registered_image_count: output.frame.image_registry.len() as u32,
-    })
+    Ok(BindingRenderSnapshot::from_render_output(&output).into())
 }
