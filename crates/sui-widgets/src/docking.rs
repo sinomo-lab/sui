@@ -8,6 +8,7 @@
 
 use crate::draw::inset_rect_evenly;
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     fmt,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
@@ -16,7 +17,7 @@ use sui_text::TextAlign;
 
 use sui_core::{
     Event, KeyState, Point, PointerButton, PointerEventKind, Rect, SemanticsAction,
-    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, WidgetId,
+    SemanticsActionRequest, SemanticsNode, SemanticsRole, SemanticsValue, Size, Vector, WidgetId,
 };
 use sui_layout::{Axis, Constraints};
 use sui_reactive::Signal;
@@ -1290,6 +1291,31 @@ struct DockLayoutCache {
 }
 
 impl DockLayoutCache {
+    /// Moves every cached rectangle by `delta`.
+    fn translate(&mut self, delta: Vector) {
+        let shift = |rect: &mut Rect| *rect = rect.translate(delta);
+        shift(&mut self.bounds);
+        for group in &mut self.groups {
+            shift(&mut group.bounds);
+            shift(&mut group.header);
+            shift(&mut group.content);
+            for tab in &mut group.tabs {
+                shift(&mut tab.bounds);
+                shift(&mut tab.label);
+                for part in [&mut tab.icon, &mut tab.dirty, &mut tab.close]
+                    .into_iter()
+                    .flatten()
+                {
+                    shift(part);
+                }
+            }
+        }
+        for splitter in &mut self.splitters {
+            shift(&mut splitter.bounds);
+            shift(&mut splitter.split_bounds);
+        }
+    }
+
     fn visible_panel_ids(&self) -> impl Iterator<Item = DockPanelId> + '_ {
         self.groups.iter().map(|group| group.active)
     }
@@ -1619,6 +1645,29 @@ impl DockWorkspace {
             .find(|group| group.id == group_id)
             .map_or(&[][..], |group| group.panels.as_slice());
         floating_min_size(members, self.header_height(), &self.options_map())
+    }
+
+    /// Moves the cached layout to where the workspace now is.
+    ///
+    /// An ancestor that scrolls or is moved translates this widget's bounds
+    /// without arranging it again, which leaves the cache behind.
+    fn sync_layout_origin(&mut self, bounds: Rect) {
+        let delta = bounds.origin - self.layout.bounds.origin;
+        if delta != Vector::ZERO {
+            self.layout.translate(delta);
+        }
+    }
+
+    /// The cached layout at `bounds`, for passes that cannot update it.
+    fn layout_at(&self, bounds: Rect) -> Cow<'_, DockLayoutCache> {
+        let delta = bounds.origin - self.layout.bounds.origin;
+        if delta == Vector::ZERO {
+            Cow::Borrowed(&self.layout)
+        } else {
+            let mut layout = self.layout.clone();
+            layout.translate(delta);
+            Cow::Owned(layout)
+        }
     }
 
     fn close_rect(&self, panel: DockPanelId) -> Option<Rect> {
@@ -2089,6 +2138,7 @@ impl DockWorkspace {
 
 impl Widget for DockWorkspace {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
+        self.sync_layout_origin(ctx.bounds());
         match event {
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Down
@@ -2295,23 +2345,14 @@ impl Widget for DockWorkspace {
         let theme = self.resolved_theme();
         ctx.fill_bounds(theme.palette.surface);
 
-        for group in self
-            .layout
-            .groups
-            .iter()
-            .filter(|group| !group.is_floating())
-        {
+        let layout = self.layout_at(ctx.bounds());
+        for group in layout.groups.iter().filter(|group| !group.is_floating()) {
             self.paint_group(ctx, group, &theme);
         }
-        for splitter in &self.layout.splitters {
+        for splitter in &layout.splitters {
             ctx.fill_rect(splitter.bounds, theme.palette.border.with_alpha(0.88));
         }
-        for group in self
-            .layout
-            .groups
-            .iter()
-            .filter(|group| group.is_floating())
-        {
+        for group in layout.groups.iter().filter(|group| group.is_floating()) {
             self.paint_group(ctx, group, &theme);
         }
         if let Some(DockWorkspaceGesture::TabDrag {
@@ -2344,7 +2385,8 @@ impl Widget for DockWorkspace {
         workspace.actions = vec![SemanticsAction::Focus];
         ctx.push(workspace);
 
-        for group in &self.layout.groups {
+        let layout = self.layout_at(ctx.bounds());
+        for group in &layout.groups {
             let group_id = dock_group_semantics_id(ctx.widget_id(), &group.location);
             let mut tabs = SemanticsNode::new(group_id, SemanticsRole::TabBar, group.header);
             tabs.parent = Some(ctx.widget_id());
@@ -2393,7 +2435,7 @@ impl Widget for DockWorkspace {
             }
         }
 
-        for splitter in &self.layout.splitters {
+        for splitter in &layout.splitters {
             let mut node = SemanticsNode::new(
                 dock_splitter_semantics_id(ctx.widget_id(), &splitter.path),
                 SemanticsRole::Splitter,
@@ -4138,6 +4180,77 @@ mod tests {
             state.snapshot().floating[0].bounds,
             Rect::new(50.0, 60.0, 300.0, 200.0)
         );
+    }
+
+    #[test]
+    fn scrolling_an_ancestor_moves_the_tabs_with_the_panels() {
+        let state = DockWorkspaceState::new(
+            DockWorkspaceSnapshot::new(DockNode::tabs([SCENE], SCENE)).with_floating(
+                DockFloatingGroup::new(
+                    1,
+                    [VIEWPORT],
+                    VIEWPORT,
+                    Rect::new(40.0, 80.0, 300.0, 200.0),
+                ),
+            ),
+        )
+        .expect("valid layout");
+        let workspace = DockWorkspace::new(state.clone())
+            .with_panel(
+                SCENE,
+                DockPanelOptions::new("Scene").closable(true),
+                panel("Scene body"),
+            )
+            .with_panel(VIEWPORT, "Viewport", panel("Viewport body"));
+        let page = crate::Stack::vertical()
+            .with_child(SizedBox::new().width(600.0).height(300.0))
+            .with_child(SizedBox::new().width(600.0).height(500.0).child(workspace));
+        let (mut runtime, window_id) = build_runtime(crate::ScrollView::vertical(page));
+        resize(&mut runtime, window_id, 640.0, 400.0);
+        let before = runtime.render(window_id).expect("initial frame");
+
+        let mut scroll = PointerEvent::new(PointerEventKind::Scroll, Point::new(300.0, 50.0));
+        scroll.scroll_delta = Some(sui_core::ScrollDelta::Pixels(Vector::new(0.0, -120.0)));
+        runtime
+            .handle_event(window_id, Event::Pointer(scroll))
+            .expect("page scrolls");
+        let after = runtime.render(window_id).expect("scrolled frame");
+
+        let y = |frame: &sui_runtime::RenderOutput, name: &str| {
+            named(&frame.semantics, name)
+                .unwrap_or_else(|| panic!("{name} is present"))
+                .bounds
+                .y()
+        };
+        let scrolled = y(&after, "Scene body") - y(&before, "Scene body");
+        assert!(scrolled < -50.0, "the page scrolled: {scrolled}");
+        for name in [
+            "Scene",
+            "Close Scene",
+            "Docked panel tabs",
+            "Floating panel tabs",
+            "Viewport body",
+        ] {
+            assert_eq!(
+                y(&after, name) - y(&before, name),
+                scrolled,
+                "{name} moves with the page"
+            );
+        }
+
+        // The close button is hit where it is now shown.
+        let close = named(&after.semantics, "Close Scene")
+            .expect("close button")
+            .bounds;
+        for (kind, pressed) in [
+            (PointerEventKind::Down, true),
+            (PointerEventKind::Up, false),
+        ] {
+            runtime
+                .handle_event(window_id, primary_pointer(kind, center(close), pressed))
+                .expect("close press");
+        }
+        assert_eq!(state.snapshot().hidden, vec![SCENE]);
     }
 
     #[test]

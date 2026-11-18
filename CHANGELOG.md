@@ -32,6 +32,9 @@ Versioning, with the usual expectation that the API may change during the
   window. A workspace that does not start at its window's origin, or that
   scrolls, no longer misplaces its floating groups; a layout saved from such
   a workspace shifts by the workspace's former offset.
+- A `DockWorkspace` inside a scrolling or moving ancestor keeps its tab
+  headers, splitters, and hit targets with its panels. They stayed at their
+  last arranged position until something inside the workspace changed.
 - The JavaScript and Python bindings expose the runtime docking API:
   `DockPanelOptions`, `DockPlacement`, `DockState.addPanel`, `removePanel`,
   `updatePanel`, `dockTab`, and `isRegistered`, `DockLayout.retainPanels`,
