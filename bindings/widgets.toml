@@ -1713,6 +1713,24 @@ ts_kind = "class"
 docs = ["DockLayout"]
 
 [[item]]
+name = "DockPanelOptions"
+kind = "descriptor"
+core_descriptor = "BindingDockPanelOptions"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["DockPanelOptions"]
+
+[[item]]
+name = "DockPlacement"
+kind = "descriptor"
+core_descriptor = "BindingDockPlacement"
+python_kind = "class"
+js_kind = "class"
+ts_kind = "class"
+docs = ["DockPlacement"]
+
+[[item]]
 name = "DockState"
 kind = "descriptor"
 core_descriptor = "BindingDockState"

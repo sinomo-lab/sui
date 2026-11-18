@@ -190,6 +190,49 @@ fn page_items_follow_the_registry() {
     assert_eq!(story_and_category_titles(), expected);
 }
 
+#[test]
+fn dock_workspace_story_adds_closes_and_restores_panels() -> Result<()> {
+    let story = story("dock-workspace").expect("the dock workspace story is registered");
+    let (mut runtime, window_id) = build_runtime(
+        Size::new(1120.0, 1400.0),
+        story_block(story, DefaultTheme::sui()),
+    )?;
+    let press = |runtime: &mut Runtime, name: &str| -> Result<RenderOutput> {
+        let output = runtime.render(window_id)?;
+        let target = node(&output.semantics, SemanticsRole::Button, name)
+            .unwrap_or_else(|| panic!("{name} is present"))
+            .bounds;
+        click(runtime, window_id, center(target))?;
+        runtime.render(window_id)
+    };
+    let has_tab = |output: &RenderOutput, name: &str| {
+        node(&output.semantics, SemanticsRole::Button, name).is_some()
+    };
+
+    let output = runtime.render(window_id)?;
+    assert!(has_tab(&output, "Palette"), "the floating group is shown");
+    assert!(has_tab(&output, "untitled-1") && !has_tab(&output, "untitled-2"));
+
+    let output = press(&mut runtime, "New document")?;
+    assert!(has_tab(&output, "untitled-2"));
+    assert!(
+        named(&output.semantics, "Built by the workspace's panel builder.").is_some(),
+        "the added document shows the panel builder's content"
+    );
+
+    let output = press(&mut runtime, "Close untitled-2")?;
+    assert!(!has_tab(&output, "untitled-2"));
+    // A removed document's number is not reused.
+    let output = press(&mut runtime, "New document")?;
+    assert!(has_tab(&output, "untitled-3") && !has_tab(&output, "untitled-2"));
+
+    let output = press(&mut runtime, "Close Console")?;
+    assert!(!has_tab(&output, "Console"));
+    let output = press(&mut runtime, "Show console")?;
+    assert!(has_tab(&output, "Console"));
+    Ok(())
+}
+
 /// Every story renders a block in the theme named `theme_name`. A test per
 /// theme, so the themes render in parallel.
 fn every_story_renders_in(theme_name: &str) -> Result<()> {

@@ -3079,6 +3079,8 @@ fn binding_dock_workspace_preserves_portable_state_and_panels() {
             BindingDockPanel::new(2, "Search", BindingWidget::label("Search panel")).unwrap(),
         ],
         "Editor workspace",
+        None,
+        None,
     )
     .unwrap();
     let app = BindingApp::new().with_window(BindingWindow::new("Docking", workspace));
@@ -3092,6 +3094,100 @@ fn binding_dock_workspace_preserves_portable_state_and_panels() {
     assert!(state.snapshot().hidden.contains(&1));
     assert!(state.show(1).unwrap());
     assert!(!state.snapshot().hidden.contains(&1));
+}
+
+#[test]
+fn binding_dock_workspace_adds_updates_and_closes_panels_at_runtime() {
+    let state = BindingDockState::new(BindingDockLayout::new(
+        BindingDockNode::tabs([1], None).unwrap(),
+        [],
+        [],
+    ))
+    .unwrap();
+    let closable = |title: &str| {
+        BindingDockPanelOptions::new(title, Some(IconGlyph::Brush), true, false, None).unwrap()
+    };
+    let builder = BindingDockPanelBuilder::new(|panel| {
+        Ok(BindingWidget::label(format!("Built panel {panel}")))
+    });
+    let close_handler = BindingDockCloseHandler::new(|panel| {
+        Ok(Some(if panel == 2 { "remove" } else { "keep" }.to_owned()))
+    });
+    let workspace = BindingWidget::dock_workspace(
+        state.clone(),
+        [
+            BindingDockPanel::new(1, closable("Files"), BindingWidget::label("Files panel"))
+                .unwrap(),
+        ],
+        "Editor workspace",
+        Some(builder),
+        Some(close_handler),
+    )
+    .unwrap();
+    let app = BindingApp::new().with_window(BindingWindow::new("Docking", workspace));
+    let mut runtime = app.start().unwrap();
+    runtime.render_window_at(0).unwrap();
+
+    assert!(
+        state
+            .add_panel(1, "Files", BindingDockPlacement::default())
+            .is_err()
+    );
+    state
+        .add_panel(
+            2,
+            closable("Search"),
+            BindingDockPlacement::beside(1, "right").unwrap(),
+        )
+        .unwrap();
+    state
+        .add_panel(3, "Output", BindingDockPlacement::hidden())
+        .unwrap();
+    assert!(state.is_registered(2));
+    assert_eq!(state.snapshot().hidden, vec![3]);
+    let snapshot = runtime.render_window_at(0).unwrap();
+    assert!(snapshot.get_one(None, Some("Built panel 2"), None).is_ok());
+
+    assert!(state.dock_tab(3, 2, false).unwrap());
+    state
+        .update_panel(
+            3,
+            BindingDockPanelOptions::new("Output log", None, false, true, None).unwrap(),
+        )
+        .unwrap();
+    let snapshot = runtime.render_window_at(0).unwrap();
+    assert!(
+        snapshot
+            .get_one(Some("button"), Some("Output log"), None)
+            .is_ok()
+    );
+    assert!(snapshot.get_one(None, Some("Built panel 3"), None).is_ok());
+
+    // The handler keeps panel 1 open and removes panel 2.
+    let close_files = snapshot
+        .get_one(Some("button"), Some("Close Files"), None)
+        .unwrap();
+    runtime.click_node_at(0, &close_files).unwrap();
+    assert!(state.is_registered(1));
+    assert!(state.snapshot().hidden.is_empty());
+    assert!(state.activate(2).unwrap());
+    let snapshot = runtime.render_window_at(0).unwrap();
+    let close_search = snapshot
+        .get_one(Some("button"), Some("Close Search"), None)
+        .unwrap();
+    runtime.click_node_at(0, &close_search).unwrap();
+    assert!(!state.is_registered(2));
+
+    assert!(state.remove_panel(3).unwrap());
+    assert!(!state.remove_panel(3).unwrap());
+    assert!(state.update_panel(3, "Gone".into()).is_err());
+
+    let pruned = BindingDockLayout::new(BindingDockNode::tabs([1, 9], Some(9)).unwrap(), [], [8])
+        .retain_panels([1]);
+    assert_eq!(
+        pruned,
+        BindingDockLayout::new(BindingDockNode::tabs([1], None).unwrap(), [], [])
+    );
 }
 
 #[test]

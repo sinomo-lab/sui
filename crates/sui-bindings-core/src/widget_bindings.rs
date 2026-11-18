@@ -382,10 +382,13 @@ impl BindingWidget {
                 shown.bind_ui_handle(handle);
                 child.bind_ui_handle(handle);
             }
-            BindingWidgetKind::DockWorkspace { panels, .. } => {
+            BindingWidgetKind::DockWorkspace {
+                panels, ui_handle, ..
+            } => {
                 for panel in panels {
                     panel.child.bind_ui_handle(handle);
                 }
+                *recover_lock(ui_handle) = Some(handle.clone());
             }
             BindingWidgetKind::SizedBox { child, .. } => {
                 if let Some(child) = child {

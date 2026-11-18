@@ -2342,6 +2342,23 @@ export class DockLayout {
   readonly root: DockNode;
   readonly floating: DockFloatingGroup[];
   readonly hidden: string[];
+  retainPanels(panelIds: string[]): DockLayout;
+}
+
+export class DockPanelOptions {
+  constructor(title: string, icon?: IconGlyph | string, closable?: boolean, dirty?: boolean, minSize?: Size);
+  readonly title: string;
+  readonly icon: string | null;
+  readonly closable: boolean;
+  readonly dirty: boolean;
+  readonly minSize: Size;
+}
+
+export class DockPlacement {
+  static root(zone?: "center" | "left" | "right" | "top" | "bottom"): DockPlacement;
+  static beside(target: string, zone?: "center" | "left" | "right" | "top" | "bottom"): DockPlacement;
+  static floating(bounds: Rect): DockPlacement;
+  static hidden(): DockPlacement;
 }
 
 export class DockState {
@@ -2354,16 +2371,24 @@ export class DockState {
   hide(panel: string): boolean;
   show(panel: string): boolean;
   activate(panel: string): boolean;
+  dockTab(panel: string, anchor: string, after?: boolean): boolean;
+  addPanel(panel: string, options: DockPanelOptions, placement?: DockPlacement): void;
+  removePanel(panel: string): boolean;
+  updatePanel(panel: string, options: DockPanelOptions): void;
+  isRegistered(panel: string): boolean;
 }
 
 export class DockPanelSpec {
-  constructor(id: string, title: string, child: Widget);
+  constructor(id: string, title: string, child: Widget, icon?: IconGlyph | string, closable?: boolean, dirty?: boolean, minSize?: Size);
   readonly id: string;
   readonly title: string;
+  readonly options: DockPanelOptions;
 }
 
 export interface DockWorkspaceOptions {
   name?: string;
+  panelBuilder?: (panel: string) => Widget;
+  onCloseRequest?: (panel: string) => "hide" | "remove" | "keep";
 }
 
 export function dockWorkspace(state: DockState, panels: DockPanelSpec[], options?: DockWorkspaceOptions): Widget;

@@ -1667,8 +1667,39 @@ descriptor DockLayout
     readonly root: DockNode;
     readonly floating: DockFloatingGroup[];
     readonly hidden: string[];
+    retainPanels(panelIds: string[]): DockLayout;
   endapi
   docs DockLayout
+end
+
+descriptor DockPanelOptions
+  core_descriptor BindingDockPanelOptions
+  python class
+  python_stub manual
+  js class
+  api class
+    constructor(title: string, icon?: IconGlyph | string, closable?: boolean, dirty?: boolean, minSize?: Size);
+    readonly title: string;
+    readonly icon: string | null;
+    readonly closable: boolean;
+    readonly dirty: boolean;
+    readonly minSize: Size;
+  endapi
+  docs DockPanelOptions
+end
+
+descriptor DockPlacement
+  core_descriptor BindingDockPlacement
+  python class
+  python_stub manual
+  js class
+  api class
+    static root(zone?: "center" | "left" | "right" | "top" | "bottom"): DockPlacement;
+    static beside(target: string, zone?: "center" | "left" | "right" | "top" | "bottom"): DockPlacement;
+    static floating(bounds: Rect): DockPlacement;
+    static hidden(): DockPlacement;
+  endapi
+  docs DockPlacement
 end
 
 descriptor DockState
@@ -1686,6 +1717,11 @@ descriptor DockState
     hide(panel: string): boolean;
     show(panel: string): boolean;
     activate(panel: string): boolean;
+    dockTab(panel: string, anchor: string, after?: boolean): boolean;
+    addPanel(panel: string, options: DockPanelOptions, placement?: DockPlacement): void;
+    removePanel(panel: string): boolean;
+    updatePanel(panel: string, options: DockPanelOptions): void;
+    isRegistered(panel: string): boolean;
   endapi
   docs DockState
 end
@@ -1696,9 +1732,10 @@ descriptor DockPanelSpec
   python_stub manual
   js class
   api class
-    constructor(id: string, title: string, child: Widget);
+    constructor(id: string, title: string, child: Widget, icon?: IconGlyph | string, closable?: boolean, dirty?: boolean, minSize?: Size);
     readonly id: string;
     readonly title: string;
+    readonly options: DockPanelOptions;
   endapi
   docs DockPanel
 end
@@ -1708,7 +1745,7 @@ widget DockWorkspace
   core_constructor dock_workspace
   python function py_dock_workspace
   js function js_dock_workspace
-  api function DockWorkspace(state: DockState, panels: DockPanelSpec[], name?: string): Widget;
+  api function DockWorkspace(state: DockState, panels: DockPanelSpec[], name?: string, panelBuilder?: (panel: id) => Widget, onCloseRequest?: (panel: id) => "hide" | "remove" | "keep"): Widget;
   docs DockWorkspace
   compat
 end

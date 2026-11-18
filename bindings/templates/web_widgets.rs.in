@@ -907,6 +907,127 @@ impl JsDockLayout {
     pub fn hidden(&self) -> Vec<String> {
         self.inner.hidden.iter().map(u64::to_string).collect()
     }
+
+    #[wasm_bindgen(js_name = retainPanels)]
+    pub fn retain_panels(&self, panel_ids: Vec<String>) -> Result<JsDockLayout> {
+        let panel_ids = panel_ids
+            .iter()
+            .map(|id| parse_u64_string(id, "dock panel id"))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(JsDockLayout {
+            inner: self.inner.retain_panels(panel_ids),
+        })
+    }
+}
+
+#[wasm_bindgen(js_name = DockPanelOptions)]
+#[derive(Debug, Clone)]
+pub struct JsDockPanelOptions {
+    pub(crate) inner: BindingDockPanelOptions,
+}
+
+js_class!(JsDockPanelOptions => "DockPanelOptions");
+
+#[wasm_bindgen(js_class = DockPanelOptions)]
+impl JsDockPanelOptions {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        title: String,
+        icon: Option<String>,
+        closable: Option<bool>,
+        dirty: Option<bool>,
+        min_size: Option<ClassArg<JsSize>>,
+    ) -> Result<Self> {
+        dock_panel_options_from_js(title, icon, closable, dirty, min_size)
+            .map(|inner| Self { inner })
+    }
+
+    #[wasm_bindgen(getter = title)]
+    pub fn title(&self) -> String {
+        self.inner.title().to_owned()
+    }
+
+    #[wasm_bindgen(getter = icon)]
+    pub fn icon(&self) -> Option<String> {
+        self.inner
+            .icon()
+            .map(|icon| binding_icon_glyph_name(icon).to_owned())
+    }
+
+    #[wasm_bindgen(getter = closable)]
+    pub fn closable(&self) -> bool {
+        self.inner.closable()
+    }
+
+    #[wasm_bindgen(getter = dirty)]
+    pub fn dirty(&self) -> bool {
+        self.inner.dirty()
+    }
+
+    #[wasm_bindgen(getter = minSize)]
+    pub fn min_size(&self) -> JsSize {
+        self.inner.min_size().into()
+    }
+}
+
+fn dock_panel_options_from_js(
+    title: String,
+    icon: Option<String>,
+    closable: Option<bool>,
+    dirty: Option<bool>,
+    min_size: Option<ClassArg<JsSize>>,
+) -> Result<BindingDockPanelOptions> {
+    let min_size = min_size.map(|value| value.value()).transpose()?;
+    BindingDockPanelOptions::new(
+        title,
+        icon.as_deref().map(icon_glyph_from_js).transpose()?,
+        closable.unwrap_or(false),
+        dirty.unwrap_or(false),
+        min_size.as_ref().map(|size| (*size).into()),
+    )
+    .map_err(invalid_arg)
+}
+
+#[wasm_bindgen(js_name = DockPlacement)]
+#[derive(Debug, Clone)]
+pub struct JsDockPlacement {
+    pub(crate) inner: BindingDockPlacement,
+}
+
+js_class!(JsDockPlacement => "DockPlacement");
+
+#[wasm_bindgen(js_class = DockPlacement)]
+impl JsDockPlacement {
+    #[wasm_bindgen]
+    pub fn root(zone: Option<String>) -> Result<JsDockPlacement> {
+        BindingDockPlacement::root(zone.as_deref().unwrap_or("center"))
+            .map(|inner| Self { inner })
+            .map_err(invalid_arg)
+    }
+
+    #[wasm_bindgen]
+    pub fn beside(target: String, zone: Option<String>) -> Result<JsDockPlacement> {
+        BindingDockPlacement::beside(
+            parse_u64_string(&target, "dock target panel id")?,
+            zone.as_deref().unwrap_or("center"),
+        )
+        .map(|inner| Self { inner })
+        .map_err(invalid_arg)
+    }
+
+    #[wasm_bindgen]
+    pub fn floating(bounds: &JsRect) -> JsDockPlacement {
+        Self {
+            inner: BindingDockPlacement::floating((*bounds).into()),
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn hidden() -> JsDockPlacement {
+        Self {
+            inner: BindingDockPlacement::hidden(),
+        }
+    }
 }
 
 #[wasm_bindgen(js_name = DockState)]
@@ -998,6 +1119,61 @@ impl JsDockState {
             .activate(parse_u64_string(&panel, "dock panel id")?)
             .map_err(invalid_arg)
     }
+
+    #[wasm_bindgen(js_name = dockTab)]
+    pub fn dock_tab(&self, panel: String, anchor: String, after: Option<bool>) -> Result<bool> {
+        self.inner
+            .dock_tab(
+                parse_u64_string(&panel, "dock panel id")?,
+                parse_u64_string(&anchor, "dock anchor panel id")?,
+                after.unwrap_or(true),
+            )
+            .map_err(invalid_arg)
+    }
+
+    #[wasm_bindgen(js_name = addPanel)]
+    pub fn add_panel(
+        &self,
+        panel: String,
+        options: &JsDockPanelOptions,
+        placement: Option<ClassArg<JsDockPlacement>>,
+    ) -> Result<()> {
+        let placement = placement.map(|value| value.value()).transpose()?;
+        self.inner
+            .add_panel(
+                parse_u64_string(&panel, "dock panel id")?,
+                options.inner.clone(),
+                placement
+                    .as_ref()
+                    .map(|placement| placement.inner)
+                    .unwrap_or_default(),
+            )
+            .map_err(invalid_arg)
+    }
+
+    #[wasm_bindgen(js_name = removePanel)]
+    pub fn remove_panel(&self, panel: String) -> Result<bool> {
+        self.inner
+            .remove_panel(parse_u64_string(&panel, "dock panel id")?)
+            .map_err(invalid_arg)
+    }
+
+    #[wasm_bindgen(js_name = updatePanel)]
+    pub fn update_panel(&self, panel: String, options: &JsDockPanelOptions) -> Result<()> {
+        self.inner
+            .update_panel(
+                parse_u64_string(&panel, "dock panel id")?,
+                options.inner.clone(),
+            )
+            .map_err(invalid_arg)
+    }
+
+    #[wasm_bindgen(js_name = isRegistered)]
+    pub fn is_registered(&self, panel: String) -> Result<bool> {
+        Ok(self
+            .inner
+            .is_registered(parse_u64_string(&panel, "dock panel id")?))
+    }
 }
 
 #[wasm_bindgen(js_name = DockPanelSpec)]
@@ -1011,10 +1187,18 @@ js_class!(JsDockPanelSpec => "DockPanelSpec");
 #[wasm_bindgen(js_class = DockPanelSpec)]
 impl JsDockPanelSpec {
     #[wasm_bindgen(constructor)]
-    pub fn new(id: String, title: String, child: &JsWidget) -> Result<Self> {
+    pub fn new(
+        id: String,
+        title: String,
+        child: &JsWidget,
+        icon: Option<String>,
+        closable: Option<bool>,
+        dirty: Option<bool>,
+        min_size: Option<ClassArg<JsSize>>,
+    ) -> Result<Self> {
         BindingDockPanel::new(
             parse_u64_string(&id, "dock panel id")?,
-            title,
+            dock_panel_options_from_js(title, icon, closable, dirty, min_size)?,
             child.binding_widget()?,
         )
         .map(|inner| Self { inner })
@@ -1028,7 +1212,14 @@ impl JsDockPanelSpec {
 
     #[wasm_bindgen(getter = title)]
     pub fn title(&self) -> String {
-        self.inner.title.clone()
+        self.inner.options.title().to_owned()
+    }
+
+    #[wasm_bindgen(getter = options)]
+    pub fn options(&self) -> JsDockPanelOptions {
+        JsDockPanelOptions {
+            inner: self.inner.options.clone(),
+        }
     }
 }
 
@@ -4389,11 +4580,36 @@ pub fn js_dock_workspace(
     state: &JsDockState,
     panels: Array,
     name: Option<String>,
+    panel_builder: Option<Function>,
+    on_close_request: Option<Function>,
 ) -> Result<JsWidget> {
+    let panel_builder = panel_builder.map(|build| {
+        let build = Local(build);
+        BindingDockPanelBuilder::new(move |panel| {
+            let value = call_js(&build, &[JsValue::from_str(&panel.to_string())])?;
+            class_ref::<JsWidget>(&value)
+                .and_then(|widget| widget.binding_widget())
+                .map_err(callback_failure)
+        })
+    });
+    let on_close_request = on_close_request.map(|handler| {
+        let handler = Local(handler);
+        BindingDockCloseHandler::new(move |panel| {
+            let value = call_js(&handler, &[JsValue::from_str(&panel.to_string())])?;
+            if value.is_null() || value.is_undefined() {
+                return Ok(None);
+            }
+            value.as_string().map(Some).ok_or_else(|| {
+                ForeignCallbackFailure::new("the dock close action must be a string")
+            })
+        })
+    });
     BindingWidget::dock_workspace(
         state.inner.clone(),
         extract_dock_panels(&panels)?,
         name.unwrap_or_else(|| "Dock workspace".to_owned()),
+        panel_builder,
+        on_close_request,
     )
     .map(JsWidget::from_binding)
     .map_err(invalid_arg)

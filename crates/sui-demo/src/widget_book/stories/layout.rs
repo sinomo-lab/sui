@@ -65,7 +65,7 @@ pub(super) const STORIES: [Story; 9] = [
     Story {
         id: "dock-workspace",
         title: "Dock workspace",
-        api: "DockWorkspace, DockWorkspaceState, DockPanelOptions",
+        api: "DockWorkspace, DockWorkspaceState, DockPanelOptions, DockPlacement",
         summary: "Tab groups and splits the user rearranges by dragging tabs.",
         keywords: "docking tabs panels float close reorder workspace layout",
         category: Category::Layout,
@@ -598,36 +598,34 @@ fn dock_workspace(ctx: &StoryCtx) -> Vec<Section> {
     const NOTES: DockPanelId = DockPanelId::new(3);
     const INSPECTOR: DockPanelId = DockPanelId::new(4);
     const OUTPUT: DockPanelId = DockPanelId::new(5);
+    const PALETTE: DockPanelId = DockPanelId::new(6);
 
     let theme = ctx.theme;
-    let body = |title: &str, detail: &str| {
-        Surface::window(
-            Stack::vertical()
-                .gap(6.0)
-                .alignment(Alignment::Stretch)
-                .with_child(ctx.text(title))
-                .with_child(ctx.muted(detail)),
-        )
-        .padding(Insets::all(14.0))
-        .fill()
-        .theme(theme)
-    };
-    let state = DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::split(
-        Axis::Horizontal,
-        0.24,
-        DockNode::tabs([FILES], FILES),
-        DockNode::split(
-            Axis::Vertical,
-            0.68,
+    let body = |title: &str, detail: &str| dock_body(theme, title, detail);
+    let state = DockWorkspaceState::new(
+        DockWorkspaceSnapshot::new(DockNode::split(
+            Axis::Horizontal,
+            0.24,
+            DockNode::tabs([FILES], FILES),
             DockNode::split(
-                Axis::Horizontal,
-                0.7,
-                DockNode::tabs([EDITOR, NOTES], EDITOR),
-                DockNode::tabs([INSPECTOR], INSPECTOR),
+                Axis::Vertical,
+                0.68,
+                DockNode::split(
+                    Axis::Horizontal,
+                    0.7,
+                    DockNode::tabs([EDITOR, NOTES], EDITOR),
+                    DockNode::tabs([INSPECTOR], INSPECTOR),
+                ),
+                DockNode::tabs([OUTPUT], OUTPUT),
             ),
-            DockNode::tabs([OUTPUT], OUTPUT),
-        ),
-    )))
+        ))
+        .with_floating(DockFloatingGroup::new(
+            1,
+            [PALETTE],
+            PALETTE,
+            Rect::new(440.0, 150.0, 250.0, 170.0),
+        )),
+    )
     .expect("the story layout is valid");
     let workspace = DockWorkspace::new(state)
         .name("Story dock workspace")
@@ -663,11 +661,127 @@ fn dock_workspace(ctx: &StoryCtx) -> Vec<Section> {
             OUTPUT,
             DockPanelOptions::new("Output").closable(true),
             body("Output", "Drop a tab outside every group to float it."),
+        )
+        .with_panel(
+            PALETTE,
+            DockPanelOptions::new("Palette")
+                .icon(IconGlyph::Brush)
+                .min_size(Size::new(220.0, 110.0)),
+            body(
+                "Palette",
+                "Floating. Resize from the corner; it stops at its minimum size.",
+            ),
         );
-    vec![example(
-        "Tabs, splits, and tab options",
-        SizedBox::new().width(720.0).height(340.0).child(workspace),
-    )]
+    vec![
+        example(
+            "Tabs, splits, a floating group, and tab options",
+            SizedBox::new().width(720.0).height(340.0).child(workspace),
+        ),
+        example(
+            "Panels added, closed, and restored at runtime",
+            dock_runtime_panels(theme),
+        ),
+    ]
+}
+
+fn dock_body(theme: DefaultTheme, title: &str, detail: &str) -> Surface {
+    let ctx = StoryCtx::new(theme);
+    Surface::window(
+        Stack::vertical()
+            .gap(6.0)
+            .alignment(Alignment::Stretch)
+            .with_child(ctx.text(title))
+            .with_child(ctx.muted(detail)),
+    )
+    .padding(Insets::all(14.0))
+    .fill()
+    .theme(theme)
+}
+
+/// A workspace whose document tabs are created by its panel builder and
+/// dropped on close, beside a console that close only hides.
+fn dock_runtime_panels(theme: DefaultTheme) -> impl Widget + 'static {
+    const CONSOLE: DockPanelId = DockPanelId::new(1);
+    const FIRST_DOCUMENT: u64 = 100;
+
+    let document_options = |number: u64| {
+        DockPanelOptions::new(format!("untitled-{number}"))
+            .icon(IconGlyph::FileText)
+            .closable(true)
+    };
+    let first = DockPanelId::new(FIRST_DOCUMENT);
+    let state = DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::split(
+        Axis::Horizontal,
+        0.64,
+        DockNode::tabs([first], first),
+        DockNode::tabs([CONSOLE], CONSOLE),
+    )))
+    .expect("the story layout is valid");
+    let workspace = DockWorkspace::new(state.clone())
+        .name("Story runtime dock workspace")
+        .theme(theme)
+        .with_panel(
+            first,
+            document_options(1),
+            dock_body(theme, "untitled-1", "Closing a document removes it."),
+        )
+        .with_panel(
+            CONSOLE,
+            DockPanelOptions::new("Console").closable(true),
+            dock_body(theme, "Console", "Closing the console only hides it."),
+        )
+        .panel_builder(move |panel| {
+            let number = panel.get() - FIRST_DOCUMENT + 1;
+            Box::new(dock_body(
+                theme,
+                &format!("untitled-{number}"),
+                "Built by the workspace's panel builder.",
+            ))
+        })
+        .on_close_request(|panel| {
+            if panel == CONSOLE {
+                DockCloseAction::Hide
+            } else {
+                DockCloseAction::Remove
+            }
+        });
+
+    let new_document = {
+        let state = state.clone();
+        let mut next = FIRST_DOCUMENT + 1;
+        Button::new("New document")
+            .icon(IconGlyph::Add)
+            .theme(theme)
+            .on_press(move || {
+                // The center of the root joins the first tab group, which is
+                // the document group while any document is open.
+                let added = state.add_panel(
+                    DockPanelId::new(next),
+                    document_options(next - FIRST_DOCUMENT + 1),
+                    DockPlacement::Root(DockZone::Center),
+                );
+                if added.is_ok() {
+                    next += 1;
+                }
+            })
+    };
+    let show_console = Button::new("Show console")
+        .appearance(ButtonAppearance::Outline)
+        .theme(theme)
+        .on_press(move || {
+            let _ = state.show(CONSOLE);
+        });
+
+    Stack::vertical()
+        .gap(10.0)
+        .alignment(Alignment::Start)
+        .with_child(
+            Stack::horizontal()
+                .gap(8.0)
+                .with_child(new_document)
+                .with_child(show_console),
+        )
+        .with_child(SizedBox::new().width(720.0).height(260.0).child(workspace))
 }
 
 /// Outlines a layout sample so panes that share the stage color stay visible.

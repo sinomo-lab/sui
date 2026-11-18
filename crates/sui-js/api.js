@@ -336,7 +336,7 @@ export function createFactories(native, { action, guard }) {
       return native.FloatingWorkspace(state, views, options.name);
     },
     dockWorkspace(state, panels, options = {}) {
-      return native.DockWorkspace(state, panels, options.name);
+      return native.DockWorkspace(state, panels, options.name, guard(options.panelBuilder), guard(options.onCloseRequest));
     },
     floatingStack(windows, options = {}) {
       return native.FloatingStack(windows, options.name);
@@ -374,7 +374,9 @@ export const EXPORTS = [
   "DockFloatingGroup",
   "DockLayout",
   "DockNode",
+  "DockPanelOptions",
   "DockPanelSpec",
+  "DockPlacement",
   "DockState",
   "DragScope",
   "Event",

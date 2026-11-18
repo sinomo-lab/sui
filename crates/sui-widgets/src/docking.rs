@@ -142,6 +142,9 @@ impl DockNode {
 }
 
 /// A tab group floating above the docked graph inside the same SUI window.
+///
+/// `bounds` is relative to the workspace's top-left corner, so a saved
+/// layout holds wherever the workspace is placed or scrolled.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DockFloatingGroup {
     pub id: u64,
@@ -240,7 +243,8 @@ pub struct DockPanelOptions {
     /// Marks the tab as holding unsaved changes.
     pub dirty: bool,
     /// Smallest content size the panel remains usable at. Splits keep every
-    /// docked group at least this large while the workspace has room.
+    /// docked group, and the workspace keeps every floating group, at least
+    /// this large while the workspace has room.
     pub min_size: Size,
 }
 
@@ -1605,6 +1609,18 @@ impl DockWorkspace {
         )
     }
 
+    /// The minimum bounds of the floating group `group_id`, from the panels
+    /// it currently holds.
+    fn floating_group_min_size(&self, group_id: u64) -> Size {
+        let snapshot = self.state.snapshot();
+        let members = snapshot
+            .floating
+            .iter()
+            .find(|group| group.id == group_id)
+            .map_or(&[][..], |group| group.panels.as_slice());
+        floating_min_size(members, self.header_height(), &self.options_map())
+    }
+
     fn close_rect(&self, panel: DockPanelId) -> Option<Rect> {
         self.layout
             .groups
@@ -1957,9 +1973,11 @@ impl DockWorkspace {
             } => {
                 let delta = position - *pointer_origin;
                 let proposed = initial_bounds.translate(delta);
-                let _ = self
-                    .state
-                    .set_floating_bounds(*group_id, clamp_floating_bounds(host_bounds, proposed));
+                let minimum = self.floating_group_min_size(*group_id);
+                let _ = self.state.set_floating_bounds(
+                    *group_id,
+                    floating_bounds_from_host(host_bounds, proposed, minimum),
+                );
             }
             DockWorkspaceGesture::FloatingResize {
                 group_id,
@@ -1974,9 +1992,11 @@ impl DockWorkspace {
                     initial_bounds.width() + delta.x,
                     initial_bounds.height() + delta.y,
                 );
-                let _ = self
-                    .state
-                    .set_floating_bounds(*group_id, clamp_floating_bounds(host_bounds, proposed));
+                let minimum = self.floating_group_min_size(*group_id);
+                let _ = self.state.set_floating_bounds(
+                    *group_id,
+                    floating_bounds_from_host(host_bounds, proposed, minimum),
+                );
             }
         }
         ctx.request_measure();
@@ -2026,7 +2046,7 @@ impl DockWorkspace {
                     }
                 }
             } else {
-                let bounds = clamp_floating_bounds(
+                let bounds = floating_bounds_from_host(
                     ctx.bounds(),
                     Rect::new(
                         position.x - floating_size.width * 0.5,
@@ -2034,6 +2054,7 @@ impl DockWorkspace {
                         floating_size.width,
                         floating_size.height,
                     ),
+                    floating_min_size(&[panel], self.header_height(), &self.options_map()),
                 );
                 let _ = self.state.float_panel(panel, bounds);
             }
@@ -2664,7 +2685,11 @@ fn build_workspace_layout(
     );
 
     for floating in &snapshot.floating {
-        let resolved = clamp_floating_bounds(bounds, floating.bounds);
+        let resolved = floating_bounds_in_host(
+            bounds,
+            floating.bounds,
+            floating_min_size(&floating.panels, header_height, panels),
+        );
         layout.groups.push(make_group_layout(
             DockGroupLocation::Floating(floating.id),
             resolved,
@@ -2800,6 +2825,35 @@ fn make_group_layout(
     }
 }
 
+/// The largest minimum content extent along `axis` among a tab group's
+/// panels, any of which may become the active one.
+fn members_min_content_extent(
+    members: &[DockPanelId],
+    axis: Axis,
+    panels: &HashMap<DockPanelId, DockPanelOptions>,
+) -> f32 {
+    members
+        .iter()
+        .filter_map(|panel| panels.get(panel))
+        .map(|options| axis_extent(axis, options.min_size))
+        .filter(|extent| extent.is_finite())
+        .fold(0.0, f32::max)
+}
+
+/// The smallest bounds a floating group needs so that every panel in it
+/// keeps its minimum content size below the tab header.
+fn floating_min_size(
+    members: &[DockPanelId],
+    header_height: f32,
+    panels: &HashMap<DockPanelId, DockPanelOptions>,
+) -> Size {
+    Size::new(
+        members_min_content_extent(members, Axis::Horizontal, panels).max(MIN_FLOATING_WIDTH),
+        (members_min_content_extent(members, Axis::Vertical, panels) + header_height)
+            .max(MIN_FLOATING_HEIGHT),
+    )
+}
+
 /// The smallest extent a dock node needs along `axis` so that every panel
 /// in it keeps its minimum content size.
 fn node_min_extent(
@@ -2814,12 +2868,7 @@ fn node_min_extent(
         DockNode::Tabs {
             panels: members, ..
         } => {
-            let content = members
-                .iter()
-                .filter_map(|panel| panels.get(panel))
-                .map(|options| axis_extent(axis, options.min_size))
-                .filter(|extent| extent.is_finite())
-                .fold(0.0, f32::max);
+            let content = members_min_content_extent(members, axis, panels);
             let chrome = match axis {
                 Axis::Horizontal => 0.0,
                 Axis::Vertical => header_height,
@@ -3006,16 +3055,18 @@ fn floating_resize_rect(bounds: Rect) -> Rect {
     )
 }
 
-fn clamp_floating_bounds(host: Rect, proposed: Rect) -> Rect {
+/// Fits a floating group inside `host` at no less than `minimum`, which gives
+/// way only when the host itself is smaller.
+fn clamp_floating_bounds(host: Rect, proposed: Rect, minimum: Size) -> Rect {
     let host_width = host.width().max(0.0);
     let host_height = host.height().max(0.0);
     let width = proposed
         .width()
-        .max(MIN_FLOATING_WIDTH.min(host_width))
+        .max(minimum.width.min(host_width))
         .min(host_width);
     let height = proposed
         .height()
-        .max(MIN_FLOATING_HEIGHT.min(host_height))
+        .max(minimum.height.min(host_height))
         .min(host_height);
     let min_x = host.x();
     let min_y = host.y();
@@ -3027,6 +3078,19 @@ fn clamp_floating_bounds(host: Rect, proposed: Rect) -> Rect {
         width,
         height,
     )
+}
+
+/// Where a floating group with workspace-relative `bounds` is laid out in a
+/// workspace arranged at `host`.
+fn floating_bounds_in_host(host: Rect, bounds: Rect, minimum: Size) -> Rect {
+    let local_host = Rect::from_origin_size(Point::ZERO, host.size);
+    clamp_floating_bounds(local_host, bounds, minimum).translate(host.origin - Point::ZERO)
+}
+
+/// The workspace-relative bounds to persist for a floating group that a
+/// gesture placed at `proposed`, in the coordinates `host` is arranged in.
+fn floating_bounds_from_host(host: Rect, proposed: Rect, minimum: Size) -> Rect {
+    clamp_floating_bounds(host, proposed, minimum).translate(Point::ZERO - host.origin)
 }
 
 fn group_members(
@@ -3990,8 +4054,133 @@ mod tests {
     #[test]
     fn floating_layout_collapses_minimum_size_to_a_tiny_host() {
         let host = Rect::new(10.0, 20.0, 100.0, 80.0);
-        let resolved = clamp_floating_bounds(host, Rect::new(-400.0, 500.0, 320.0, 260.0));
+        let resolved = clamp_floating_bounds(
+            host,
+            Rect::new(-400.0, 500.0, 320.0, 260.0),
+            Size::new(MIN_FLOATING_WIDTH, MIN_FLOATING_HEIGHT),
+        );
         assert_eq!(resolved, host);
+    }
+
+    #[test]
+    fn floating_groups_keep_panels_at_their_minimum_size() {
+        let snapshot = DockWorkspaceSnapshot::new(DockNode::tabs([SCENE], SCENE)).with_floating(
+            DockFloatingGroup::new(
+                1,
+                [VIEWPORT, DETAILS],
+                VIEWPORT,
+                Rect::new(40.0, 40.0, 200.0, 140.0),
+            ),
+        );
+        let mut panels = HashMap::new();
+        panels.insert(
+            VIEWPORT,
+            DockPanelOptions::new("Viewport").min_size(Size::new(360.0, 0.0)),
+        );
+        panels.insert(
+            DETAILS,
+            DockPanelOptions::new("Details").min_size(Size::new(0.0, 300.0)),
+        );
+        let floating = |host: Rect| {
+            build_workspace_layout(&snapshot, host, 28.0, 4.0, &panels)
+                .groups
+                .into_iter()
+                .find(DockGroupLayout::is_floating)
+                .expect("floating group is laid out")
+        };
+
+        // The group fits its widest and its tallest tab, not only the active
+        // one, so switching tabs never leaves a panel below its minimum.
+        let group = floating(Rect::new(0.0, 0.0, 1_000.0, 800.0));
+        assert_eq!(group.bounds, Rect::new(40.0, 40.0, 360.0, 328.0));
+        assert_eq!(group.content.size, Size::new(360.0, 300.0));
+
+        // A host smaller than the minimum still wins.
+        let group = floating(Rect::new(0.0, 0.0, 300.0, 200.0));
+        assert_eq!(group.bounds, Rect::new(0.0, 0.0, 300.0, 200.0));
+    }
+
+    #[test]
+    fn floating_bounds_are_relative_to_the_workspace() {
+        let state = DockWorkspaceState::new(
+            DockWorkspaceSnapshot::new(DockNode::tabs([SCENE], SCENE)).with_floating(
+                DockFloatingGroup::new(
+                    1,
+                    [VIEWPORT],
+                    VIEWPORT,
+                    Rect::new(40.0, 40.0, 300.0, 200.0),
+                ),
+            ),
+        )
+        .expect("valid floating layout");
+        let workspace = DockWorkspace::new(state.clone())
+            .with_panel(SCENE, "Scene", panel("Scene"))
+            .with_panel(VIEWPORT, "Viewport", panel("Viewport"));
+        let (mut runtime, window_id) = build_runtime(crate::Padding::all(100.0, workspace));
+        resize(&mut runtime, window_id, 900.0, 700.0);
+        let frame = runtime.render(window_id).expect("initial frame");
+        let tabs = named(&frame.semantics, "Floating panel tabs").expect("floating tab bar");
+        assert_eq!(tabs.bounds.origin, Point::new(140.0, 140.0));
+
+        // Drag the header's grip, right of the tab, by (10, 20).
+        let grip = Point::new(430.0, 150.0);
+        let dropped = Point::new(440.0, 170.0);
+        for (kind, position, pressed) in [
+            (PointerEventKind::Down, grip, true),
+            (PointerEventKind::Move, dropped, true),
+            (PointerEventKind::Up, dropped, false),
+        ] {
+            runtime
+                .handle_event(window_id, primary_pointer(kind, position, pressed))
+                .expect("move gesture");
+        }
+        assert_eq!(
+            state.snapshot().floating[0].bounds,
+            Rect::new(50.0, 60.0, 300.0, 200.0)
+        );
+    }
+
+    #[test]
+    fn floating_resize_drag_stops_at_the_panel_minimum_size() {
+        let state = DockWorkspaceState::new(
+            DockWorkspaceSnapshot::new(DockNode::tabs([SCENE], SCENE)).with_floating(
+                DockFloatingGroup::new(
+                    1,
+                    [VIEWPORT],
+                    VIEWPORT,
+                    Rect::new(100.0, 100.0, 400.0, 400.0),
+                ),
+            ),
+        )
+        .expect("valid floating layout");
+        let root = DockWorkspace::new(state.clone())
+            .with_panel(SCENE, "Scene", panel("Scene"))
+            .with_panel(
+                VIEWPORT,
+                DockPanelOptions::new("Viewport").min_size(Size::new(300.0, 200.0)),
+                panel("Viewport"),
+            );
+        let header_height = root.header_height();
+        let (mut runtime, window_id) = build_runtime(root);
+        resize(&mut runtime, window_id, 800.0, 600.0);
+        runtime.render(window_id).expect("initial frame");
+
+        let handle = Point::new(495.0, 495.0);
+        let inward = Point::new(150.0, 150.0);
+        for (kind, position, pressed) in [
+            (PointerEventKind::Down, handle, true),
+            (PointerEventKind::Move, inward, true),
+            (PointerEventKind::Up, inward, false),
+        ] {
+            runtime
+                .handle_event(window_id, primary_pointer(kind, position, pressed))
+                .expect("resize gesture");
+        }
+
+        assert_eq!(
+            state.snapshot().floating[0].bounds,
+            Rect::new(100.0, 100.0, 300.0, 200.0 + header_height)
+        );
     }
 
     #[test]

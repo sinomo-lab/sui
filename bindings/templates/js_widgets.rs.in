@@ -869,6 +869,122 @@ impl JsDockLayout {
     pub fn hidden(&self) -> Vec<String> {
         self.inner.hidden.iter().map(u64::to_string).collect()
     }
+
+    #[napi(js_name = "retainPanels")]
+    pub fn retain_panels(&self, panel_ids: Vec<String>) -> Result<JsDockLayout> {
+        let panel_ids = panel_ids
+            .iter()
+            .map(|id| parse_u64_string(id, "dock panel id"))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(JsDockLayout {
+            inner: self.inner.retain_panels(panel_ids),
+        })
+    }
+}
+
+#[napi(js_name = "DockPanelOptions")]
+#[derive(Debug, Clone)]
+pub struct JsDockPanelOptions {
+    inner: BindingDockPanelOptions,
+}
+
+#[napi]
+impl JsDockPanelOptions {
+    #[napi(constructor)]
+    pub fn new(
+        title: String,
+        icon: Option<String>,
+        closable: Option<bool>,
+        dirty: Option<bool>,
+        min_size: Option<&JsSize>,
+    ) -> Result<Self> {
+        dock_panel_options_from_js(title, icon, closable, dirty, min_size)
+            .map(|inner| Self { inner })
+    }
+
+    #[napi(getter)]
+    pub fn title(&self) -> String {
+        self.inner.title().to_owned()
+    }
+
+    #[napi(getter)]
+    pub fn icon(&self) -> Option<String> {
+        self.inner
+            .icon()
+            .map(|icon| binding_icon_glyph_name(icon).to_owned())
+    }
+
+    #[napi(getter)]
+    pub fn closable(&self) -> bool {
+        self.inner.closable()
+    }
+
+    #[napi(getter)]
+    pub fn dirty(&self) -> bool {
+        self.inner.dirty()
+    }
+
+    #[napi(getter, js_name = "minSize")]
+    pub fn min_size(&self) -> JsSize {
+        self.inner.min_size().into()
+    }
+}
+
+fn dock_panel_options_from_js(
+    title: String,
+    icon: Option<String>,
+    closable: Option<bool>,
+    dirty: Option<bool>,
+    min_size: Option<&JsSize>,
+) -> Result<BindingDockPanelOptions> {
+    BindingDockPanelOptions::new(
+        title,
+        icon.as_deref().map(icon_glyph_from_js).transpose()?,
+        closable.unwrap_or(false),
+        dirty.unwrap_or(false),
+        min_size.map(|size| (*size).into()),
+    )
+    .map_err(napi_invalid_arg)
+}
+
+#[napi(js_name = "DockPlacement")]
+#[derive(Debug, Clone)]
+pub struct JsDockPlacement {
+    inner: BindingDockPlacement,
+}
+
+#[napi]
+impl JsDockPlacement {
+    #[napi(factory)]
+    pub fn root(zone: Option<String>) -> Result<Self> {
+        BindingDockPlacement::root(zone.as_deref().unwrap_or("center"))
+            .map(|inner| Self { inner })
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(factory)]
+    pub fn beside(target: String, zone: Option<String>) -> Result<Self> {
+        BindingDockPlacement::beside(
+            parse_u64_string(&target, "dock target panel id")?,
+            zone.as_deref().unwrap_or("center"),
+        )
+        .map(|inner| Self { inner })
+        .map_err(napi_invalid_arg)
+    }
+
+    #[napi(factory)]
+    pub fn floating(bounds: &JsRect) -> Self {
+        Self {
+            inner: BindingDockPlacement::floating((*bounds).into()),
+        }
+    }
+
+    #[napi(factory)]
+    pub fn hidden() -> Self {
+        Self {
+            inner: BindingDockPlacement::hidden(),
+        }
+    }
 }
 
 #[napi(js_name = "DockState")]
@@ -964,6 +1080,57 @@ impl JsDockState {
             .activate(parse_u64_string(&panel, "dock panel id")?)
             .map_err(napi_invalid_arg)
     }
+
+    #[napi(js_name = "dockTab")]
+    pub fn dock_tab(&self, panel: String, anchor: String, after: Option<bool>) -> Result<bool> {
+        self.inner
+            .dock_tab(
+                parse_u64_string(&panel, "dock panel id")?,
+                parse_u64_string(&anchor, "dock anchor panel id")?,
+                after.unwrap_or(true),
+            )
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(js_name = "addPanel")]
+    pub fn add_panel(
+        &self,
+        panel: String,
+        options: &JsDockPanelOptions,
+        placement: Option<&JsDockPlacement>,
+    ) -> Result<()> {
+        self.inner
+            .add_panel(
+                parse_u64_string(&panel, "dock panel id")?,
+                options.inner.clone(),
+                placement.map(|placement| placement.inner).unwrap_or_default(),
+            )
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(js_name = "removePanel")]
+    pub fn remove_panel(&self, panel: String) -> Result<bool> {
+        self.inner
+            .remove_panel(parse_u64_string(&panel, "dock panel id")?)
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(js_name = "updatePanel")]
+    pub fn update_panel(&self, panel: String, options: &JsDockPanelOptions) -> Result<()> {
+        self.inner
+            .update_panel(
+                parse_u64_string(&panel, "dock panel id")?,
+                options.inner.clone(),
+            )
+            .map_err(napi_invalid_arg)
+    }
+
+    #[napi(js_name = "isRegistered")]
+    pub fn is_registered(&self, panel: String) -> Result<bool> {
+        Ok(self
+            .inner
+            .is_registered(parse_u64_string(&panel, "dock panel id")?))
+    }
 }
 
 #[napi(js_name = "DockPanelSpec")]
@@ -975,10 +1142,18 @@ pub struct JsDockPanelSpec {
 #[napi]
 impl JsDockPanelSpec {
     #[napi(constructor)]
-    pub fn new(id: String, title: String, child: ClassInstance<'_, JsWidget>) -> Result<Self> {
+    pub fn new(
+        id: String,
+        title: String,
+        child: ClassInstance<'_, JsWidget>,
+        icon: Option<String>,
+        closable: Option<bool>,
+        dirty: Option<bool>,
+        min_size: Option<&JsSize>,
+    ) -> Result<Self> {
         BindingDockPanel::new(
             parse_u64_string(&id, "dock panel id")?,
-            title,
+            dock_panel_options_from_js(title, icon, closable, dirty, min_size)?,
             child.binding_widget()?,
         )
         .map(|inner| Self { inner })
@@ -992,7 +1167,14 @@ impl JsDockPanelSpec {
 
     #[napi(getter)]
     pub fn title(&self) -> String {
-        self.inner.title.clone()
+        self.inner.options.title().to_owned()
+    }
+
+    #[napi(getter)]
+    pub fn options(&self) -> JsDockPanelOptions {
+        JsDockPanelOptions {
+            inner: self.inner.options.clone(),
+        }
     }
 }
 
@@ -4901,14 +5083,48 @@ pub fn js_floating_workspace(
 
 #[napi(js_name = "DockWorkspace")]
 pub fn js_dock_workspace(
+    env: Env,
     state: &JsDockState,
     panels: Array<'_>,
     name: Option<String>,
+    // The stored reference cannot borrow the call's environment, so the
+    // result's class instance is not tied to it.
+    panel_builder: Option<Function<'_, FnArgs<(String,)>, ClassInstance<'static, JsWidget>>>,
+    on_close_request: Option<Function<'_, FnArgs<(String,)>, Option<String>>>,
 ) -> Result<JsWidget> {
+    let panel_builder = panel_builder
+        .map(|build| {
+            let env = JsEnvHandle::from_env(env);
+            let build = build.create_ref()?;
+            Ok::<_, Error>(BindingDockPanelBuilder::new(move |panel| {
+                let env = env.to_env();
+                build
+                    .borrow_back(&env)
+                    .and_then(|build| build.call(FnArgs::from((panel.to_string(),))))
+                    .and_then(|widget| widget.binding_widget())
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
+    let on_close_request = on_close_request
+        .map(|handler| {
+            let env = JsEnvHandle::from_env(env);
+            let handler = handler.create_ref()?;
+            Ok::<_, Error>(BindingDockCloseHandler::new(move |panel| {
+                let env = env.to_env();
+                handler
+                    .borrow_back(&env)
+                    .and_then(|handler| handler.call(FnArgs::from((panel.to_string(),))))
+                    .map_err(|error| ForeignCallbackFailure::new(error.to_string()))
+            }))
+        })
+        .transpose()?;
     BindingWidget::dock_workspace(
         state.inner.clone(),
         extract_dock_panels(&panels)?,
         name.unwrap_or_else(|| "Dock workspace".to_owned()),
+        panel_builder,
+        on_close_request,
     )
     .map(JsWidget::from_binding)
     .map_err(napi_invalid_arg)

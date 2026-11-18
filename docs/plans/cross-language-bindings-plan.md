@@ -82,8 +82,8 @@ here so documentation coverage remains auditable:
   `VirtualTableRow`, `TableModel`, `CanvasViewport`, `CanvasStroke`,
   `CanvasShape`, `PixelCanvasState`, `PixelCanvasExport`, `DragScope`,
   `FloatingView`, `FloatingViewSnapshot`, and `FloatingWorkspaceState`, plus the
-  `DockNode`, `DockFloatingGroup`, `DockLayout`, `DockState`, and
-  `DockPanelSpec` docking model.
+  `DockNode`, `DockFloatingGroup`, `DockLayout`, `DockState`,
+  `DockPanelSpec`, `DockPanelOptions`, and `DockPlacement` docking model.
 - Basic controls: `Label`, `Button`, `Icon`, `IconButton`, `Link`, `Checkbox`,
   `Switch`, `RadioButton`, `RadioGroup`, `SegmentedControl`, `Slider`,
   `NumberInput`, `Select`, `ProgressBar`, `BusyIndicator`, `TextInput`,

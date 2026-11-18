@@ -471,7 +471,12 @@ Register a panel with a title, or with `DockPanelOptions` to give its tab an
 icon, a close button, an unsaved-changes marker, or a minimum content size.
 Splits keep every docked group at least as large as its panels' minimum sizes
 while the workspace has room, and shrink the minimums in proportion when it
-does not.
+does not. A floating group is likewise kept at least as large as the largest
+minimum among its tabs, when it is laid out and while it is resized, unless
+the workspace itself is smaller.
+
+A floating group's bounds are relative to the workspace's top-left corner, so
+a saved layout holds wherever the workspace sits in its window.
 
 ```rust
 let workspace = DockWorkspace::new(state.clone())

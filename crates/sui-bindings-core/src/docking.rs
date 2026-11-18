@@ -1,15 +1,21 @@
 use crate::application::normalized_option_name;
+use crate::errors::ForeignCallbackResult;
 use crate::widget_descriptor::BindingWidget;
 use std::fmt;
+use std::sync::Arc;
 use sui::Axis;
+use sui::DockCloseAction;
 use sui::DockFloatingGroup;
 use sui::DockNode;
 use sui::DockPanelId;
+use sui::DockPanelOptions;
+use sui::DockPlacement;
 use sui::DockWorkspaceSnapshot;
 use sui::DockWorkspaceState;
 use sui::DockZone;
 use sui::FloatingViewSnapshot;
 use sui::FloatingWorkspaceState;
+use sui::IconGlyph;
 use sui::Rect;
 use sui::Size;
 
@@ -142,6 +148,17 @@ impl BindingDockLayout {
         }
     }
 
+    /// A copy of this layout without the panels missing from `panel_ids`,
+    /// with the groups and splits left empty collapsed.
+    pub fn retain_panels(&self, panel_ids: impl IntoIterator<Item = u64>) -> Self {
+        let keep = panel_ids
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        let mut snapshot = self.clone().into_sui();
+        snapshot.retain_panels(|panel| keep.contains(&panel.get()));
+        Self::from_sui(snapshot)
+    }
+
     pub(crate) fn from_sui(value: DockWorkspaceSnapshot) -> Self {
         Self {
             root: BindingDockNode::from_sui(value.root),
@@ -222,6 +239,236 @@ impl BindingDockState {
             .activate(DockPanelId::new(panel))
             .map_err(|error| error.to_string())
     }
+
+    /// Moves `panel` beside `anchor`'s tab, in the anchor's tab group.
+    pub fn dock_tab(&self, panel: u64, anchor: u64, after: bool) -> Result<bool, String> {
+        self.inner
+            .dock_tab(DockPanelId::new(panel), DockPanelId::new(anchor), after)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Registers a panel on a mounted workspace, whose panel builder then
+    /// creates the panel's widget.
+    pub fn add_panel(
+        &self,
+        panel: u64,
+        options: impl Into<BindingDockPanelOptions>,
+        placement: BindingDockPlacement,
+    ) -> Result<(), String> {
+        self.inner
+            .add_panel(
+                DockPanelId::new(panel),
+                options.into().inner,
+                placement.inner,
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn remove_panel(&self, panel: u64) -> Result<bool, String> {
+        self.inner
+            .remove_panel(DockPanelId::new(panel))
+            .map_err(|error| error.to_string())
+    }
+
+    /// Replaces a registered panel's tab options.
+    pub fn update_panel(&self, panel: u64, options: BindingDockPanelOptions) -> Result<(), String> {
+        self.inner
+            .update_panel(DockPanelId::new(panel), move |current| {
+                *current = options.inner;
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn is_registered(&self, panel: u64) -> bool {
+        self.inner.is_registered(DockPanelId::new(panel))
+    }
+}
+
+/// A dock panel's tab title, icon, close button, unsaved-changes marker, and
+/// minimum content size.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindingDockPanelOptions {
+    pub(crate) inner: DockPanelOptions,
+}
+
+impl BindingDockPanelOptions {
+    pub fn new(
+        title: impl Into<String>,
+        icon: Option<IconGlyph>,
+        closable: bool,
+        dirty: bool,
+        min_size: Option<Size>,
+    ) -> Result<Self, String> {
+        let min_size = min_size.unwrap_or(Size::ZERO);
+        if !min_size.width.is_finite()
+            || !min_size.height.is_finite()
+            || min_size.width < 0.0
+            || min_size.height < 0.0
+        {
+            return Err("dock panel minimum size must be finite and non-negative".to_string());
+        }
+        let mut inner = DockPanelOptions::new(title)
+            .closable(closable)
+            .dirty(dirty)
+            .min_size(min_size);
+        inner.icon = icon;
+        Ok(Self { inner })
+    }
+
+    pub fn title(&self) -> &str {
+        &self.inner.title
+    }
+
+    pub fn icon(&self) -> Option<IconGlyph> {
+        self.inner.icon
+    }
+
+    pub fn closable(&self) -> bool {
+        self.inner.closable
+    }
+
+    pub fn dirty(&self) -> bool {
+        self.inner.dirty
+    }
+
+    pub fn min_size(&self) -> Size {
+        self.inner.min_size
+    }
+}
+
+impl From<&str> for BindingDockPanelOptions {
+    fn from(title: &str) -> Self {
+        Self {
+            inner: DockPanelOptions::new(title),
+        }
+    }
+}
+
+impl From<String> for BindingDockPanelOptions {
+    fn from(title: String) -> Self {
+        Self {
+            inner: DockPanelOptions::new(title),
+        }
+    }
+}
+
+/// Where a panel added to a mounted workspace first appears.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BindingDockPlacement {
+    pub(crate) inner: DockPlacement,
+}
+
+impl BindingDockPlacement {
+    pub fn root(zone: &str) -> Result<Self, String> {
+        Ok(Self {
+            inner: DockPlacement::Root(binding_dock_zone_from_name(zone)?),
+        })
+    }
+
+    pub fn beside(target: u64, zone: &str) -> Result<Self, String> {
+        if target == 0 {
+            return Err("dock target panel id must be non-zero".to_string());
+        }
+        Ok(Self {
+            inner: DockPlacement::Beside {
+                target: DockPanelId::new(target),
+                zone: binding_dock_zone_from_name(zone)?,
+            },
+        })
+    }
+
+    pub fn floating(bounds: Rect) -> Self {
+        Self {
+            inner: DockPlacement::Floating(bounds),
+        }
+    }
+
+    pub fn hidden() -> Self {
+        Self {
+            inner: DockPlacement::Hidden,
+        }
+    }
+}
+
+impl Default for BindingDockPlacement {
+    fn default() -> Self {
+        Self {
+            inner: DockPlacement::Root(DockZone::Center),
+        }
+    }
+}
+
+/// Creates the widget of a panel added through
+/// [`BindingDockState::add_panel`], from a foreign callback on the UI thread.
+#[derive(Clone)]
+pub struct BindingDockPanelBuilder {
+    callback: Arc<dyn Fn(u64) -> ForeignCallbackResult<BindingWidget> + Send + Sync + 'static>,
+}
+
+impl BindingDockPanelBuilder {
+    pub fn new(
+        callback: impl Fn(u64) -> ForeignCallbackResult<BindingWidget> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub(crate) fn build(&self, panel: u64) -> ForeignCallbackResult<BindingWidget> {
+        (self.callback)(panel)
+    }
+}
+
+impl fmt::Debug for BindingDockPanelBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingDockPanelBuilder")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Decides what a press on a tab's close button does, from a foreign
+/// callback on the UI thread.
+///
+/// The callback returns `"hide"`, `"remove"`, or `"keep"`; `None` hides the
+/// panel, as a workspace without a handler does.
+#[derive(Clone)]
+pub struct BindingDockCloseHandler {
+    callback: Arc<dyn Fn(u64) -> ForeignCallbackResult<Option<String>> + Send + Sync + 'static>,
+}
+
+impl BindingDockCloseHandler {
+    pub fn new(
+        callback: impl Fn(u64) -> ForeignCallbackResult<Option<String>> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            callback: Arc::new(callback),
+        }
+    }
+
+    pub(crate) fn close_action(&self, panel: u64) -> ForeignCallbackResult<DockCloseAction> {
+        match (self.callback)(panel)? {
+            None => Ok(DockCloseAction::Hide),
+            Some(action) => binding_dock_close_action_from_name(&action).map_err(Into::into),
+        }
+    }
+}
+
+impl fmt::Debug for BindingDockCloseHandler {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingDockCloseHandler")
+            .finish_non_exhaustive()
+    }
+}
+
+fn binding_dock_close_action_from_name(value: &str) -> Result<DockCloseAction, String> {
+    match normalized_option_name(value).as_str() {
+        "hide" => Ok(DockCloseAction::Hide),
+        "remove" => Ok(DockCloseAction::Remove),
+        "keep" => Ok(DockCloseAction::Keep),
+        _ => Err(format!(
+            "dock close action must be 'hide', 'remove', or 'keep', got '{value}'"
+        )),
+    }
 }
 
 pub(crate) fn binding_dock_zone_from_name(value: &str) -> Result<DockZone, String> {
@@ -240,18 +487,22 @@ pub(crate) fn binding_dock_zone_from_name(value: &str) -> Result<DockZone, Strin
 #[derive(Debug, Clone)]
 pub struct BindingDockPanel {
     pub id: u64,
-    pub title: String,
+    pub options: BindingDockPanelOptions,
     pub child: BindingWidget,
 }
 
 impl BindingDockPanel {
-    pub fn new(id: u64, title: impl Into<String>, child: BindingWidget) -> Result<Self, String> {
+    pub fn new(
+        id: u64,
+        options: impl Into<BindingDockPanelOptions>,
+        child: BindingWidget,
+    ) -> Result<Self, String> {
         if id == 0 {
             return Err("dock panel id must be non-zero".to_string());
         }
         Ok(Self {
             id,
-            title: title.into(),
+            options: options.into(),
             child,
         })
     }

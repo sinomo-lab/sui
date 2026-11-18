@@ -25,6 +25,18 @@ Versioning, with the usual expectation that the API may change during the
   splitting the group along its top edge.
 - `DockWorkspaceSnapshot::retain_panels` prunes panels that no longer exist
   before a saved layout is restored.
+- Floating groups respect `DockPanelOptions::min_size` like docked splits do:
+  a group is laid out, and stops resizing, at the largest minimum among its
+  tabs.
+- `DockFloatingGroup::bounds` is now relative to the workspace instead of the
+  window. A workspace that does not start at its window's origin, or that
+  scrolls, no longer misplaces its floating groups; a layout saved from such
+  a workspace shifts by the workspace's former offset.
+- The JavaScript and Python bindings expose the runtime docking API:
+  `DockPanelOptions`, `DockPlacement`, `DockState.addPanel`, `removePanel`,
+  `updatePanel`, `dockTab`, and `isRegistered`, `DockLayout.retainPanels`,
+  tab options on `DockPanelSpec`, and the `panelBuilder` and `onCloseRequest`
+  options of `dockWorkspace` (snake case in Python).
 - The new `serde` feature of `sinomo-ui` and `sinomo-ui-widgets` implements
   `Serialize` and `Deserialize` for `DockWorkspaceSnapshot`.
 - `DockWorkspaceState` no longer derives `Debug` structurally; its `Debug`

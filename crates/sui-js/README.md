@@ -172,7 +172,16 @@ The portable media surface includes both `colorPicker(...)` and the compact,
 mode-selectable `simpleColorPicker(...)` (`hsl`, `hsv`, `rgb`, or `oklch`).
 Editor shells can use `DockState`, serializable `DockLayout`/`DockNode` values,
 stable `DockPanelSpec` descriptors, and `dockWorkspace(...)` without exposing
-Rust-local widget ownership.
+Rust-local widget ownership. A `DockPanelSpec` or `DockPanelOptions` gives a
+tab an icon, a close button, an unsaved-changes marker, and a minimum content
+size. `DockState` changes a mounted workspace: `addPanel(id, options,
+DockPlacement.beside(...))` registers a panel whose widget the workspace's
+`panelBuilder(id)` creates, `updatePanel` replaces a tab's options,
+`removePanel` drops a panel, and `dockTab` reorders tabs. `onCloseRequest(id)`
+returns `"hide"` (the default), `"remove"`, or `"keep"`; it runs
+synchronously, so return `"keep"` before asking about unsaved changes and
+call `removePanel` once the answer is in. `DockLayout.retainPanels(ids)`
+prunes a saved layout to the panels that still exist.
 Responsive composition includes idiomatic `grid(...)`, `aspectRatio(...)`,
 `safeArea(...)`, and `layoutTransition(...)` factories without exposing Rust
 track or animation implementation types.

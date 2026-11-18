@@ -5,7 +5,8 @@ use crate::actions::{
 };
 use crate::collections::{BindingNotificationCenter, BindingVirtualListModel};
 use crate::docking::{
-    BindingDockPanel, BindingDockState, BindingFloatingView, BindingFloatingWorkspaceState,
+    BindingDockCloseHandler, BindingDockPanel, BindingDockPanelBuilder, BindingDockState,
+    BindingFloatingView, BindingFloatingWorkspaceState,
 };
 use crate::documents::BindingRichDocument;
 use crate::drag::{BindingDragScope, binding_drop_effect};
@@ -1768,10 +1769,15 @@ impl BindingWidget {
         })
     }
 
+    /// `panel_builder` creates the widget of each panel added through
+    /// [`BindingDockState::add_panel`]; `on_close_request` decides what a
+    /// tab's close button does.
     pub fn dock_workspace(
         state: BindingDockState,
         panels: impl IntoIterator<Item = BindingDockPanel>,
         name: impl Into<String>,
+        panel_builder: Option<BindingDockPanelBuilder>,
+        on_close_request: Option<BindingDockCloseHandler>,
     ) -> Result<Self, String> {
         let panels = panels.into_iter().collect::<Vec<_>>();
         let mut ids = std::collections::BTreeSet::new();
@@ -1787,6 +1793,9 @@ impl BindingWidget {
             state,
             panels,
             name: name.into(),
+            panel_builder,
+            on_close_request,
+            ui_handle: Arc::new(Mutex::new(None)),
         }))
     }
 

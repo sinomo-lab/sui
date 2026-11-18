@@ -801,6 +801,114 @@ impl PyDockLayout {
     pub fn hidden(&self) -> Vec<u64> {
         self.inner.hidden.clone()
     }
+
+    pub fn retain_panels(&self, panel_ids: Vec<u64>) -> Self {
+        Self {
+            inner: self.inner.retain_panels(panel_ids),
+        }
+    }
+}
+
+#[pyclass(name = "DockPanelOptions", module = "sinomo_ui")]
+#[derive(Debug, Clone)]
+pub struct PyDockPanelOptions {
+    inner: BindingDockPanelOptions,
+}
+
+#[pymethods]
+impl PyDockPanelOptions {
+    #[new]
+    #[pyo3(signature = (title, icon=None, closable=false, dirty=false, min_size=None))]
+    pub fn new(
+        title: String,
+        icon: Option<&str>,
+        closable: bool,
+        dirty: bool,
+        min_size: Option<PySize>,
+    ) -> PyResult<Self> {
+        py_dock_panel_options(title, icon, closable, dirty, min_size).map(|inner| Self { inner })
+    }
+
+    #[getter]
+    pub fn title(&self) -> &str {
+        self.inner.title()
+    }
+
+    #[getter]
+    pub fn icon(&self) -> Option<&'static str> {
+        self.inner.icon().map(binding_icon_glyph_name)
+    }
+
+    #[getter]
+    pub fn closable(&self) -> bool {
+        self.inner.closable()
+    }
+
+    #[getter]
+    pub fn dirty(&self) -> bool {
+        self.inner.dirty()
+    }
+
+    #[getter]
+    pub fn min_size(&self) -> PySize {
+        self.inner.min_size().into()
+    }
+}
+
+fn py_dock_panel_options(
+    title: String,
+    icon: Option<&str>,
+    closable: bool,
+    dirty: bool,
+    min_size: Option<PySize>,
+) -> PyResult<BindingDockPanelOptions> {
+    BindingDockPanelOptions::new(
+        title,
+        icon.map(py_icon_glyph).transpose()?,
+        closable,
+        dirty,
+        min_size.map(Into::into),
+    )
+    .map_err(PyValueError::new_err)
+}
+
+#[pyclass(name = "DockPlacement", module = "sinomo_ui")]
+#[derive(Debug, Clone)]
+pub struct PyDockPlacement {
+    inner: BindingDockPlacement,
+}
+
+#[pymethods]
+impl PyDockPlacement {
+    #[staticmethod]
+    #[pyo3(signature = (zone="center"))]
+    pub fn root(zone: &str) -> PyResult<Self> {
+        BindingDockPlacement::root(zone)
+            .map(|inner| Self { inner })
+            .map_err(PyValueError::new_err)
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (target, zone="center"))]
+    pub fn beside(target: u64, zone: &str) -> PyResult<Self> {
+        BindingDockPlacement::beside(target, zone)
+            .map(|inner| Self { inner })
+            .map_err(PyValueError::new_err)
+    }
+
+    #[staticmethod]
+    pub fn floating(bounds: PyRect) -> Self {
+        Self {
+            inner: BindingDockPlacement::floating(bounds.into()),
+        }
+    }
+
+    #[staticmethod]
+    pub fn hidden() -> Self {
+        Self {
+            inner: BindingDockPlacement::hidden(),
+        }
+    }
 }
 
 #[pyclass(name = "DockState", module = "sinomo_ui", from_py_object)]
@@ -869,6 +977,51 @@ impl PyDockState {
     pub fn activate(&self, panel: u64) -> PyResult<bool> {
         self.inner.activate(panel).map_err(PyValueError::new_err)
     }
+
+    #[pyo3(signature = (panel, anchor, after=true))]
+    pub fn dock_tab(&self, panel: u64, anchor: u64, after: bool) -> PyResult<bool> {
+        self.inner
+            .dock_tab(panel, anchor, after)
+            .map_err(PyValueError::new_err)
+    }
+
+    #[pyo3(signature = (panel, options, placement=None))]
+    pub fn add_panel(
+        &self,
+        panel: u64,
+        options: PyRef<'_, PyDockPanelOptions>,
+        placement: Option<PyRef<'_, PyDockPlacement>>,
+    ) -> PyResult<()> {
+        self.inner
+            .add_panel(
+                panel,
+                options.inner.clone(),
+                placement
+                    .map(|placement| placement.inner)
+                    .unwrap_or_default(),
+            )
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn remove_panel(&self, panel: u64) -> PyResult<bool> {
+        self.inner
+            .remove_panel(panel)
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn update_panel(
+        &self,
+        panel: u64,
+        options: PyRef<'_, PyDockPanelOptions>,
+    ) -> PyResult<()> {
+        self.inner
+            .update_panel(panel, options.inner.clone())
+            .map_err(PyValueError::new_err)
+    }
+
+    pub fn is_registered(&self, panel: u64) -> bool {
+        self.inner.is_registered(panel)
+    }
 }
 
 #[pyclass(name = "DockPanelSpec", module = "sinomo_ui")]
@@ -880,10 +1033,24 @@ pub struct PyDockPanelSpec {
 #[pymethods]
 impl PyDockPanelSpec {
     #[new]
-    pub fn new(id: u64, title: String, child: PyRef<'_, PyWidget>) -> PyResult<Self> {
-        BindingDockPanel::new(id, title, child.binding_widget()?)
-            .map(|inner| Self { inner })
-            .map_err(PyValueError::new_err)
+    #[pyo3(signature = (id, title, child, icon=None, closable=false, dirty=false, min_size=None))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: u64,
+        title: String,
+        child: PyRef<'_, PyWidget>,
+        icon: Option<&str>,
+        closable: bool,
+        dirty: bool,
+        min_size: Option<PySize>,
+    ) -> PyResult<Self> {
+        BindingDockPanel::new(
+            id,
+            py_dock_panel_options(title, icon, closable, dirty, min_size)?,
+            child.binding_widget()?,
+        )
+        .map(|inner| Self { inner })
+        .map_err(PyValueError::new_err)
     }
 
     #[getter]
@@ -893,7 +1060,14 @@ impl PyDockPanelSpec {
 
     #[getter]
     pub fn title(&self) -> &str {
-        &self.inner.title
+        self.inner.options.title()
+    }
+
+    #[getter]
+    pub fn options(&self) -> PyDockPanelOptions {
+        PyDockPanelOptions {
+            inner: self.inner.options.clone(),
+        }
     }
 }
 
@@ -2921,16 +3095,45 @@ pub fn py_floating_workspace(
 }
 
 #[pyfunction(name = "dock_workspace")]
-#[pyo3(signature = (state, panels, name="Dock workspace"))]
+#[pyo3(signature = (state, panels, name="Dock workspace", panel_builder=None, on_close_request=None))]
 pub fn py_dock_workspace(
     state: PyRef<'_, PyDockState>,
     panels: &Bound<'_, PyAny>,
     name: &str,
+    panel_builder: Option<Py<PyAny>>,
+    on_close_request: Option<Py<PyAny>>,
 ) -> PyResult<PyWidget> {
+    let panel_builder = panel_builder.map(|build| {
+        BindingDockPanelBuilder::new(move |panel| {
+            Python::attach(|py| {
+                build
+                    .call1(py, (panel,))
+                    .and_then(|widget| {
+                        widget
+                            .bind(py)
+                            .extract::<PyRef<'_, PyWidget>>()?
+                            .binding_widget()
+                    })
+                    .map_err(|error| foreign_py_error(py, error))
+            })
+        })
+    });
+    let on_close_request = on_close_request.map(|handler| {
+        BindingDockCloseHandler::new(move |panel| {
+            Python::attach(|py| {
+                handler
+                    .call1(py, (panel,))
+                    .and_then(|action| action.bind(py).extract::<Option<String>>())
+                    .map_err(|error| foreign_py_error(py, error))
+            })
+        })
+    });
     BindingWidget::dock_workspace(
         state.inner.clone(),
         extract_dock_panels(panels)?,
         name,
+        panel_builder,
+        on_close_request,
     )
     .map(PyWidget::from_binding)
     .map_err(PyValueError::new_err)

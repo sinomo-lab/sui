@@ -53,6 +53,7 @@ use sui::DefaultTheme;
 use sui::DetailRow;
 use sui::Dialog;
 use sui::Dock;
+use sui::DockCloseAction;
 use sui::DockPanel;
 use sui::DockPanelId;
 use sui::DockWorkspace;
@@ -2935,14 +2936,54 @@ impl BindingWidget {
                 state,
                 panels,
                 name,
+                panel_builder,
+                on_close_request,
+                ui_handle,
             } => {
                 let mut workspace = DockWorkspace::new(state.inner.clone()).name(name.clone());
                 for panel in panels {
                     workspace = workspace.with_panel(
                         DockPanelId::new(panel.id),
-                        panel.title.clone(),
+                        panel.options.inner.clone(),
                         panel.child.into_runtime_widget(errors.clone()),
                     );
+                }
+                if let Some(builder) = panel_builder.clone() {
+                    let ui_handle = Arc::clone(ui_handle);
+                    let errors = errors.clone();
+                    workspace = workspace.panel_builder(move |panel| -> Box<dyn sui::Widget> {
+                        match builder.build(panel.get()) {
+                            Ok(widget) => {
+                                if let Some(handle) = recover_lock(&ui_handle).clone() {
+                                    widget.bind_ui_handle(&handle);
+                                }
+                                Box::new(widget.into_runtime_widget(errors.clone()))
+                            }
+                            Err(error) => {
+                                errors.push(ForeignCallbackError::new(
+                                    ForeignWidgetId::new(0),
+                                    ForeignCallbackPhase::Measure,
+                                    error.message,
+                                ));
+                                Box::new(SizedBox::new())
+                            }
+                        }
+                    });
+                }
+                if let Some(handler) = on_close_request.clone() {
+                    let errors = errors.clone();
+                    workspace = workspace.on_close_request(move |panel| {
+                        // A handler that fails leaves the panel open: closing
+                        // it could discard what the handler meant to protect.
+                        handler.close_action(panel.get()).unwrap_or_else(|error| {
+                            errors.push(ForeignCallbackError::new(
+                                ForeignWidgetId::new(0),
+                                ForeignCallbackPhase::Event,
+                                error.message,
+                            ));
+                            DockCloseAction::Keep
+                        })
+                    });
                 }
                 BindingRuntimeWidget::new(themed_widget!(workspace, errors))
             }

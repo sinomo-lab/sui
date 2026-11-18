@@ -5,7 +5,8 @@ use crate::actions::{
 };
 use crate::collections::{BindingNotificationCenter, BindingVirtualListModel};
 use crate::docking::{
-    BindingDockPanel, BindingDockState, BindingFloatingView, BindingFloatingWorkspaceState,
+    BindingDockCloseHandler, BindingDockPanel, BindingDockPanelBuilder, BindingDockState,
+    BindingFloatingView, BindingFloatingWorkspaceState,
 };
 use crate::documents::BindingRichDocument;
 use crate::drag::BindingDragScope;
@@ -1457,6 +1458,11 @@ pub(crate) enum BindingWidgetKind {
         state: BindingDockState,
         panels: Vec<BindingDockPanel>,
         name: String,
+        panel_builder: Option<BindingDockPanelBuilder>,
+        on_close_request: Option<BindingDockCloseHandler>,
+        /// The UI handle bound to this widget, used to bind the states of
+        /// panels built after the workspace is mounted.
+        ui_handle: Arc<Mutex<Option<BindingUiHandle>>>,
     },
     StatusBarHost {
         content: BindingWidget,
