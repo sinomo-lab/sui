@@ -29,14 +29,17 @@ use sui::diagnostics::{
 };
 use sui::{
     Event, Point, PointerButton, PointerButtons, PointerEvent, PointerEventKind, Rect, Result,
-    ScrollDelta, SemanticsNode, SemanticsRole, Vector,
+    ScrollDelta, SemanticsActionRequest, SemanticsEvent, SemanticsNode, SemanticsRole,
+    SemanticsValue, Vector,
 };
 use sui_testing::{TestApp, TestWindow};
 
 const SCROLL_STEPS: usize = 48;
 const SCROLL_DELTA: f32 = -64.0;
 const HOVER_STEPS: usize = 48;
-const THEME_TOGGLES: usize = 3;
+/// Themes picked in turn from the shell's theme select, ending on the one
+/// the shell starts with.
+const THEME_CHANGES: [&str; 3] = ["Dark", "Void", "Light"];
 /// Inputs arrive at about this interval, so animations started by one input
 /// advance before the next, as they would under a person's hand.
 const INPUT_INTERVAL: Duration = Duration::from_millis(4);
@@ -573,9 +576,13 @@ fn main() -> Result<()> {
         }
     }
 
-    if let Some(toggle) = bench.find(SemanticsRole::Switch, "Theme mode")? {
-        for _ in 0..THEME_TOGGLES {
-            bench.timed("theme", "shell", click(center(toggle.bounds)))?;
+    if let Some(select) = bench.find(SemanticsRole::ComboBox, "Theme")? {
+        for theme in THEME_CHANGES {
+            let pick = Event::Semantics(SemanticsEvent::new(
+                select.id,
+                SemanticsActionRequest::SetValue(SemanticsValue::Text(theme.to_string())),
+            ));
+            bench.timed("theme", "shell", vec![pick])?;
             bench.settle()?;
         }
     }

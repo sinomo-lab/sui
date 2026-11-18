@@ -16,7 +16,7 @@ use super::preview::{
 use super::state::{EditOrigin, Preset, ThemeEditorState, ThemeRecipe};
 use super::tokens::{RoleToken, SourceToken, Token, TokenGroup};
 use super::*;
-use crate::app::{DEV_SHELL_THEME_TOGGLE_NAME, DEV_THEME_CUSTOM_LABEL, DevThemeReader};
+use crate::app::{DEV_SHELL_THEME_SELECT_NAME, DEV_THEME_CUSTOM_LABEL, DevThemeReader};
 
 const PRIMARY: Token = Token::Source(SourceToken::Primary);
 
@@ -674,9 +674,13 @@ fn use_as_app_theme_restyles_the_whole_app() {
     click(&mut runtime, window_id, apply.bounds);
 
     let output = runtime.render(window_id).unwrap();
-    let toggle = node(&output, SemanticsRole::Switch, DEV_SHELL_THEME_TOGGLE_NAME);
+    let select = node(
+        &output,
+        SemanticsRole::ComboBox,
+        DEV_SHELL_THEME_SELECT_NAME,
+    );
     assert_eq!(
-        toggle.value,
+        select.value,
         Some(SemanticsValue::Text(DEV_THEME_CUSTOM_LABEL.into()))
     );
     let apply = node(&output, SemanticsRole::Button, THEME_USE_AS_APP_THEME_NAME);
@@ -685,10 +689,19 @@ fn use_as_app_theme_restyles_the_whole_app() {
         "the shell's own primary button now uses the edited primary"
     );
 
-    click(&mut runtime, window_id, toggle.bounds);
+    set_value(&mut runtime, window_id, &select, "Dark");
     let output = runtime.render(window_id).unwrap();
-    let toggle = node(&output, SemanticsRole::Switch, DEV_SHELL_THEME_TOGGLE_NAME);
-    assert_eq!(toggle.value, Some(SemanticsValue::Text("Dark".into())));
+    let select = node(
+        &output,
+        SemanticsRole::ComboBox,
+        DEV_SHELL_THEME_SELECT_NAME,
+    );
+    assert_eq!(select.value, Some(SemanticsValue::Text("Dark".into())));
+    let apply = node(&output, SemanticsRole::Button, THEME_USE_AS_APP_THEME_NAME);
+    assert!(
+        !fills_in(&output, apply.bounds).contains(&rgba8(green)),
+        "picking a built-in theme drops the custom one"
+    );
 }
 
 /// A recipe that exercises every part of the export.

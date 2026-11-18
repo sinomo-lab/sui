@@ -3726,7 +3726,7 @@ mod tests {
             "Paint",
             "Vector editor",
             "Open demo",
-            "Theme mode",
+            "Theme",
             "Settings",
         ] {
             assert!(frame.contains(label), "missing generated TUI label {label}");
