@@ -461,14 +461,81 @@ state.dock(SCENE, VIEWPORT, DockZone::Left)?;
 ```
 
 Dragging a tab reveals edge and center drop zones; dropping outside a dock
-target creates a same-window floating group. Splitters and floating bounds are
-also pointer-adjustable. Use `DockWorkspaceState::snapshot` as the persistence
-boundary. `DockWorkspaceState::apply_snapshot` validates the split/tab graph,
-but state does not own the panel widget registry. After registering panels,
-prefer `DockWorkspace::apply_snapshot` for restored settings so both graph
-structure and referenced panel IDs are validated. If state was restored first,
-call `validate_registered_panels` before mounting the workspace. SUI
-deliberately does not prescribe a serializer or settings store.
+target creates a same-window floating group. Dragging a tab along a group's
+header shows an insertion line and reorders the group, or inserts the tab at
+that position when it comes from another group; `DockWorkspaceState::dock_tab`
+does the same from code. Splitters and floating bounds are also
+pointer-adjustable.
+
+Register a panel with a title, or with `DockPanelOptions` to give its tab an
+icon, a close button, an unsaved-changes marker, or a minimum content size.
+Splits keep every docked group at least as large as its panels' minimum sizes
+while the workspace has room, and shrink the minimums in proportion when it
+does not.
+
+```rust
+let workspace = DockWorkspace::new(state.clone())
+    .with_panel(SCENE, "Scene", scene_tree)
+    .with_panel(
+        VIEWPORT,
+        DockPanelOptions::new("Viewport")
+            .icon(IconGlyph::Monitor)
+            .closable(true)
+            .min_size(Size::new(320.0, 240.0)),
+        viewport,
+    )
+    .on_close_request(move |panel| {
+        if documents.has_unsaved_changes(panel) {
+            documents.confirm_close(panel);
+            DockCloseAction::Keep
+        } else {
+            DockCloseAction::Remove
+        }
+    });
+```
+
+A press on a tab's close button asks `on_close_request` what to do: `Hide`
+keeps the panel widget so `DockWorkspaceState::show` can bring it back,
+`Remove` drops it, and `Keep` leaves it open. Without a handler the panel is
+hidden.
+
+Panels can also come and go while the workspace is mounted. The state stays
+`Send + Sync` and holds no widgets: it queues the change, and the workspace,
+which owns the panel widgets, applies it on its next layout pass and asks its
+`panel_builder` for the new panel's widget:
+
+```rust
+let workspace = DockWorkspace::new(state.clone())
+    .with_panel(VIEWPORT, "Viewport", viewport)
+    .panel_builder(move |panel| documents.build_view(panel));
+
+state.add_panel(
+    LOG,
+    DockPanelOptions::new("Log").closable(true),
+    DockPlacement::Beside { target: VIEWPORT, zone: DockZone::Bottom },
+)?;
+state.update_panel(VIEWPORT, |options| options.dirty = true)?;
+state.remove_panel(LOG)?;
+```
+
+`remove_panel` discards the panel's widget-local state and frees its ID.
+Without a builder, an added panel has a tab and empty content.
+
+Use `DockWorkspaceState::snapshot` as the persistence boundary.
+`DockWorkspaceState::apply_snapshot` validates the split/tab graph, but state
+does not own the panel widget registry. After registering panels, prefer
+`DockWorkspace::apply_snapshot` for restored settings so both graph structure
+and referenced panel IDs are validated. If state was restored first, call
+`validate_registered_panels` before mounting the workspace. When a saved
+layout may name panels that no longer exist, such as closed documents or
+removed extensions, call `DockWorkspaceSnapshot::retain_panels` first to drop
+them and collapse the groups they leave empty.
+
+SUI does not prescribe a settings store. With the `serde` feature,
+`DockWorkspaceSnapshot` implements `Serialize` and `Deserialize`;
+deserializing validates the layout, so a malformed file is a deserialization
+error. Without the feature, map the snapshot's public fields into the
+application's own format.
 
 Floating panels are overlays in the current SUI window. Native operating-system
 tear-off windows are not part of `DockWorkspace`. `FloatingWorkspace` remains

@@ -6,6 +6,30 @@ Versioning, with the usual expectation that the API may change during the
 
 ## [Unreleased]
 
+### Docking
+
+- `DockWorkspaceState::add_panel`, `remove_panel`, and `update_panel` register,
+  drop, and restyle panels while the workspace is mounted. `DockPlacement`
+  chooses where an added panel first appears, and
+  `DockWorkspace::panel_builder` creates its widget. The state remains
+  `Send + Sync`.
+- `DockPanelOptions` gives a tab an icon, a close button, an unsaved-changes
+  marker, and a minimum content size that splits respect.
+  `DockWorkspace::with_panel` and `push_panel` accept either a title or
+  options, so existing calls compile unchanged.
+- `DockWorkspace::on_close_request` decides whether a closed tab is hidden,
+  removed, or kept open. Close buttons are exposed to assistive technology.
+- Dragging a tab along a group's header reorders it or inserts it at that
+  position; `DockWorkspaceState::dock_tab` does the same from code. A tab
+  dropped on another group's header now lands at the pointer instead of
+  splitting the group along its top edge.
+- `DockWorkspaceSnapshot::retain_panels` prunes panels that no longer exist
+  before a saved layout is restored.
+- The new `serde` feature of `sinomo-ui` and `sinomo-ui-widgets` implements
+  `Serialize` and `Deserialize` for `DockWorkspaceSnapshot`.
+- `DockWorkspaceState` no longer derives `Debug` structurally; its `Debug`
+  output shows the snapshot and the number of queued registry changes.
+
 ### Icons
 
 - Replace bundled Lucide assets with Tabler Icons 3.50.0 outline icons under

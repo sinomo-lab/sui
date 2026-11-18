@@ -24,6 +24,8 @@ desktop = ["wgpu", "dep:sui-platform"]
 mobile = ["wgpu", "dep:sui-platform"]
 web = ["wgpu", "dep:sui-platform"]
 wgpu = ["dep:sui-render-wgpu"]
+# `Serialize` and `Deserialize` for persisted layout snapshots.
+serde = ["sui-widgets/serde"]
 
 [dependencies]
 sui-core = { workspace = true }

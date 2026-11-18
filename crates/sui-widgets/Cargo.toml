@@ -16,9 +16,14 @@ rust-version.workspace = true
 name = "sui_widgets"
 doctest = false
 
+[features]
+# `Serialize` and `Deserialize` for persisted layout snapshots.
+serde = ["dep:serde"]
+
 [dependencies]
 palette = { workspace = true }
 pulldown-cmark = { workspace = true }
+serde = { workspace = true, optional = true }
 sui-animation = { workspace = true }
 sui-core = { workspace = true }
 sui-layout = { workspace = true }
@@ -31,4 +36,5 @@ unicode-segmentation = { workspace = true }
 web-time = { workspace = true }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 sui-render-wgpu = { workspace = true }

@@ -7,7 +7,7 @@ use super::super::specimen::{Section, boxed, example, strip};
 use super::sized;
 use crate::app::{DemoTextRole, demo_text_style};
 
-pub(super) const STORIES: [Story; 8] = [
+pub(super) const STORIES: [Story; 9] = [
     Story {
         id: "surface",
         title: "Surface",
@@ -61,6 +61,15 @@ pub(super) const STORIES: [Story; 8] = [
         keywords: "splitter resizable panes divider resizablepane",
         category: Category::Layout,
         build: split_view,
+    },
+    Story {
+        id: "dock-workspace",
+        title: "Dock workspace",
+        api: "DockWorkspace, DockWorkspaceState, DockPanelOptions",
+        summary: "Tab groups and splits the user rearranges by dragging tabs.",
+        keywords: "docking tabs panels float close reorder workspace layout",
+        category: Category::Layout,
+        build: dock_workspace,
     },
     Story {
         id: "pane-layouts",
@@ -581,6 +590,84 @@ fn split_view(ctx: &StoryCtx) -> Vec<Section> {
             ),
         ),
     ]
+}
+
+fn dock_workspace(ctx: &StoryCtx) -> Vec<Section> {
+    const FILES: DockPanelId = DockPanelId::new(1);
+    const EDITOR: DockPanelId = DockPanelId::new(2);
+    const NOTES: DockPanelId = DockPanelId::new(3);
+    const INSPECTOR: DockPanelId = DockPanelId::new(4);
+    const OUTPUT: DockPanelId = DockPanelId::new(5);
+
+    let theme = ctx.theme;
+    let body = |title: &str, detail: &str| {
+        Surface::window(
+            Stack::vertical()
+                .gap(6.0)
+                .alignment(Alignment::Stretch)
+                .with_child(ctx.text(title))
+                .with_child(ctx.muted(detail)),
+        )
+        .padding(Insets::all(14.0))
+        .fill()
+        .theme(theme)
+    };
+    let state = DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::split(
+        Axis::Horizontal,
+        0.24,
+        DockNode::tabs([FILES], FILES),
+        DockNode::split(
+            Axis::Vertical,
+            0.68,
+            DockNode::split(
+                Axis::Horizontal,
+                0.7,
+                DockNode::tabs([EDITOR, NOTES], EDITOR),
+                DockNode::tabs([INSPECTOR], INSPECTOR),
+            ),
+            DockNode::tabs([OUTPUT], OUTPUT),
+        ),
+    )))
+    .expect("the story layout is valid");
+    let workspace = DockWorkspace::new(state)
+        .name("Story dock workspace")
+        .theme(theme)
+        .with_panel(
+            FILES,
+            DockPanelOptions::new("Files")
+                .icon(IconGlyph::Folder)
+                .min_size(Size::new(140.0, 0.0)),
+            body("Files", "Keeps a minimum width."),
+        )
+        .with_panel(
+            EDITOR,
+            DockPanelOptions::new("main.rs")
+                .icon(IconGlyph::FileText)
+                .closable(true)
+                .dirty(true),
+            body("main.rs", "Unsaved, closable document tab."),
+        )
+        .with_panel(
+            NOTES,
+            DockPanelOptions::new("notes.md")
+                .icon(IconGlyph::FileText)
+                .closable(true),
+            body("notes.md", "Drag a tab along its header to reorder."),
+        )
+        .with_panel(
+            INSPECTOR,
+            "Inspector",
+            body("Inspector", "Drag a tab to an edge to split."),
+        )
+        .with_panel(
+            OUTPUT,
+            DockPanelOptions::new("Output").closable(true),
+            body("Output", "Drop a tab outside every group to float it."),
+        );
+    vec![example(
+        "Tabs, splits, and tab options",
+        SizedBox::new().width(720.0).height(340.0).child(workspace),
+    )]
 }
 
 /// Outlines a layout sample so panes that share the stage color stay visible.

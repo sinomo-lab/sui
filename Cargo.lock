@@ -4876,6 +4876,8 @@ version = "0.6.1"
 dependencies = [
  "palette",
  "pulldown-cmark",
+ "serde",
+ "serde_json",
  "sinomo-ui-animation",
  "sinomo-ui-core",
  "sinomo-ui-layout",

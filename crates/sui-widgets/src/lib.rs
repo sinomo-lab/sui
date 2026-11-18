@@ -95,8 +95,8 @@ pub use data::{
     VirtualTableState, paint_leading_label_cell, paint_text_block, paint_text_cell,
 };
 pub use docking::{
-    DockFloatingGroup, DockLayoutError, DockNode, DockPanelId, DockWorkspace,
-    DockWorkspaceSnapshot, DockWorkspaceState, DockZone,
+    DockCloseAction, DockFloatingGroup, DockLayoutError, DockNode, DockPanelId, DockPanelOptions,
+    DockPlacement, DockWorkspace, DockWorkspaceSnapshot, DockWorkspaceState, DockZone,
 };
 pub use drag_drop::{DragDropHost, Draggable, DropHover, DropTarget};
 pub use hdr_theme::{

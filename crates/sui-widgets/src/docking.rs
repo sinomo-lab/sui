@@ -10,6 +10,7 @@ use crate::draw::inset_rect_evenly;
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 use sui_text::TextAlign;
 
@@ -24,8 +25,13 @@ use sui_runtime::{
     Widget, WidgetPod, WidgetPodMutVisitor, WidgetPodVisitor,
 };
 
+use crate::controls::draw_icon_glyph;
+#[cfg(feature = "serde")]
+#[path = "docking_serde.rs"]
+mod serde_support;
+
 use crate::frame::{snap_to_pixels, stroke_border};
-use crate::{DefaultTheme, text_align::paint_text_line};
+use crate::{DefaultTheme, IconGlyph, text_align::paint_text_line};
 
 const MAX_DOCK_DEPTH: usize = 64;
 const MAX_DOCK_NODES: usize = 4_096;
@@ -42,6 +48,16 @@ const TAB_DRAG_THRESHOLD: f32 = 5.0;
 const DROP_EDGE_FRACTION: f32 = 0.24;
 const DROP_ZONE_INSET: f32 = 6.0;
 const SEMANTIC_SPLIT_STEP: f32 = 0.05;
+const TAB_TEXT_INSET: f32 = 8.0;
+const TAB_ICON_EXTENT: f32 = 14.0;
+const TAB_CLOSE_EXTENT: f32 = 16.0;
+const TAB_DIRTY_EXTENT: f32 = 6.0;
+const TAB_PART_GAP: f32 = 6.0;
+const TAB_MIN_WIDTH: f32 = 72.0;
+const TAB_MAX_TITLE_WIDTH: f32 = 180.0;
+const TAB_MIN_CLOSE_WIDTH: f32 = 44.0;
+const TAB_MIN_ICON_WIDTH: f32 = 64.0;
+const TAB_INSERT_INDICATOR: f32 = 2.0;
 
 /// Stable application-defined identity for one dockable panel.
 ///
@@ -181,6 +197,22 @@ impl DockWorkspaceSnapshot {
         self.hidden.push(panel);
         self
     }
+
+    /// Drops every panel `keep` rejects and collapses the groups and splits
+    /// left empty.
+    ///
+    /// Use it before restoring a saved layout whose panels may no longer all
+    /// exist, such as documents that were deleted or extensions that were
+    /// removed.
+    pub fn retain_panels(&mut self, keep: impl Fn(DockPanelId) -> bool) {
+        let mut panels = HashSet::new();
+        collect_snapshot_panels(self, &mut panels);
+        for panel in panels {
+            if !keep(panel) {
+                remove_panel_from_snapshot(self, panel);
+            }
+        }
+    }
 }
 
 /// Destination zone used when docking a panel relative to a tab group or the
@@ -192,6 +224,94 @@ pub enum DockZone {
     Right,
     Top,
     Bottom,
+}
+
+/// Presentation and behavior of one dock panel's tab.
+///
+/// Options are owned by the workspace's panel registry. Change them after
+/// registration with [`DockWorkspaceState::update_panel`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct DockPanelOptions {
+    pub title: String,
+    pub icon: Option<IconGlyph>,
+    /// Shows a close button on the tab. A close press is routed through
+    /// [`DockWorkspace::on_close_request`].
+    pub closable: bool,
+    /// Marks the tab as holding unsaved changes.
+    pub dirty: bool,
+    /// Smallest content size the panel remains usable at. Splits keep every
+    /// docked group at least this large while the workspace has room.
+    pub min_size: Size,
+}
+
+impl DockPanelOptions {
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            icon: None,
+            closable: false,
+            dirty: false,
+            min_size: Size::ZERO,
+        }
+    }
+
+    pub fn icon(mut self, icon: IconGlyph) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn closable(mut self, closable: bool) -> Self {
+        self.closable = closable;
+        self
+    }
+
+    pub fn dirty(mut self, dirty: bool) -> Self {
+        self.dirty = dirty;
+        self
+    }
+
+    pub fn min_size(mut self, min_size: Size) -> Self {
+        self.min_size = min_size;
+        self
+    }
+}
+
+impl From<&str> for DockPanelOptions {
+    fn from(title: &str) -> Self {
+        Self::new(title)
+    }
+}
+
+impl From<String> for DockPanelOptions {
+    fn from(title: String) -> Self {
+        Self::new(title)
+    }
+}
+
+/// Where a panel added at runtime first appears.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DockPlacement {
+    /// Relative to the whole docked graph.
+    Root(DockZone),
+    /// Relative to the tab group that contains `target`.
+    Beside { target: DockPanelId, zone: DockZone },
+    /// In a new same-window floating group.
+    Floating(Rect),
+    /// Registered but not shown until [`DockWorkspaceState::show`].
+    Hidden,
+}
+
+/// What the workspace does after a tab's close button is pressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DockCloseAction {
+    /// Keep the panel widget and move it to the hidden list.
+    #[default]
+    Hide,
+    /// Drop the panel widget and forget its ID.
+    Remove,
+    /// Leave the panel open, for example while the application asks about
+    /// unsaved changes.
+    Keep,
 }
 
 /// Validation or mutation failure for a docking layout.
@@ -217,9 +337,44 @@ impl fmt::Display for DockLayoutError {
 impl std::error::Error for DockLayoutError {}
 
 /// Cloneable observable state for [`DockWorkspace`].
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DockWorkspaceState {
     snapshot: Signal<DockWorkspaceSnapshot>,
+    registry: Arc<Mutex<DockRegistryQueue>>,
+    registry_revision: Signal<u64>,
+}
+
+impl fmt::Debug for DockWorkspaceState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DockWorkspaceState")
+            .field("snapshot", &self.snapshot)
+            .field("pending_registry_ops", &self.registry().ops.len())
+            .finish()
+    }
+}
+
+/// Registry changes requested through the state and applied by the workspace
+/// widget, which owns the panel widgets, on its next measure pass.
+///
+/// The queue holds plain data only, so the state stays `Send + Sync` and can
+/// be driven from another thread like the layout signal it sits beside.
+#[derive(Default)]
+struct DockRegistryQueue {
+    registered: HashSet<DockPanelId>,
+    ops: Vec<DockRegistryOp>,
+}
+
+enum DockRegistryOp {
+    Add {
+        id: DockPanelId,
+        options: DockPanelOptions,
+    },
+    Remove(DockPanelId),
+    Update {
+        id: DockPanelId,
+        update: Box<dyn FnOnce(&mut DockPanelOptions) + Send>,
+    },
 }
 
 impl DockWorkspaceState {
@@ -227,6 +382,8 @@ impl DockWorkspaceState {
         validate_snapshot(&snapshot)?;
         Ok(Self {
             snapshot: Signal::named("Dock workspace state", snapshot),
+            registry: Arc::new(Mutex::new(DockRegistryQueue::default())),
+            registry_revision: Signal::named("Dock workspace panel registry", 0),
         })
     }
 
@@ -414,6 +571,151 @@ impl DockWorkspaceState {
             }
             Ok(())
         })
+    }
+
+    /// Moves `panel` into the tab group that contains `anchor`, immediately
+    /// before or after the anchor's tab, and activates it.
+    ///
+    /// Use it to reorder tabs within a group as well as to insert a tab at a
+    /// chosen position in another group.
+    pub fn dock_tab(
+        &self,
+        panel: DockPanelId,
+        anchor: DockPanelId,
+        after: bool,
+    ) -> Result<bool, DockLayoutError> {
+        validate_panel_id(panel)?;
+        validate_panel_id(anchor)?;
+        if panel == anchor {
+            return self.activate(panel);
+        }
+        self.mutate(|snapshot| {
+            if !visible_snapshot_contains_panel(snapshot, anchor) {
+                return Err(DockLayoutError::new(format!(
+                    "dock anchor panel {anchor} is not visible in the workspace"
+                )));
+            }
+            remove_panel_from_snapshot(snapshot, panel);
+            if insert_tab_beside_in_node(&mut snapshot.root, panel, anchor, after) {
+                return Ok(());
+            }
+            let Some(group) = snapshot
+                .floating
+                .iter_mut()
+                .find(|group| group.panels.contains(&anchor))
+            else {
+                return Err(DockLayoutError::new(format!(
+                    "dock anchor panel {anchor} disappeared during mutation"
+                )));
+            };
+            insert_tab_beside(&mut group.panels, &mut group.active, panel, anchor, after);
+            Ok(())
+        })
+    }
+
+    /// Registers a panel while the workspace is mounted and places it.
+    ///
+    /// The workspace creates the panel's widget on its next measure pass by
+    /// calling its [`DockWorkspace::panel_builder`] with `id`. The ID must not
+    /// belong to a panel that is already registered.
+    pub fn add_panel(
+        &self,
+        id: DockPanelId,
+        options: impl Into<DockPanelOptions>,
+        placement: DockPlacement,
+    ) -> Result<(), DockLayoutError> {
+        validate_panel_id(id)?;
+        if self.registry().registered.contains(&id) {
+            return Err(DockLayoutError::new(format!(
+                "dock panel {id} is already registered"
+            )));
+        }
+        match placement {
+            DockPlacement::Root(zone) => {
+                self.dock_to_root(id, zone)?;
+            }
+            DockPlacement::Beside { target, zone } => {
+                self.dock(id, target, zone)?;
+            }
+            DockPlacement::Floating(bounds) => {
+                self.float_panel(id, bounds)?;
+            }
+            DockPlacement::Hidden => {
+                self.hide(id)?;
+            }
+        }
+        {
+            let mut registry = self.registry();
+            registry.registered.insert(id);
+            registry.ops.push(DockRegistryOp::Add {
+                id,
+                options: options.into(),
+            });
+        }
+        self.bump_registry();
+        Ok(())
+    }
+
+    /// Removes a panel from the layout and drops its widget.
+    ///
+    /// Returns whether the panel was registered. Unlike [`Self::hide`], the
+    /// panel's widget-local state is discarded and its ID may be reused.
+    pub fn remove_panel(&self, id: DockPanelId) -> Result<bool, DockLayoutError> {
+        validate_panel_id(id)?;
+        self.mutate(|snapshot| {
+            remove_panel_from_snapshot(snapshot, id);
+            Ok(())
+        })?;
+        let was_registered = {
+            let mut registry = self.registry();
+            let was_registered = registry.registered.remove(&id);
+            if was_registered {
+                registry.ops.push(DockRegistryOp::Remove(id));
+            }
+            was_registered
+        };
+        if was_registered {
+            self.bump_registry();
+        }
+        Ok(was_registered)
+    }
+
+    /// Changes a registered panel's tab options, such as its title or its
+    /// unsaved-changes marker.
+    pub fn update_panel(
+        &self,
+        id: DockPanelId,
+        update: impl FnOnce(&mut DockPanelOptions) + Send + 'static,
+    ) -> Result<(), DockLayoutError> {
+        validate_panel_id(id)?;
+        {
+            let mut registry = self.registry();
+            if !registry.registered.contains(&id) {
+                return Err(DockLayoutError::new(format!(
+                    "dock panel {id} is not registered"
+                )));
+            }
+            registry.ops.push(DockRegistryOp::Update {
+                id,
+                update: Box::new(update),
+            });
+        }
+        self.bump_registry();
+        Ok(())
+    }
+
+    /// Whether a panel widget is registered or queued for registration.
+    pub fn is_registered(&self, id: DockPanelId) -> bool {
+        self.registry().registered.contains(&id)
+    }
+
+    fn registry(&self) -> MutexGuard<'_, DockRegistryQueue> {
+        self.registry.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn bump_registry(&self) {
+        self.registry_revision
+            .set(self.registry_revision.get().wrapping_add(1));
     }
 
     fn mutate(
@@ -714,6 +1016,41 @@ fn insert_tab(panels: &mut Vec<DockPanelId>, active: &mut DockPanelId, panel: Do
     *active = panel;
 }
 
+fn insert_tab_beside(
+    panels: &mut Vec<DockPanelId>,
+    active: &mut DockPanelId,
+    panel: DockPanelId,
+    anchor: DockPanelId,
+    after: bool,
+) {
+    let index = panels
+        .iter()
+        .position(|candidate| *candidate == anchor)
+        .map_or(panels.len(), |index| index + usize::from(after));
+    panels.insert(index, panel);
+    *active = panel;
+}
+
+fn insert_tab_beside_in_node(
+    node: &mut DockNode,
+    panel: DockPanelId,
+    anchor: DockPanelId,
+    after: bool,
+) -> bool {
+    match node {
+        DockNode::Empty => false,
+        DockNode::Tabs { panels, active } if panels.contains(&anchor) => {
+            insert_tab_beside(panels, active, panel, anchor, after);
+            true
+        }
+        DockNode::Tabs { .. } => false,
+        DockNode::Split { first, second, .. } => {
+            insert_tab_beside_in_node(first, panel, anchor, after)
+                || insert_tab_beside_in_node(second, panel, anchor, after)
+        }
+    }
+}
+
 fn insert_into_first_tab_group(node: &mut DockNode, panel: DockPanelId) -> bool {
     match node {
         DockNode::Empty => false,
@@ -844,7 +1181,7 @@ fn node_at_path<'a>(mut node: &'a DockNode, path: &[DockBranch]) -> Option<&'a D
 
 struct DockPanelEntry {
     id: DockPanelId,
-    title: String,
+    options: DockPanelOptions,
     child: WidgetPod,
 }
 
@@ -858,6 +1195,18 @@ enum DockGroupLocation {
 struct DockTabLayout {
     panel: DockPanelId,
     bounds: Rect,
+    label: Rect,
+    icon: Option<Rect>,
+    dirty: Option<Rect>,
+    close: Option<Rect>,
+}
+
+/// A position between two tabs of one group that a dragged tab can take.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DockTabInsert {
+    anchor: DockPanelId,
+    after: bool,
+    indicator: Rect,
 }
 
 #[derive(Debug, Clone)]
@@ -881,6 +1230,42 @@ impl DockGroupLayout {
             .iter()
             .find(|tab| tab.bounds.contains(position))
             .map(|tab| tab.panel)
+    }
+
+    fn close_at(&self, position: Point) -> Option<DockPanelId> {
+        self.tabs
+            .iter()
+            .find(|tab| tab.close.is_some_and(|close| close.contains(position)))
+            .map(|tab| tab.panel)
+    }
+
+    /// The slot a tab dragged over this group's header would be inserted at.
+    fn tab_insert_at(&self, position: Point, dragged: DockPanelId) -> Option<DockTabInsert> {
+        if !self.header.contains(position) || self.tabs.iter().all(|tab| tab.panel == dragged) {
+            return None;
+        }
+        let slot = |tab: &DockTabLayout, after: bool| {
+            let x = if after {
+                tab.bounds.max_x() - TAB_INSERT_INDICATOR
+            } else {
+                tab.bounds.x()
+            };
+            DockTabInsert {
+                anchor: tab.panel,
+                after,
+                indicator: Rect::new(
+                    x.max(self.header.x()),
+                    self.header.y(),
+                    TAB_INSERT_INDICATOR,
+                    self.header.height(),
+                ),
+            }
+        };
+        self.tabs
+            .iter()
+            .find(|tab| position.x < tab.bounds.x() + tab.bounds.width() * 0.5)
+            .map(|tab| slot(tab, false))
+            .or_else(|| self.tabs.last().map(|tab| slot(tab, true)))
     }
 }
 
@@ -911,6 +1296,10 @@ impl DockLayoutCache {
 }
 
 enum DockWorkspaceGesture {
+    ClosePress {
+        pointer_id: u64,
+        panel: DockPanelId,
+    },
     TabPress {
         pointer_id: u64,
         panel: DockPanelId,
@@ -947,7 +1336,8 @@ enum DockWorkspaceGesture {
 impl DockWorkspaceGesture {
     fn pointer_id(&self) -> u64 {
         match self {
-            Self::TabPress { pointer_id, .. }
+            Self::ClosePress { pointer_id, .. }
+            | Self::TabPress { pointer_id, .. }
             | Self::TabDrag { pointer_id, .. }
             | Self::Split { pointer_id, .. }
             | Self::FloatingMove { pointer_id, .. }
@@ -963,16 +1353,34 @@ struct DockDropCandidate {
     host_bounds: Rect,
     zone_bounds: Rect,
     center_only: bool,
+    insert: Option<DockTabInsert>,
 }
+
+impl DockDropCandidate {
+    fn insert(host_bounds: Rect, insert: DockTabInsert) -> Self {
+        Self {
+            target: Some(insert.anchor),
+            zone: DockZone::Center,
+            host_bounds,
+            zone_bounds: insert.indicator,
+            center_only: true,
+            insert: Some(insert),
+        }
+    }
+}
+
+type DockCloseRequest = Box<dyn FnMut(DockPanelId) -> DockCloseAction>;
+type DockPanelBuilder = Box<dyn FnMut(DockPanelId) -> Box<dyn Widget>>;
 
 type ThemeReader = std::rc::Rc<dyn Fn() -> DefaultTheme>;
 
 /// Retained editor workspace with a split/tab dock graph and same-window
 /// floating panels.
 ///
-/// Every panel widget remains owned by this workspace for its full lifetime.
-/// State changes only alter which registered panel is measured, arranged, and
-/// visited at each logical location.
+/// Every panel widget remains owned by this workspace until it is removed
+/// through [`DockWorkspaceState::remove_panel`]. Layout changes only alter
+/// which registered panel is measured, arranged, and visited at each logical
+/// location.
 pub struct DockWorkspace {
     theme: Box<DefaultTheme>,
     theme_reader: Option<ThemeReader>,
@@ -982,6 +1390,9 @@ pub struct DockWorkspace {
     layout: DockLayoutCache,
     gesture: Option<DockWorkspaceGesture>,
     focused_group: Option<DockGroupLocation>,
+    hovered_close: Option<DockPanelId>,
+    on_close_request: Option<DockCloseRequest>,
+    panel_builder: Option<DockPanelBuilder>,
 }
 
 impl DockWorkspace {
@@ -995,7 +1406,35 @@ impl DockWorkspace {
             layout: DockLayoutCache::default(),
             gesture: None,
             focused_group: None,
+            hovered_close: None,
+            on_close_request: None,
+            panel_builder: None,
         }
+    }
+
+    /// Creates the widget for a panel added through
+    /// [`DockWorkspaceState::add_panel`].
+    ///
+    /// The builder runs once per added panel, on the UI thread. Without a
+    /// builder an added panel has a tab and empty content.
+    pub fn panel_builder<F>(mut self, panel_builder: F) -> Self
+    where
+        F: FnMut(DockPanelId) -> Box<dyn Widget> + 'static,
+    {
+        self.panel_builder = Some(Box::new(panel_builder));
+        self
+    }
+
+    /// Decides what a press on a tab's close button does.
+    ///
+    /// Without a handler a closed panel is hidden, which keeps its widget and
+    /// lets [`DockWorkspaceState::show`] bring it back.
+    pub fn on_close_request<F>(mut self, on_close_request: F) -> Self
+    where
+        F: FnMut(DockPanelId) -> DockCloseAction + 'static,
+    {
+        self.on_close_request = Some(Box::new(on_close_request));
+        self
     }
 
     pub fn name(mut self, name: impl Into<String>) -> Self {
@@ -1017,11 +1456,17 @@ impl DockWorkspace {
         self
     }
 
-    pub fn with_panel<W>(mut self, id: DockPanelId, title: impl Into<String>, child: W) -> Self
+    /// Registers a panel. `options` is a title or a full [`DockPanelOptions`].
+    pub fn with_panel<W>(
+        mut self,
+        id: DockPanelId,
+        options: impl Into<DockPanelOptions>,
+        child: W,
+    ) -> Self
     where
         W: Widget + 'static,
     {
-        self.push_panel(id, title, child)
+        self.push_panel(id, options, child)
             .expect("dock panel registration must be valid and unique");
         self
     }
@@ -1029,24 +1474,56 @@ impl DockWorkspace {
     pub fn push_panel<W>(
         &mut self,
         id: DockPanelId,
-        title: impl Into<String>,
+        options: impl Into<DockPanelOptions>,
         child: W,
     ) -> Result<(), DockLayoutError>
     where
         W: Widget + 'static,
     {
         validate_panel_id(id)?;
-        if self.panels.iter().any(|panel| panel.id == id) {
+        if !self.state.registry().registered.insert(id) {
             return Err(DockLayoutError::new(format!(
                 "dock panel {id} is already registered"
             )));
         }
         self.panels.push(DockPanelEntry {
             id,
-            title: title.into(),
+            options: options.into(),
             child: WidgetPod::new(child),
         });
         Ok(())
+    }
+
+    /// Applies registry changes queued through [`DockWorkspaceState`].
+    fn apply_registry_ops(&mut self) {
+        let ops = std::mem::take(&mut self.state.registry().ops);
+        for op in ops {
+            match op {
+                DockRegistryOp::Add { id, options } => {
+                    let child = match &mut self.panel_builder {
+                        Some(build) => build(id),
+                        None => Box::new(crate::SizedBox::new()),
+                    };
+                    self.panels.retain(|panel| panel.id != id);
+                    self.panels.push(DockPanelEntry {
+                        id,
+                        options,
+                        child: WidgetPod::new_boxed(child),
+                    });
+                }
+                DockRegistryOp::Remove(id) => {
+                    self.panels.retain(|panel| panel.id != id);
+                    if self.hovered_close == Some(id) {
+                        self.hovered_close = None;
+                    }
+                }
+                DockRegistryOp::Update { id, update } => {
+                    if let Some(panel) = self.panel_mut(id) {
+                        update(&mut panel.options);
+                    }
+                }
+            }
+        }
     }
 
     pub fn shared_state(&self) -> DockWorkspaceState {
@@ -1070,11 +1547,7 @@ impl DockWorkspace {
         &self,
         snapshot: &DockWorkspaceSnapshot,
     ) -> Result<(), DockLayoutError> {
-        let registered = self
-            .panels
-            .iter()
-            .map(|panel| panel.id)
-            .collect::<HashSet<_>>();
+        let registered = self.state.registry().registered.clone();
         let mut referenced = HashSet::new();
         collect_snapshot_panels(snapshot, &mut referenced);
         if let Some(missing) = referenced
@@ -1111,21 +1584,74 @@ impl DockWorkspace {
             .unwrap_or_else(|| *self.theme)
     }
 
-    fn title_map(&self) -> HashMap<DockPanelId, String> {
+    fn options_map(&self) -> HashMap<DockPanelId, DockPanelOptions> {
         self.panels
             .iter()
-            .map(|panel| (panel.id, panel.title.clone()))
+            .map(|panel| (panel.id, panel.options.clone()))
             .collect()
+    }
+
+    fn header_height(&self) -> f32 {
+        self.resolved_theme().metrics.tab_height.max(22.0)
     }
 
     fn rebuild_layout(&self, snapshot: &DockWorkspaceSnapshot, bounds: Rect) -> DockLayoutCache {
         build_workspace_layout(
             snapshot,
             bounds,
-            self.resolved_theme().metrics.tab_height.max(22.0),
+            self.header_height(),
             DEFAULT_SPLITTER_THICKNESS,
-            &self.title_map(),
+            &self.options_map(),
         )
+    }
+
+    fn close_rect(&self, panel: DockPanelId) -> Option<Rect> {
+        self.layout
+            .groups
+            .iter()
+            .flat_map(|group| group.tabs.iter())
+            .find(|tab| tab.panel == panel)
+            .and_then(|tab| tab.close)
+    }
+
+    fn close_at(&self, position: Point) -> Option<DockPanelId> {
+        for group in self.layout.floating_groups_front_to_back() {
+            if group.bounds.contains(position) {
+                return group.close_at(position);
+            }
+        }
+        self.layout
+            .groups
+            .iter()
+            .filter(|group| !group.is_floating())
+            .find_map(|group| group.close_at(position))
+    }
+
+    fn set_hovered_close(&mut self, ctx: &mut EventCtx, hovered: Option<DockPanelId>) {
+        if self.hovered_close != hovered {
+            self.hovered_close = hovered;
+            ctx.request_paint();
+        }
+    }
+
+    fn request_close(&mut self, ctx: &mut EventCtx, panel: DockPanelId) {
+        let action = self
+            .on_close_request
+            .as_mut()
+            .map_or(DockCloseAction::Hide, |handler| handler(panel));
+        let changed = match action {
+            DockCloseAction::Hide => self.state.hide(panel).unwrap_or(false),
+            DockCloseAction::Remove => self.state.remove_panel(panel).unwrap_or(false),
+            DockCloseAction::Keep => false,
+        };
+        if changed {
+            self.hovered_close = None;
+            ctx.request_ordering();
+            ctx.request_hit_test();
+            ctx.request_measure();
+            ctx.request_semantics();
+        }
+        ctx.request_paint();
     }
 
     fn begin_pointer_gesture(
@@ -1160,6 +1686,12 @@ impl DockWorkspace {
                     pointer_origin: position,
                     initial_bounds: group.bounds,
                 });
+                ctx.request_pointer_capture(pointer_id);
+                return true;
+            }
+
+            if let Some(panel) = group.close_at(position) {
+                self.gesture = Some(DockWorkspaceGesture::ClosePress { pointer_id, panel });
                 ctx.request_pointer_capture(pointer_id);
                 return true;
             }
@@ -1217,6 +1749,18 @@ impl DockWorkspace {
             return true;
         }
 
+        if let Some(panel) = self
+            .layout
+            .groups
+            .iter()
+            .filter(|group| !group.is_floating())
+            .find_map(|group| group.close_at(position))
+        {
+            self.gesture = Some(DockWorkspaceGesture::ClosePress { pointer_id, panel });
+            ctx.request_pointer_capture(pointer_id);
+            return true;
+        }
+
         if let Some(group) = self
             .layout
             .groups
@@ -1255,6 +1799,9 @@ impl DockWorkspace {
             if !group.bounds.contains(position) {
                 continue;
             }
+            if let Some(insert) = group.tab_insert_at(position, dragged_panel) {
+                return Some(DockDropCandidate::insert(group.bounds, insert));
+            }
             let target = group
                 .panels
                 .iter()
@@ -1268,6 +1815,7 @@ impl DockWorkspace {
                 host_bounds: group.bounds,
                 zone_bounds,
                 center_only: true,
+                insert: None,
             });
         }
 
@@ -1279,6 +1827,9 @@ impl DockWorkspace {
         {
             if !group.bounds.contains(position) {
                 continue;
+            }
+            if let Some(insert) = group.tab_insert_at(position, dragged_panel) {
+                return Some(DockDropCandidate::insert(group.bounds, insert));
             }
             let target = group
                 .panels
@@ -1293,6 +1844,7 @@ impl DockWorkspace {
                 host_bounds: group.bounds,
                 zone_bounds: drop_zone_rect(group.bounds, zone),
                 center_only: false,
+                insert: None,
             });
         }
 
@@ -1307,6 +1859,7 @@ impl DockWorkspace {
                     host_bounds: bounds,
                     zone_bounds: inset_rect_evenly(bounds, DROP_ZONE_INSET),
                     center_only: true,
+                    insert: None,
                 });
             }
         }
@@ -1362,6 +1915,7 @@ impl DockWorkspace {
             return;
         };
         match gesture {
+            DockWorkspaceGesture::ClosePress { .. } => return,
             DockWorkspaceGesture::TabPress { .. } | DockWorkspaceGesture::TabDrag { .. } => {}
             DockWorkspaceGesture::Split {
                 path,
@@ -1369,18 +1923,30 @@ impl DockWorkspace {
                 split_bounds,
                 ..
             } => {
-                let available = match axis {
-                    Axis::Horizontal => split_bounds.width(),
-                    Axis::Vertical => split_bounds.height(),
-                }
-                .max(1.0);
+                let total = axis_extent(*axis, split_bounds.size);
+                let available = (total - DEFAULT_SPLITTER_THICKNESS.min(total)).max(1.0);
                 let offset = match axis {
                     Axis::Horizontal => position.x - split_bounds.x(),
                     Axis::Vertical => position.y - split_bounds.y(),
                 };
+                let snapshot = self.state.snapshot();
+                let (first_minimum, second_minimum) = match node_at_path(&snapshot.root, path) {
+                    Some(DockNode::Split { first, second, .. }) => split_minimums(
+                        first,
+                        second,
+                        *axis,
+                        available,
+                        self.header_height(),
+                        DEFAULT_SPLITTER_THICKNESS,
+                        &self.options_map(),
+                    ),
+                    _ => (0.0, 0.0),
+                };
                 let min_fraction =
-                    (MIN_DOCK_PANE_EXTENT / available).clamp(MIN_SPLIT_FRACTION, 0.45);
-                let fraction = (offset / available).clamp(min_fraction, 1.0 - min_fraction);
+                    (first_minimum / available).clamp(MIN_SPLIT_FRACTION, MAX_SPLIT_FRACTION);
+                let max_fraction =
+                    (1.0 - second_minimum / available).clamp(min_fraction, MAX_SPLIT_FRACTION);
+                let fraction = (offset / available).clamp(min_fraction, max_fraction);
                 let _ = self.state.set_split_fraction(path, fraction);
             }
             DockWorkspaceGesture::FloatingMove {
@@ -1418,12 +1984,22 @@ impl DockWorkspace {
         ctx.request_semantics();
     }
 
-    fn finish_pointer_gesture(&mut self, ctx: &mut EventCtx, cancelled: bool) {
+    fn finish_pointer_gesture(&mut self, ctx: &mut EventCtx, release: Point, cancelled: bool) {
         let Some(gesture) = self.gesture.take() else {
             return;
         };
         if cancelled {
             ctx.request_paint();
+            return;
+        }
+
+        if let DockWorkspaceGesture::ClosePress { panel, .. } = gesture {
+            if self
+                .close_rect(panel)
+                .is_some_and(|close| close.contains(release))
+            {
+                self.request_close(ctx, panel);
+            }
             return;
         }
 
@@ -1435,7 +2011,9 @@ impl DockWorkspace {
             ..
         } = gesture
         {
-            if let Some(candidate) = candidate {
+            if let Some(insert) = candidate.as_ref().and_then(|candidate| candidate.insert) {
+                let _ = self.state.dock_tab(panel, insert.anchor, insert.after);
+            } else if let Some(candidate) = candidate {
                 match candidate.target {
                     Some(target) if target != panel => {
                         let _ = self.state.dock(panel, target, candidate.zone);
@@ -1518,9 +2096,25 @@ impl Widget for DockWorkspace {
                     .as_ref()
                     .is_some_and(|gesture| gesture.pointer_id() == pointer.pointer_id) =>
             {
-                self.finish_pointer_gesture(ctx, pointer.kind == PointerEventKind::Cancel);
+                self.finish_pointer_gesture(
+                    ctx,
+                    pointer.position,
+                    pointer.kind == PointerEventKind::Cancel,
+                );
                 ctx.release_pointer_capture(pointer.pointer_id);
                 ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if matches!(
+                    pointer.kind,
+                    PointerEventKind::Move | PointerEventKind::Enter
+                ) =>
+            {
+                let hovered = self.close_at(pointer.position);
+                self.set_hovered_close(ctx, hovered);
+            }
+            Event::Pointer(pointer) if pointer.kind == PointerEventKind::Leave => {
+                self.set_hovered_close(ctx, None);
             }
             Event::Keyboard(key) if ctx.is_focused() && key.state == KeyState::Pressed => {
                 let handled = match key.key.as_str() {
@@ -1536,6 +2130,24 @@ impl Widget for DockWorkspace {
                 }
             }
             Event::Semantics(semantics) => {
+                if matches!(semantics.action, SemanticsActionRequest::Activate) {
+                    let closing = self
+                        .layout
+                        .groups
+                        .iter()
+                        .flat_map(|group| group.tabs.iter())
+                        .find(|tab| {
+                            tab.close.is_some()
+                                && dock_close_semantics_id(ctx.widget_id(), tab.panel)
+                                    == semantics.target
+                        })
+                        .map(|tab| tab.panel);
+                    if let Some(panel) = closing {
+                        self.request_close(ctx, panel);
+                        ctx.set_handled();
+                        return;
+                    }
+                }
                 if matches!(
                     semantics.action,
                     SemanticsActionRequest::Activate | SemanticsActionRequest::Focus
@@ -1611,6 +2223,8 @@ impl Widget for DockWorkspace {
     }
 
     fn measure(&mut self, ctx: &mut MeasureCtx, constraints: Constraints) -> Size {
+        let _registry_revision = ctx.observe(&self.state.registry_revision);
+        self.apply_registry_ops();
         let snapshot = ctx.observe(&self.state.snapshot);
         let width = if constraints.max.width.is_finite() {
             constraints.max.width
@@ -1686,8 +2300,13 @@ impl Widget for DockWorkspace {
             ..
         }) = &self.gesture
         {
-            if let Some(candidate) = candidate {
-                paint_drop_targets(ctx, candidate, &theme);
+            match candidate {
+                Some(DockDropCandidate {
+                    insert: Some(insert),
+                    ..
+                }) => ctx.fill_rect(insert.indicator, theme.palette.accent),
+                Some(candidate) => paint_drop_targets(ctx, candidate, &theme),
+                None => {}
             }
             self.paint_drag_preview(ctx, *panel, *position, &theme);
         }
@@ -1715,7 +2334,7 @@ impl Widget for DockWorkspace {
             });
             tabs.value = self
                 .panel(group.active)
-                .map(|panel| SemanticsValue::Text(panel.title.clone()));
+                .map(|panel| SemanticsValue::Text(panel.options.title.clone()));
             ctx.push(tabs);
             for tab in &group.tabs {
                 let mut node = SemanticsNode::new(
@@ -1723,11 +2342,30 @@ impl Widget for DockWorkspace {
                     SemanticsRole::Button,
                     tab.bounds,
                 );
+                let options = self.panel(tab.panel).map(|panel| &panel.options);
                 node.parent = Some(group_id);
-                node.name = self.panel(tab.panel).map(|panel| panel.title.clone());
+                node.name = options.map(|options| options.title.clone());
+                node.description = options
+                    .filter(|options| options.dirty)
+                    .map(|_| "Unsaved changes".to_string());
                 node.state.selected = tab.panel == group.active;
                 node.actions = vec![SemanticsAction::Activate, SemanticsAction::Focus];
                 ctx.push(node);
+
+                if let Some(close) = tab.close {
+                    let mut node = SemanticsNode::new(
+                        dock_close_semantics_id(ctx.widget_id(), tab.panel),
+                        SemanticsRole::Button,
+                        close,
+                    );
+                    node.parent = Some(group_id);
+                    node.name = Some(match options {
+                        Some(options) => format!("Close {}", options.title),
+                        None => "Close panel".to_string(),
+                    });
+                    node.actions = vec![SemanticsAction::Activate];
+                    ctx.push(node);
+                }
             }
             if let Some(panel) = self.panel(group.active) {
                 panel.child.semantics(ctx);
@@ -1810,19 +2448,32 @@ impl DockWorkspace {
                     palette.accent,
                 );
             }
-            let label = self
-                .panel(tab.panel)
-                .map(|panel| panel.title.as_str())
+            let options = self.panel(tab.panel).map(|panel| &panel.options);
+            let label = options
+                .map(|options| options.title.as_str())
                 .unwrap_or("Missing panel");
-            let style = theme.text_style(if selected {
+            let ink = if selected {
                 palette.text
             } else {
                 palette.text_muted
-            });
-            let text_rect = tab.bounds.inflate(-8.0, -2.0);
-            ctx.push_clip_rect(text_rect);
-            paint_text_line(ctx, text_rect, label, &style, TextAlign::Start);
+            };
+            if let (Some(icon), Some(glyph)) = (tab.icon, options.and_then(|options| options.icon))
+            {
+                draw_icon_glyph(ctx, glyph, icon, ink);
+            }
+            let style = theme.text_style(ink);
+            ctx.push_clip_rect(tab.label);
+            paint_text_line(ctx, tab.label, label, &style, TextAlign::Start);
             ctx.pop_clip();
+            if let Some(dirty) = tab.dirty {
+                ctx.fill_rrect(dirty, [dirty.width() * 0.5; 4], ink);
+            }
+            if let Some(close) = tab.close {
+                if self.hovered_close == Some(tab.panel) {
+                    ctx.fill_rrect(close, [3.0; 4], palette.control_hover);
+                }
+                draw_icon_glyph(ctx, IconGlyph::Close, close.inflate(-3.0, -3.0), ink);
+            }
         }
 
         if group.is_floating() {
@@ -1863,7 +2514,7 @@ impl DockWorkspace {
         stroke_border(ctx, bounds, 0.0, 1.5, theme.palette.accent);
         let text = self
             .panel(panel)
-            .map(|entry| entry.title.as_str())
+            .map(|entry| entry.options.title.as_str())
             .unwrap_or("Panel");
         let style = theme.text_style(theme.palette.text);
         let text_bounds = inset_rect_evenly(bounds, 8.0);
@@ -1995,7 +2646,7 @@ fn build_workspace_layout(
     bounds: Rect,
     header_height: f32,
     splitter_thickness: f32,
-    titles: &HashMap<DockPanelId, String>,
+    panels: &HashMap<DockPanelId, DockPanelOptions>,
 ) -> DockLayoutCache {
     let mut layout = DockLayoutCache {
         bounds,
@@ -2007,7 +2658,7 @@ fn build_workspace_layout(
         bounds,
         header_height,
         splitter_thickness,
-        titles,
+        panels,
         &mut path,
         &mut layout,
     );
@@ -2020,7 +2671,7 @@ fn build_workspace_layout(
             header_height,
             &floating.panels,
             floating.active,
-            titles,
+            panels,
             true,
         ));
     }
@@ -2033,19 +2684,22 @@ fn layout_dock_node(
     bounds: Rect,
     header_height: f32,
     splitter_thickness: f32,
-    titles: &HashMap<DockPanelId, String>,
+    panels: &HashMap<DockPanelId, DockPanelOptions>,
     path: &mut Vec<DockBranch>,
     layout: &mut DockLayoutCache,
 ) {
     match node {
         DockNode::Empty => {}
-        DockNode::Tabs { panels, active } => layout.groups.push(make_group_layout(
+        DockNode::Tabs {
+            panels: members,
+            active,
+        } => layout.groups.push(make_group_layout(
             DockGroupLocation::Docked(path.clone()),
             bounds,
             header_height,
-            panels,
+            members,
             *active,
-            titles,
+            panels,
             false,
         )),
         DockNode::Split {
@@ -2057,9 +2711,19 @@ fn layout_dock_node(
             let total = axis_extent(*axis, bounds.size);
             let divider = splitter_thickness.min(total).max(0.0);
             let available = (total - divider).max(0.0);
-            let minimum = MIN_DOCK_PANE_EXTENT.min(available * 0.45);
-            let first_extent =
-                (available * *fraction).clamp(minimum, (available - minimum).max(minimum));
+            let (first_minimum, second_minimum) = split_minimums(
+                first,
+                second,
+                *axis,
+                available,
+                header_height,
+                splitter_thickness,
+                panels,
+            );
+            let first_extent = (available * *fraction).clamp(
+                first_minimum,
+                (available - second_minimum).max(first_minimum),
+            );
             let second_extent = (available - first_extent).max(0.0);
             let first_bounds = axis_rect(*axis, bounds, 0.0, first_extent);
             let splitter_bounds = axis_rect(*axis, bounds, first_extent, divider);
@@ -2077,7 +2741,7 @@ fn layout_dock_node(
                 first_bounds,
                 header_height,
                 splitter_thickness,
-                titles,
+                panels,
                 path,
                 layout,
             );
@@ -2088,7 +2752,7 @@ fn layout_dock_node(
                 second_bounds,
                 header_height,
                 splitter_thickness,
-                titles,
+                panels,
                 path,
                 layout,
             );
@@ -2101,9 +2765,9 @@ fn make_group_layout(
     location: DockGroupLocation,
     bounds: Rect,
     header_height: f32,
-    panels: &[DockPanelId],
+    members: &[DockPanelId],
     active: DockPanelId,
-    titles: &HashMap<DockPanelId, String>,
+    panels: &HashMap<DockPanelId, DockPanelOptions>,
     floating: bool,
 ) -> DockGroupLayout {
     let header_height = header_height.min(bounds.height()).max(0.0);
@@ -2124,31 +2788,110 @@ fn make_group_layout(
     } else {
         header
     };
-    let tabs = tab_rects(tab_area, panels, titles);
+    let tabs = tab_rects(tab_area, members, panels);
     DockGroupLayout {
         location,
         bounds,
         header,
         content,
-        panels: panels.to_vec(),
+        panels: members.to_vec(),
         active,
         tabs,
     }
 }
 
+/// The smallest extent a dock node needs along `axis` so that every panel
+/// in it keeps its minimum content size.
+fn node_min_extent(
+    node: &DockNode,
+    axis: Axis,
+    header_height: f32,
+    splitter_thickness: f32,
+    panels: &HashMap<DockPanelId, DockPanelOptions>,
+) -> f32 {
+    match node {
+        DockNode::Empty => 0.0,
+        DockNode::Tabs {
+            panels: members, ..
+        } => {
+            let content = members
+                .iter()
+                .filter_map(|panel| panels.get(panel))
+                .map(|options| axis_extent(axis, options.min_size))
+                .filter(|extent| extent.is_finite())
+                .fold(0.0, f32::max);
+            let chrome = match axis {
+                Axis::Horizontal => 0.0,
+                Axis::Vertical => header_height,
+            };
+            (content + chrome).max(MIN_DOCK_PANE_EXTENT)
+        }
+        DockNode::Split {
+            axis: split_axis,
+            first,
+            second,
+            ..
+        } => {
+            let first = node_min_extent(first, axis, header_height, splitter_thickness, panels);
+            let second = node_min_extent(second, axis, header_height, splitter_thickness, panels);
+            if *split_axis == axis {
+                first + second + splitter_thickness
+            } else {
+                first.max(second)
+            }
+        }
+    }
+}
+
+/// Minimum extents for the two branches of a split with `available` room.
+///
+/// When both minimums cannot be met they shrink in proportion, leaving the
+/// divider a little travel so the user can still trade space between them.
+fn split_minimums(
+    first: &DockNode,
+    second: &DockNode,
+    axis: Axis,
+    available: f32,
+    header_height: f32,
+    splitter_thickness: f32,
+    panels: &HashMap<DockPanelId, DockPanelOptions>,
+) -> (f32, f32) {
+    let first = node_min_extent(first, axis, header_height, splitter_thickness, panels);
+    let second = node_min_extent(second, axis, header_height, splitter_thickness, panels);
+    let budget = (available * 0.9).max(0.0);
+    if first + second > budget {
+        let scale = budget / (first + second);
+        (first * scale, second * scale)
+    } else {
+        (first, second)
+    }
+}
+
 fn tab_rects(
     bounds: Rect,
-    panels: &[DockPanelId],
-    titles: &HashMap<DockPanelId, String>,
+    members: &[DockPanelId],
+    panels: &HashMap<DockPanelId, DockPanelOptions>,
 ) -> Vec<DockTabLayout> {
-    if panels.is_empty() || bounds.width() <= 0.0 {
+    if members.is_empty() || bounds.width() <= 0.0 {
         return Vec::new();
     }
-    let natural = panels
+    let natural = members
         .iter()
         .map(|panel| {
-            let characters = titles.get(panel).map_or(12, |title| title.chars().count());
-            (characters as f32 * 7.0 + 28.0).clamp(72.0, 180.0)
+            let options = panels.get(panel);
+            let characters = options.map_or(12, |options| options.title.chars().count());
+            let mut width =
+                (characters as f32 * 7.0 + 28.0).clamp(TAB_MIN_WIDTH, TAB_MAX_TITLE_WIDTH);
+            if options.is_some_and(|options| options.icon.is_some()) {
+                width += TAB_ICON_EXTENT + TAB_PART_GAP;
+            }
+            if options.is_some_and(|options| options.dirty) {
+                width += TAB_DIRTY_EXTENT + TAB_PART_GAP;
+            }
+            if options.is_some_and(|options| options.closable) {
+                width += TAB_CLOSE_EXTENT + TAB_PART_GAP;
+            }
+            width
         })
         .collect::<Vec<_>>();
     let total = natural.iter().sum::<f32>();
@@ -2160,17 +2903,74 @@ fn tab_rects(
     let mut x = bounds.x();
     natural
         .into_iter()
-        .zip(panels.iter().copied())
+        .zip(members.iter().copied())
         .map(|(width, panel)| {
             let width = (width * scale).max(0.0).min(bounds.max_x() - x);
-            let tab = DockTabLayout {
-                panel,
-                bounds: Rect::new(x, bounds.y(), width, bounds.height()),
-            };
+            let tab_bounds = Rect::new(x, bounds.y(), width, bounds.height());
             x += width;
-            tab
+            tab_layout(panel, tab_bounds, panels.get(&panel))
         })
         .collect()
+}
+
+/// Places a tab's icon, title, unsaved marker, and close button. Parts that
+/// do not fit a squeezed tab are dropped, the title last.
+fn tab_layout(
+    panel: DockPanelId,
+    bounds: Rect,
+    options: Option<&DockPanelOptions>,
+) -> DockTabLayout {
+    let center_y = bounds.y() + bounds.height() * 0.5;
+    let mut left = bounds.x() + TAB_TEXT_INSET;
+    let mut right = bounds.max_x() - TAB_TEXT_INSET;
+
+    let close = options
+        .filter(|options| options.closable && bounds.width() >= TAB_MIN_CLOSE_WIDTH)
+        .map(|_| {
+            let extent = TAB_CLOSE_EXTENT.min(bounds.height());
+            let rect = Rect::new(
+                bounds.max_x() - TAB_TEXT_INSET * 0.5 - extent,
+                center_y - extent * 0.5,
+                extent,
+                extent,
+            );
+            right = rect.x() - TAB_PART_GAP;
+            rect
+        });
+    let icon = options
+        .filter(|options| options.icon.is_some() && bounds.width() >= TAB_MIN_ICON_WIDTH)
+        .map(|_| {
+            let extent = TAB_ICON_EXTENT.min(bounds.height());
+            let rect = Rect::new(left, center_y - extent * 0.5, extent, extent);
+            left = rect.max_x() + TAB_PART_GAP;
+            rect
+        });
+    let dirty = options
+        .filter(|options| options.dirty && right - left >= TAB_DIRTY_EXTENT + TAB_PART_GAP)
+        .map(|_| {
+            let rect = Rect::new(
+                right - TAB_DIRTY_EXTENT,
+                center_y - TAB_DIRTY_EXTENT * 0.5,
+                TAB_DIRTY_EXTENT,
+                TAB_DIRTY_EXTENT,
+            );
+            right = rect.x() - TAB_PART_GAP;
+            rect
+        });
+    let label = Rect::new(
+        left,
+        bounds.y() + 2.0,
+        (right - left).max(0.0),
+        (bounds.height() - 4.0).max(0.0),
+    );
+    DockTabLayout {
+        panel,
+        bounds,
+        label,
+        icon,
+        dirty,
+        close,
+    }
 }
 
 fn axis_extent(axis: Axis, size: Size) -> f32 {
@@ -2291,6 +3091,18 @@ fn dock_tab_semantics_id(parent: WidgetId, panel: DockPanelId) -> WidgetId {
             .get()
             .wrapping_mul(421)
             .wrapping_add(panel.get().wrapping_mul(17))
+            & LOW_MASK),
+    )
+}
+
+fn dock_close_semantics_id(parent: WidgetId, panel: DockPanelId) -> WidgetId {
+    const TAG: u64 = 9_u64 << 50;
+    const LOW_MASK: u64 = (1_u64 << 50) - 1;
+    WidgetId::new(
+        TAG | (parent
+            .get()
+            .wrapping_mul(443)
+            .wrapping_add(panel.get().wrapping_mul(19))
             & LOW_MASK),
     )
 }
@@ -2796,6 +3608,383 @@ mod tests {
             panic!("root remains split");
         };
         assert!((fraction - 0.8).abs() < f32::EPSILON);
+    }
+
+    fn click(runtime: &mut Runtime, window_id: sui_core::WindowId, position: Point) {
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, position, true),
+            )
+            .expect("press");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, position, false),
+            )
+            .expect("release");
+    }
+
+    fn named<'a>(semantics: &'a [SemanticsNode], name: &str) -> Option<&'a SemanticsNode> {
+        semantics
+            .iter()
+            .find(|node| node.name.as_deref() == Some(name))
+    }
+
+    fn center(rect: Rect) -> Point {
+        Point::new(
+            rect.x() + rect.width() * 0.5,
+            rect.y() + rect.height() * 0.5,
+        )
+    }
+
+    #[test]
+    fn panels_can_be_added_and_removed_while_mounted() {
+        let state =
+            DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::tabs([SCENE], SCENE)))
+                .expect("valid tabs");
+        let mut builds = 0;
+        let workspace = DockWorkspace::new(state.clone())
+            .with_panel(SCENE, "Scene", panel("Scene body"))
+            .panel_builder(move |id| {
+                assert_eq!(id, DETAILS);
+                builds += 1;
+                Box::new(panel(&format!("Details build {builds}")))
+            });
+        let (mut runtime, window_id) = build_runtime(workspace);
+        resize(&mut runtime, window_id, 800.0, 600.0);
+        runtime.render(window_id).expect("initial frame");
+
+        state
+            .add_panel(
+                DETAILS,
+                "Details",
+                DockPlacement::Beside {
+                    target: SCENE,
+                    zone: DockZone::Right,
+                },
+            )
+            .expect("details registers while mounted");
+        assert!(state.is_registered(DETAILS));
+        assert!(
+            state
+                .add_panel(DETAILS, "Again", DockPlacement::Hidden)
+                .is_err(),
+            "a registered ID cannot be registered twice"
+        );
+        assert!(
+            state
+                .add_panel(SCENE, "Scene", DockPlacement::Hidden)
+                .is_err(),
+            "builder-registered IDs are known to the state"
+        );
+
+        let frame = runtime.render(window_id).expect("frame with added panel");
+        assert!(named(&frame.semantics, "Details").is_some());
+        assert!(named(&frame.semantics, "Details build 1").is_some());
+
+        assert!(state.remove_panel(DETAILS).expect("details removes"));
+        assert!(!state.is_registered(DETAILS));
+        assert!(
+            !state
+                .remove_panel(DETAILS)
+                .expect("second removal is a no-op")
+        );
+        let frame = runtime.render(window_id).expect("frame without panel");
+        assert!(named(&frame.semantics, "Details").is_none());
+        assert!(named(&frame.semantics, "Details build 1").is_none());
+        assert_eq!(state.snapshot().root, DockNode::tabs([SCENE], SCENE));
+
+        state
+            .add_panel(DETAILS, "Details", DockPlacement::Root(DockZone::Bottom))
+            .expect("a removed ID can be reused");
+        let frame = runtime.render(window_id).expect("frame with reused ID");
+        assert!(named(&frame.semantics, "Details build 2").is_some());
+    }
+
+    #[test]
+    fn state_stays_shareable_across_threads() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<DockWorkspaceState>();
+
+        let state =
+            DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::tabs([SCENE], SCENE)))
+                .expect("valid tabs");
+        let workspace =
+            DockWorkspace::new(state.clone()).with_panel(SCENE, "Scene", panel("Scene"));
+        let (mut runtime, window_id) = build_runtime(workspace);
+        resize(&mut runtime, window_id, 800.0, 600.0);
+        runtime.render(window_id).expect("initial frame");
+
+        let worker_state = state.clone();
+        std::thread::spawn(move || {
+            worker_state
+                .add_panel(DETAILS, "Details", DockPlacement::Root(DockZone::Right))
+                .expect("a worker thread may queue a panel");
+        })
+        .join()
+        .expect("worker finishes");
+
+        let frame = runtime.render(window_id).expect("frame with queued panel");
+        assert!(
+            named(&frame.semantics, "Details").is_some(),
+            "a panel without a builder still gets its tab"
+        );
+    }
+
+    #[test]
+    fn dock_tab_reorders_within_a_group_and_inserts_into_another() {
+        let state = DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::split(
+            Axis::Horizontal,
+            0.5,
+            DockNode::tabs([SCENE, VIEWPORT], SCENE),
+            DockNode::tabs([DETAILS], DETAILS),
+        )))
+        .expect("valid split");
+
+        assert!(state.dock_tab(VIEWPORT, SCENE, false).expect("reorders"));
+        let DockNode::Split { first, .. } = state.snapshot().root else {
+            panic!("root remains split");
+        };
+        assert_eq!(*first, DockNode::tabs([VIEWPORT, SCENE], VIEWPORT));
+
+        assert!(state.dock_tab(DETAILS, VIEWPORT, true).expect("inserts"));
+        assert_eq!(
+            state.snapshot().root,
+            DockNode::tabs([VIEWPORT, DETAILS, SCENE], DETAILS),
+            "the emptied group collapses and the tab lands after its anchor"
+        );
+        assert!(state.dock_tab(SCENE, DockPanelId::new(99), true).is_err());
+    }
+
+    #[test]
+    fn dragging_a_tab_along_its_header_reorders_the_group() {
+        let state = DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::tabs(
+            [SCENE, VIEWPORT],
+            SCENE,
+        )))
+        .expect("valid tabs");
+        let workspace = DockWorkspace::new(state.clone())
+            .with_panel(SCENE, "Scene", panel("Scene"))
+            .with_panel(VIEWPORT, "Viewport", panel("Viewport"));
+        let (mut runtime, window_id) = build_runtime(workspace);
+        resize(&mut runtime, window_id, 800.0, 600.0);
+        let frame = runtime.render(window_id).expect("initial frame");
+        let scene_tab = named(&frame.semantics, "Scene").expect("scene tab").bounds;
+        let viewport_tab = named(&frame.semantics, "Viewport")
+            .expect("viewport tab")
+            .bounds;
+        let drop = Point::new(viewport_tab.max_x() - 4.0, center(viewport_tab).y);
+
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Down, center(scene_tab), true),
+            )
+            .expect("scene tab press");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Move, drop, true),
+            )
+            .expect("drag past the viewport tab");
+        runtime
+            .handle_event(
+                window_id,
+                primary_pointer(PointerEventKind::Up, drop, false),
+            )
+            .expect("drop");
+
+        assert_eq!(
+            state.snapshot().root,
+            DockNode::tabs([VIEWPORT, SCENE], SCENE)
+        );
+        assert!(state.snapshot().floating.is_empty());
+    }
+
+    #[test]
+    fn close_button_hides_by_default_and_follows_the_close_handler() {
+        let closable = |title: &str| DockPanelOptions::new(title).closable(true);
+        let state = DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::tabs(
+            [SCENE, VIEWPORT, DETAILS],
+            SCENE,
+        )))
+        .expect("valid tabs");
+        let workspace = DockWorkspace::new(state.clone())
+            .with_panel(SCENE, closable("Scene"), panel("Scene"))
+            .with_panel(VIEWPORT, "Viewport", panel("Viewport"))
+            .with_panel(DETAILS, closable("Details"), panel("Details"));
+        let (mut runtime, window_id) = build_runtime(workspace);
+        resize(&mut runtime, window_id, 800.0, 600.0);
+        let frame = runtime.render(window_id).expect("initial frame");
+        assert!(
+            named(&frame.semantics, "Close Viewport").is_none(),
+            "only closable panels expose a close button"
+        );
+        let close = named(&frame.semantics, "Close Scene").expect("scene close button");
+        assert_eq!(close.role, SemanticsRole::Button);
+        click(&mut runtime, window_id, center(close.bounds));
+        assert!(state.snapshot().hidden.contains(&SCENE));
+        assert!(state.is_registered(SCENE), "hiding keeps the panel widget");
+
+        let frame = runtime.render(window_id).expect("frame after hide");
+        let close_id = named(&frame.semantics, "Close Details")
+            .expect("details close button")
+            .id;
+        assert!(
+            runtime
+                .handle_semantics_action(window_id, close_id, SemanticsActionRequest::Activate)
+                .expect("close semantics routes")
+        );
+        assert!(state.snapshot().hidden.contains(&DETAILS));
+    }
+
+    #[test]
+    fn close_handler_can_keep_or_remove_a_panel() {
+        let action = std::rc::Rc::new(std::cell::Cell::new(DockCloseAction::Keep));
+        let state = DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::tabs(
+            [SCENE, VIEWPORT],
+            SCENE,
+        )))
+        .expect("valid tabs");
+        let handler_action = std::rc::Rc::clone(&action);
+        let workspace = DockWorkspace::new(state.clone())
+            .with_panel(
+                SCENE,
+                DockPanelOptions::new("Scene").closable(true).dirty(true),
+                panel("Scene"),
+            )
+            .with_panel(VIEWPORT, "Viewport", panel("Viewport"))
+            .on_close_request(move |panel| {
+                assert_eq!(panel, SCENE);
+                handler_action.get()
+            });
+        let (mut runtime, window_id) = build_runtime(workspace);
+        resize(&mut runtime, window_id, 800.0, 600.0);
+        let frame = runtime.render(window_id).expect("initial frame");
+        let close = center(
+            named(&frame.semantics, "Close Scene")
+                .expect("scene close button")
+                .bounds,
+        );
+
+        click(&mut runtime, window_id, close);
+        assert_eq!(
+            state.snapshot().root,
+            DockNode::tabs([SCENE, VIEWPORT], SCENE),
+            "a vetoed close leaves the layout untouched"
+        );
+
+        action.set(DockCloseAction::Remove);
+        click(&mut runtime, window_id, close);
+        assert_eq!(state.snapshot().root, DockNode::tabs([VIEWPORT], VIEWPORT));
+        assert!(state.snapshot().hidden.is_empty());
+        assert!(!state.is_registered(SCENE));
+        let frame = runtime.render(window_id).expect("frame after removal");
+        assert!(named(&frame.semantics, "Scene").is_none());
+    }
+
+    #[test]
+    fn update_panel_changes_the_tab_title_and_unsaved_marker() {
+        let state =
+            DockWorkspaceState::new(DockWorkspaceSnapshot::new(DockNode::tabs([SCENE], SCENE)))
+                .expect("valid tabs");
+        let workspace = DockWorkspace::new(state.clone()).with_panel(SCENE, "Scene", panel("Body"));
+        let (mut runtime, window_id) = build_runtime(workspace);
+        resize(&mut runtime, window_id, 800.0, 600.0);
+        let frame = runtime.render(window_id).expect("initial frame");
+        assert_eq!(
+            named(&frame.semantics, "Scene")
+                .expect("scene tab")
+                .description,
+            None
+        );
+
+        state
+            .update_panel(SCENE, |options| {
+                options.title = "Renamed".to_string();
+                options.dirty = true;
+            })
+            .expect("registered panel updates");
+        let frame = runtime.render(window_id).expect("updated frame");
+        assert!(named(&frame.semantics, "Scene").is_none());
+        assert_eq!(
+            named(&frame.semantics, "Renamed")
+                .expect("renamed tab")
+                .description
+                .as_deref(),
+            Some("Unsaved changes")
+        );
+        assert!(state.update_panel(VIEWPORT, |_| {}).is_err());
+    }
+
+    #[test]
+    fn splits_keep_panels_at_their_minimum_size() {
+        let snapshot = DockWorkspaceSnapshot::new(DockNode::split(
+            Axis::Horizontal,
+            0.2,
+            DockNode::tabs([SCENE], SCENE),
+            DockNode::tabs([VIEWPORT], VIEWPORT),
+        ));
+        let width_of = |layout: &DockLayoutCache, panel: DockPanelId| {
+            layout
+                .groups
+                .iter()
+                .find(|group| group.active == panel)
+                .expect("group is laid out")
+                .bounds
+                .width()
+        };
+        let mut panels = HashMap::new();
+        panels.insert(
+            SCENE,
+            DockPanelOptions::new("Scene").min_size(Size::new(420.0, 0.0)),
+        );
+        panels.insert(VIEWPORT, DockPanelOptions::new("Viewport"));
+        let bounds = Rect::new(0.0, 0.0, 804.0, 600.0);
+
+        let layout = build_workspace_layout(&snapshot, bounds, 28.0, 4.0, &panels);
+        assert!((width_of(&layout, SCENE) - 420.0).abs() < 0.5);
+        assert!((width_of(&layout, VIEWPORT) - 380.0).abs() < 0.5);
+
+        panels.insert(
+            VIEWPORT,
+            DockPanelOptions::new("Viewport").min_size(Size::new(1_260.0, 0.0)),
+        );
+        let layout = build_workspace_layout(&snapshot, bounds, 28.0, 4.0, &panels);
+        let scene = width_of(&layout, SCENE);
+        let viewport = width_of(&layout, VIEWPORT);
+        assert!((scene + viewport - 800.0).abs() < 0.5);
+        assert!(
+            scene >= 150.0 && viewport > scene * 2.5,
+            "minimums that cannot both fit shrink in proportion: {scene} / {viewport}"
+        );
+    }
+
+    #[test]
+    fn retain_panels_prunes_missing_panels_and_stays_valid() {
+        let mut snapshot = root_snapshot().with_floating(DockFloatingGroup::new(
+            1,
+            [DockPanelId::new(7)],
+            DockPanelId::new(7),
+            Rect::new(40.0, 40.0, 300.0, 240.0),
+        ));
+        snapshot.hidden.push(DockPanelId::new(8));
+
+        snapshot.retain_panels(|panel| panel == SCENE || panel == DETAILS);
+
+        validate_snapshot(&snapshot).expect("pruned snapshot stays canonical");
+        assert!(snapshot.floating.is_empty());
+        assert!(snapshot.hidden.is_empty());
+        assert_eq!(
+            snapshot.root,
+            DockNode::split(
+                Axis::Horizontal,
+                0.25,
+                DockNode::tabs([SCENE], SCENE),
+                DockNode::tabs([DETAILS], DETAILS),
+            )
+        );
     }
 
     #[test]
