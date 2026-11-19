@@ -953,10 +953,10 @@ impl JsDockPanelOptions {
     }
 
     #[wasm_bindgen(getter = icon)]
-    pub fn icon(&self) -> Option<String> {
+    pub fn icon(&self) -> JsValue {
         self.inner
             .icon()
-            .map(|icon| binding_icon_glyph_name(icon).to_owned())
+            .map_or(JsValue::NULL, |icon| binding_icon_glyph_name(icon).into())
     }
 
     #[wasm_bindgen(getter = closable)]
