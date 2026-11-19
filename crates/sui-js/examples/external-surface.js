@@ -1,4 +1,4 @@
-import * as sui from "@sui/ui";
+import * as sui from "sinomo-ui";
 
 const pixels = Uint8Array.from([
   255, 60, 40, 255,

@@ -1,6 +1,6 @@
 // Open a desktop window. Node's event loop keeps running while it is open,
 // so timers and async callbacks work as usual.
-import * as sui from "@sui/ui";
+import * as sui from "sinomo-ui";
 
 const seconds = new sui.State(0);
 const status = new sui.State("Ready");

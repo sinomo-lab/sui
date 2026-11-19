@@ -1,4 +1,4 @@
-import * as sui from "@sui/ui";
+import * as sui from "sinomo-ui";
 
 const app = new sui.App();
 const marker = app.rgbaImage(

@@ -218,7 +218,7 @@ editor parity.
 
 ### 4. Finish the browser JavaScript/WASM bindings
 
-**Status: alpha implemented.** `@sui/ui` has one async API with two native
+**Status: alpha implemented.** `sinomo-ui` has one async API with two native
 modules: the napi-rs addon for Node/Electron and a wasm-bindgen build
 (`crates/sui-web`, built with `cargo xtask web build`) for browsers. The shared
 JavaScript layer (`crates/sui-js/runtime.js`) and the generated widget glue

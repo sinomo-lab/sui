@@ -51,6 +51,13 @@ icons with Tabler Icons and fixes table scroll bars and node graph layering.
 - The bundled icons are Tabler Icons 3.50.0 outline icons, under MIT, instead
   of Lucide.
 
+### JavaScript
+
+- The JavaScript package is published to npm as `sinomo-ui`, replacing the
+  unpublished name `@sui/ui`. `npm install sinomo-ui` installs a prebuilt
+  addon for Linux (x64 and arm64, glibc 2.28 or newer), macOS (Apple silicon
+  and Intel), or Windows x64, so Node apps no longer build from source.
+
 ### Fixed
 
 - `Table` and `VirtualTable` scroll bars respond to the pointer: drag the

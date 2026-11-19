@@ -1,4 +1,4 @@
-import * as sui from "@sui/ui";
+import * as sui from "sinomo-ui";
 
 const count = new sui.State(0);
 const enabled = new sui.State(true);

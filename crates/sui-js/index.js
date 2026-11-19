@@ -5,6 +5,24 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createApi } from "./runtime.js";
 
+// The npm package that holds this platform's prebuilt addon, an optional
+// dependency of the published package (see `scripts/npm-stage.mjs`).
+function prebuiltPackage() {
+  const { platform, arch } = process;
+  if (platform === "win32") {
+    return `sinomo-ui-win32-${arch}-msvc`;
+  }
+  if (platform === "darwin") {
+    return `sinomo-ui-darwin-${arch}`;
+  }
+  if (platform === "linux") {
+    // Prebuilt Linux addons link against glibc.
+    const glibc = process.report?.getReport?.().header?.glibcVersionRuntime;
+    return glibc ? `sinomo-ui-linux-${arch}-gnu` : null;
+  }
+  return null;
+}
+
 function loadNative() {
   // Development builds and tests can point at a cargo-built library, which
   // has a platform library extension rather than `.node`.
@@ -37,11 +55,25 @@ function loadNative() {
       tried.push(path);
     }
   }
+  const prebuilt = prebuiltPackage();
+  if (prebuilt) {
+    try {
+      return require(prebuilt);
+    } catch (error) {
+      if (error?.code !== "MODULE_NOT_FOUND") {
+        throw error;
+      }
+      tried.push(prebuilt);
+    }
+  }
   throw new Error(
     [
       "Could not load the SUI native binding.",
-      "Build it from crates/sui-js with `napi build --platform --release`",
-      "or place the generated .node file next to index.js.",
+      prebuilt
+        ? `Install the optional dependency ${prebuilt},`
+        : `No prebuilt addon is published for ${process.platform}-${process.arch};`,
+      "or build it from crates/sui-js with `napi build --platform --release`",
+      "and place the generated .node file next to index.js.",
       `Tried: ${tried.join(", ")}`,
     ].join(" "),
   );

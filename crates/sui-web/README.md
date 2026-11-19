@@ -1,6 +1,6 @@
 # sinomo-ui-web
 
-The WebAssembly build behind the browser entry point of the `@sui/ui`
+The WebAssembly build behind the browser entry point of the `sinomo-ui`
 JavaScript package (`crates/sui-js/web.js`). It exposes the same native
 surface as the Node addon in `crates/sui-js`, so the shared JavaScript layer
 (`crates/sui-js/runtime.js`) runs on both.

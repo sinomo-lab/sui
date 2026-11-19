@@ -1,6 +1,6 @@
 # SUI JavaScript bindings
 
-`@sui/ui` brings SUI to JavaScript in two forms with one API:
+`sinomo-ui` brings SUI to JavaScript in two forms with one API:
 
 - **Node.js and Electron**: a native addon (napi-rs) that opens desktop
   windows;
@@ -15,10 +15,33 @@ addon, and bundlers and browsers load the WebAssembly build, through the
 The binding supports retained widget trees, host-driven rendering for tests,
 JavaScript-owned custom widgets, accessibility semantics, renderer-neutral
 paint commands, image and font resources, live theme handles, renderer/HDR
-policy, and external-surface descriptors. It is an alpha, source-built
-package; the npm package and prebuilt binaries are not published yet.
+policy, and external-surface descriptors. The package is an alpha.
 
-## Prerequisites
+## Install
+
+```bash
+npm install sinomo-ui
+```
+
+The package needs Node.js 20.19 or newer. It holds the JavaScript, the
+declarations, and the WebAssembly build; npm also installs the prebuilt addon
+for the host from one of its optional dependencies:
+
+| Platform | Package |
+| --- | --- |
+| Linux x64, glibc 2.28 or newer | `sinomo-ui-linux-x64-gnu` |
+| Linux arm64, glibc 2.28 or newer | `sinomo-ui-linux-arm64-gnu` |
+| macOS 11 or newer, Apple silicon | `sinomo-ui-darwin-arm64` |
+| macOS 11 or newer, Intel | `sinomo-ui-darwin-x64` |
+| Windows x64 | `sinomo-ui-win32-x64-msvc` |
+
+On other platforms, such as musl-based Linux, build the addon from source.
+Installing with `--omit=optional` leaves the addon out; the browser entry
+point does not need it.
+
+## Build from source
+
+Building needs:
 
 - Rust 1.90 or newer and Cargo;
 - Node.js 20.19 or newer;
@@ -28,8 +51,6 @@ package; the npm package and prebuilt binaries are not published yet.
   (`rustup target add wasm32-unknown-unknown`) and the `wasm-bindgen` CLI
   matching the workspace's `wasm-bindgen` crate
   (`cargo install wasm-bindgen-cli --version 0.2.130`).
-
-## Build
 
 From `crates/sui-js`, build the Node addon:
 
@@ -50,7 +71,7 @@ Both outputs are local build artifacts and are not committed.
 ## Open a window
 
 ```javascript
-import * as sui from "@sui/ui";
+import * as sui from "sinomo-ui";
 
 const count = new sui.State(0);
 
@@ -248,7 +269,7 @@ scroll chrome remain neutral.
 
 When running directly from this checkout, import `./index.js` from
 `crates/sui-js` (or `./crates/sui-js/index.js` from the workspace root)
-instead of `@sui/ui`.
+instead of `sinomo-ui`.
 
 Use `App.start()` for embedding, deterministic tests, or host-driven rendering:
 
@@ -357,7 +378,7 @@ depend on the package directory while developing:
 ```json
 {
   "dependencies": {
-    "@sui/ui": "file:../path/to/sui/crates/sui-js"
+    "sinomo-ui": "file:../path/to/sui/crates/sui-js"
   }
 }
 ```
@@ -366,8 +387,8 @@ Build the addon or the browser module before importing it.
 
 ## Current limitations
 
-- The npm package, native binaries, and release automation are not published;
-  users build from source.
+- Prebuilt addons cover the platforms listed under Install; elsewhere, build
+  from source.
 - On Node, the app's event loop runs between Node's own tasks and checks for
   input at least every 8 ms; creating the first window blocks Node briefly.
 - In the browser, apps cannot read files (`pngFile`, `svgFile`, `fontFile`),
@@ -397,6 +418,27 @@ npm run test:web
 ```
 
 Set `SUI_DESKTOP_TESTS=1` to include the tests that open desktop windows.
+
+## Release to npm
+
+Pushing a `v*` tag to GitHub runs `.github/workflows/javascript.yml`, which
+builds a release addon for each platform and the release WebAssembly module,
+stages the npm packages with `scripts/npm-stage.mjs`, tests them installed in
+a clean directory, and publishes them with npm trusted publishing. Running the
+workflow manually does everything except publish, and leaves the tarballs in
+its `npm-packages` artifact.
+
+`scripts/npm-stage.mjs platform <rust-target> <library> <out-dir>` stages one
+addon package, and `scripts/npm-stage.mjs main <out-dir>` stages `sinomo-ui`
+with its optional dependencies. To test staged packages locally, `npm pack`
+them, install the tarballs in an empty directory, and run the suite with
+`SUI_JS_PACKAGE` set to the installed `node_modules/sinomo-ui` directory.
+
+npm accepts a trusted publisher only for a package that already exists, so a
+new package's first release publishes with the `NPM_TOKEN` repository secret.
+Afterwards, set each package's trusted publisher on npmjs.com to this
+repository, the workflow `javascript.yml`, and the environment `npm`, and
+delete the secret.
 
 ## More documentation
 

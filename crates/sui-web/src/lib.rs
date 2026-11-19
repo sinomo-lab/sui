@@ -1,6 +1,6 @@
 //! WebAssembly bindings for SUI's JavaScript API.
 //!
-//! The browser entry point of the `@sui/ui` package (`crates/sui-js/web.js`)
+//! The browser entry point of the `sinomo-ui` package (`crates/sui-js/web.js`)
 //! loads this module. It exports the same classes and functions as the Node
 //! addon in `crates/sui-js`, so the shared JavaScript layer runs on both.
 #![cfg(target_arch = "wasm32")]

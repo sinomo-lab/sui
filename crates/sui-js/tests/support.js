@@ -1,6 +1,17 @@
-// Shared test setup: load the package from the cargo-built native library.
+// Shared test setup: load the package from the cargo-built native library, or
+// from an installed copy when `SUI_JS_PACKAGE` names its directory.
 import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+/**
+ * The directory of an installed `sinomo-ui` package to test instead of the
+ * source tree, with its prebuilt addon (set by the release workflow).
+ */
+export const installedPackage = process.env.SUI_JS_PACKAGE || null;
+
+/** The package directory under test. */
+export const packageRoot = installedPackage ?? fileURLToPath(new URL("..", import.meta.url));
 
 /**
  * Which native module the tests run on: `"node"` (the addon, the default) or
@@ -9,6 +20,9 @@ import { fileURLToPath } from "node:url";
 export const backend = process.env.SUI_JS_BACKEND ?? "node";
 
 async function loadNode() {
+  if (installedPackage) {
+    return import(pathToFileURL(join(installedPackage, "index.js")).href);
+  }
   if (!process.env.SUI_JS_NATIVE) {
     const library = {
       darwin: "libsui_js.dylib",

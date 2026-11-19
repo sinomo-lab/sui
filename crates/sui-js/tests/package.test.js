@@ -3,12 +3,11 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { promisify } from "node:util";
-import { backend, sui } from "./support.js";
+import { backend, packageRoot, sui } from "./support.js";
 
-const packageRoot = fileURLToPath(new URL("..", import.meta.url));
-const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
 
 test("version matches package.json", () => {
   assert.equal(sui.version, packageJson.version);
@@ -23,7 +22,7 @@ test("widget factories are camelCase only", () => {
 });
 
 // `window.js` opens a real window.
-const examples = readdirSync(new URL("../examples", import.meta.url))
+const examples = readdirSync(join(packageRoot, "examples"))
   .filter((name) => name.endsWith(".js") && name !== "window.js")
   .sort();
 

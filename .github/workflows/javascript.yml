@@ -1,11 +1,19 @@
 name: JavaScript package
 
-# Tests the `@sui/ui` package on both of its native modules: the Node addon on
-# each desktop platform, and the WebAssembly build (run in Node).
+# Tests the `sinomo-ui` package on both of its native modules: the Node addon
+# on each desktop platform, and the WebAssembly build (run in Node).
+#
+# For a `v*` release tag, and when run manually, it also builds the npm
+# packages (`sinomo-ui` and one prebuilt addon package per platform) and
+# tests them installed in a clean directory:
+# - pushing a `v*` release tag publishes them with npm trusted publishing;
+# - running the workflow manually builds the `npm-packages` artifact without
+#   publishing, to rehearse a release.
 
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -14,7 +22,10 @@ permissions:
 
 concurrency:
   group: javascript-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
 
 jobs:
   node:
@@ -76,3 +87,222 @@ jobs:
 
       - name: Run the test suite
         run: node crates/sui-js/tests/run.js web
+
+  addons:
+    name: Prebuilt addon (${{ matrix.platform }})
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runner }}
+    # Linux addons are built against glibc 2.28, like the Python wheels.
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64-gnu
+            runner: ubuntu-latest
+            container: quay.io/pypa/manylinux_2_28_x86_64
+            target: x86_64-unknown-linux-gnu
+            library: libsui_js.so
+          - platform: linux-arm64-gnu
+            runner: ubuntu-24.04-arm
+            container: quay.io/pypa/manylinux_2_28_aarch64
+            target: aarch64-unknown-linux-gnu
+            library: libsui_js.so
+          - platform: darwin-arm64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            library: libsui_js.dylib
+          - platform: darwin-x64
+            runner: macos-latest
+            target: x86_64-apple-darwin
+            library: libsui_js.dylib
+          - platform: win32-x64-msvc
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            library: sui_js.dll
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust in the build container
+        if: matrix.container
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Add the Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build the addon
+        run: cargo build --release --locked -p sinomo-ui-js --target ${{ matrix.target }}
+
+      - name: Upload the addon
+        uses: actions/upload-artifact@v4
+        with:
+          name: addon-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ matrix.library }}
+          if-no-files-found: error
+
+  packages:
+    name: npm packages
+    needs: addons
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install the WebAssembly target, wasm-bindgen CLI, and wasm-opt
+        run: |
+          rustup target add wasm32-unknown-unknown
+          version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+          cargo install --locked wasm-bindgen-cli --version "$version"
+          curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_123/binaryen-version_123-x86_64-linux.tar.gz \
+            | tar -xz -C "$RUNNER_TEMP"
+          echo "WASM_OPT=$RUNNER_TEMP/binaryen-version_123/bin/wasm-opt" >> "$GITHUB_ENV"
+
+      - name: Build the WebAssembly module
+        run: cargo xtask web build --release
+
+      - name: Download the addons
+        uses: actions/download-artifact@v4
+        with:
+          pattern: addon-*
+          path: addons
+
+      - name: Stage and pack the packages
+        run: |
+          for directory in addons/addon-*; do
+            target=${directory#addons/addon-}
+            node crates/sui-js/scripts/npm-stage.mjs platform "$target" "$directory"/* staged
+          done
+          node crates/sui-js/scripts/npm-stage.mjs main staged
+          mkdir dist
+          for directory in staged/*; do
+            npm pack "./$directory" --pack-destination dist
+          done
+          ls -l dist
+
+      - name: Upload the packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages
+          path: dist/*.tgz
+          if-no-files-found: error
+
+  packages-test:
+    name: Test packages (${{ matrix.platform }}, Node ${{ matrix.node }})
+    needs: packages
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 24]
+        platform: [linux-x64-gnu, darwin-arm64, win32-x64-msvc]
+        include:
+          - platform: linux-x64-gnu
+            runner: ubuntu-latest
+          - platform: darwin-arm64
+            runner: macos-latest
+          - platform: win32-x64-msvc
+            runner: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install a software Vulkan driver for offscreen rendering
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes mesa-vulkan-drivers
+
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: dist
+
+      - name: Install the packages in a clean directory
+        shell: bash
+        run: |
+          app="$RUNNER_TEMP/app"
+          mkdir "$app"
+          cd "$app"
+          npm init --yes > /dev/null
+          # The other platforms' addons may not be on the registry yet; npm
+          # skips optional dependencies it cannot fetch.
+          npm install "$GITHUB_WORKSPACE"/dist/sinomo-ui-[0-9]*.tgz \
+            "$GITHUB_WORKSPACE"/dist/sinomo-ui-${{ matrix.platform }}-*.tgz
+          echo "SUI_JS_PACKAGE=$(node -p 'path.resolve("node_modules/sinomo-ui")')" >> "$GITHUB_ENV"
+
+      - name: Run the test suite against the installed package
+        run: node crates/sui-js/tests/run.js node
+
+  publish-npm:
+    name: Publish to npm
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [node, web, packages, packages-test]
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/sinomo-ui
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check that the tag matches the package version
+        run: |
+          version=$(node -p 'require("./crates/sui-js/package.json").version')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package version $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - name: Update npm
+        run: npm install --global npm@11
+
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: dist
+
+      - name: Publish
+        env:
+          # Only for a package's first release, before a trusted publisher
+          # can be configured for it; leave the secret unset afterwards.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Prerelease versions (0.8.0-rc.1) never become `latest`.
+          tag=latest
+          case "$VERSION" in *-*) tag=next ;; esac
+          # Publish the addons first, so `sinomo-ui` never points at
+          # packages that do not exist; skip what a previous run published.
+          for archive in dist/sinomo-ui-[!0-9]*.tgz dist/sinomo-ui-[0-9]*.tgz; do
+            name=$(tar -xOzf "$archive" package/package.json \
+              | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).name')
+            if npm view "$name@$VERSION" version > /dev/null 2>&1; then
+              echo "$name@$VERSION is already published"
+              continue
+            fi
+            npm publish "$archive" --access public --tag "$tag"
+          done
