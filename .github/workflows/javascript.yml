@@ -7,8 +7,7 @@ name: JavaScript package
 # packages (`sinomo-ui` and one prebuilt addon package per platform) and
 # tests them installed in a clean directory:
 # - pushing a `v*` release tag publishes them with npm trusted publishing;
-# - running the workflow manually builds the `npm-packages` artifact without
-#   publishing, to rehearse a release.
+# - a manual run rehearses the release unless a tag is supplied from main.
 
 on:
   push:
@@ -16,16 +15,23 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish_tag:
+        description: Existing release tag to build, test, and publish (leave blank to rehearse)
+        type: string
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: javascript-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: javascript-${{ inputs.publish_tag && format('refs/tags/{0}', inputs.publish_tag) || github.ref }}
+  cancel-in-progress: ${{ inputs.publish_tag == '' && !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   MACOSX_DEPLOYMENT_TARGET: "11.0"
+  # Leave checkout at its event default for pushes, pull requests, and rehearsals.
+  RELEASE_REF: ${{ inputs.publish_tag && format('refs/tags/{0}', inputs.publish_tag) || '' }}
 
 jobs:
   node:
@@ -44,6 +50,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -69,6 +77,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -123,6 +133,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Install Rust in the build container
         if: matrix.container
@@ -151,6 +163,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -214,6 +228,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -248,7 +264,9 @@ jobs:
 
   publish-npm:
     name: Publish to npm
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.publish_tag != '')
     needs: [node, web, packages, packages-test]
     runs-on: ubuntu-latest
     environment:
@@ -260,12 +278,16 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Check that the tag matches the package version
+        env:
+          RELEASE_TAG: ${{ inputs.publish_tag || github.ref_name }}
         run: |
           version=$(node -p 'require("./crates/sui-js/package.json").version')
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package version $version"
+          if [ "v$version" != "$RELEASE_TAG" ]; then
+            echo "::error::Tag $RELEASE_TAG does not match package version $version"
             exit 1
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
@@ -304,5 +326,5 @@ jobs:
               echo "$name@$VERSION is already published"
               continue
             fi
-            npm publish "$archive" --access public --tag "$tag"
+            npm publish "./$archive" --access public --tag "$tag"
           done

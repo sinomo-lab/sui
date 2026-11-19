@@ -424,9 +424,10 @@ Set `SUI_DESKTOP_TESTS=1` to include the tests that open desktop windows.
 Pushing a `v*` tag to GitHub runs `.github/workflows/javascript.yml`, which
 builds a release addon for each platform and the release WebAssembly module,
 stages the npm packages with `scripts/npm-stage.mjs`, tests them installed in
-a clean directory, and publishes them with npm trusted publishing. Running the
-workflow manually does everything except publish, and leaves the tarballs in
-its `npm-packages` artifact.
+a clean directory, and publishes them with npm trusted publishing. A manual run
+leaves the tarballs in the `npm-packages` artifact for inspection. To retry a release,
+run the workflow from `main` and enter the existing tag in `publish_tag`.
+This builds and tests that tag and publishes any missing packages.
 
 `scripts/npm-stage.mjs platform <rust-target> <library> <out-dir>` stages one
 addon package, and `scripts/npm-stage.mjs main <out-dir>` stages `sinomo-ui`
@@ -435,8 +436,8 @@ them, install the tarballs in an empty directory, and run the suite with
 `SUI_JS_PACKAGE` set to the installed `node_modules/sinomo-ui` directory.
 
 npm accepts a trusted publisher only for a package that already exists, so a
-new package's first release publishes with the `NPM_TOKEN` repository secret.
-Afterwards, set each package's trusted publisher on npmjs.com to this
+new package's first release publishes with the `NPM_TOKEN` secret in the `npm`
+GitHub environment. Afterwards, set each package's trusted publisher on npmjs.com to this
 repository, the workflow `javascript.yml`, and the environment `npm`, and
 delete the secret.
 
