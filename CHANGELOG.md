@@ -6,65 +6,62 @@ Versioning, with the usual expectation that the API may change during the
 
 ## [Unreleased]
 
-### Fixed
+## [0.7.0] - 2026-11-18
 
-- `VirtualTable` and `Table` scroll bars respond to the pointer: dragging the
-  thumb scrolls the rows, and a press on the track moves the thumb there.
-  The thumb was painted but ignored input.
-- A node graph paints each node's connection handles, handle labels,
-  selection ring, and resize handles with that node, so a node stacked above
-  covers them. They were painted over every node. A handle hidden under
-  another node is no longer hit through it.
+This release lets docking workspaces add, close, and reorder panels at
+runtime, in Rust, Python, and JavaScript. It also replaces the bundled Lucide
+icons with Tabler Icons and fixes table scroll bars and node graph layering.
+
+### Upgrading from 0.6
+
+- Update the SUI crates together to `0.7.0`.
+- Replace `sinomo-ui-lucide` (`sui_lucide`) with `sinomo-ui-tabler`
+  (`sui_tabler`), which is versioned with the workspace. `LucideIcon` becomes
+  `TablerIcon` with Tabler's icon names, and `IconGlyph::lucide_icon()`
+  becomes `tabler_icon()`. Built-in `IconGlyph` variants keep their names.
+- `DockFloatingGroup::bounds` is relative to the workspace instead of the
+  window. A layout saved from a workspace that did not start at its window's
+  origin shifts by that offset.
 
 ### Docking
 
-- `DockWorkspaceState::add_panel`, `remove_panel`, and `update_panel` register,
-  drop, and restyle panels while the workspace is mounted. `DockPlacement`
-  chooses where an added panel first appears, and
-  `DockWorkspace::panel_builder` creates its widget. The state remains
-  `Send + Sync`.
+- `DockWorkspaceState::add_panel`, `remove_panel`, and `update_panel` change
+  the panels of a mounted workspace. `DockPlacement` chooses where a new panel
+  appears, and `DockWorkspace::panel_builder` creates its widget.
 - `DockPanelOptions` gives a tab an icon, a close button, an unsaved-changes
-  marker, and a minimum content size that splits respect.
-  `DockWorkspace::with_panel` and `push_panel` accept either a title or
-  options, so existing calls compile unchanged.
+  marker, and a minimum content size that splits and floating groups respect.
+  `with_panel` and `push_panel` accept either a title or options.
 - `DockWorkspace::on_close_request` decides whether a closed tab is hidden,
-  removed, or kept open. Close buttons are exposed to assistive technology.
-- Dragging a tab along a group's header reorders it or inserts it at that
-  position; `DockWorkspaceState::dock_tab` does the same from code. A tab
-  dropped on another group's header now lands at the pointer instead of
-  splitting the group along its top edge.
-- `DockWorkspaceSnapshot::retain_panels` prunes panels that no longer exist
-  before a saved layout is restored.
-- Floating groups respect `DockPanelOptions::min_size` like docked splits do:
-  a group is laid out, and stops resizing, at the largest minimum among its
-  tabs.
-- `DockFloatingGroup::bounds` is now relative to the workspace instead of the
-  window. A workspace that does not start at its window's origin, or that
-  scrolls, no longer misplaces its floating groups; a layout saved from such
-  a workspace shifts by the workspace's former offset.
-- A `DockWorkspace` inside a scrolling or moving ancestor keeps its tab
-  headers, splitters, and hit targets with its panels. They stayed at their
-  last arranged position until something inside the workspace changed.
-- The JavaScript and Python bindings expose the runtime docking API:
-  `DockPanelOptions`, `DockPlacement`, `DockState.addPanel`, `removePanel`,
-  `updatePanel`, `dockTab`, and `isRegistered`, `DockLayout.retainPanels`,
-  tab options on `DockPanelSpec`, and the `panelBuilder` and `onCloseRequest`
-  options of `dockWorkspace` (snake case in Python).
-- The new `serde` feature of `sinomo-ui` and `sinomo-ui-widgets` implements
-  `Serialize` and `Deserialize` for `DockWorkspaceSnapshot`.
-- `DockWorkspaceState` no longer derives `Debug` structurally; its `Debug`
-  output shows the snapshot and the number of queued registry changes.
+  removed, or kept open.
+- Dragging a tab along a group's header reorders it, and
+  `DockWorkspaceState::dock_tab` does the same from code. A tab dropped on
+  another group's header lands at the pointer instead of splitting the group.
+- `DockWorkspaceSnapshot::retain_panels` drops panels that no longer exist
+  from a saved layout. The new `serde` feature of `sinomo-ui` and
+  `sinomo-ui-widgets` serializes snapshots.
+- Python and JavaScript expose the same API: `DockPanelOptions`,
+  `DockPlacement`, the new `DockState` methods, `DockLayout.retainPanels`, and
+  the `panelBuilder` and `onCloseRequest` options of `dockWorkspace` (snake
+  case in Python).
+- A workspace inside a scrolling ancestor, or away from its window's origin,
+  keeps its tab headers, splitters, and floating groups with its panels.
 
 ### Icons
 
-- Replace bundled Lucide assets with Tabler Icons 3.50.0 outline icons under
-  MIT, retaining the upstream copyright and license. Built-in `IconGlyph`
-  variants and widget APIs keep their semantic names and use Tabler geometry.
-- Replace the `sinomo-ui-lucide` crate (`sui_lucide`) with
-  `sinomo-ui-tabler` (`sui_tabler`), versioned with the SUI workspace.
-  Direct users should migrate `LucideIcon` to `TablerIcon`, choose Tabler's
-  icon names, and replace `IconGlyph::lucide_icon()` with `tabler_icon()`.
-  Raw image handles use a new Tabler namespace.
+- The bundled icons are Tabler Icons 3.50.0 outline icons, under MIT, instead
+  of Lucide.
+
+### Fixed
+
+- `Table` and `VirtualTable` scroll bars respond to the pointer: drag the
+  thumb, or press the track to move it there.
+- A node graph paints each node's connection handles, labels, selection ring,
+  and resize handles with that node, so a node stacked above covers them and
+  takes their pointer hits.
+
+### Performance
+
+- Text measurement, painting, and rendering repeat less work in each frame.
 
 ## [0.6.1] - 2026-11-01
 
@@ -631,3 +628,4 @@ Initial public alpha release of the Rust workspace.
 [0.5.0]: https://github.com/sinomo-lab/sui/compare/v0.4.1...v0.5.0
 [0.6.0]: https://github.com/sinomo-lab/sui/compare/v0.5.0...v0.6.0
 [0.6.1]: https://github.com/sinomo-lab/sui/compare/v0.6.0...v0.6.1
+[0.7.0]: https://github.com/sinomo-lab/sui/compare/v0.6.1...v0.7.0

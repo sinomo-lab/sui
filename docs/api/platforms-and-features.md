@@ -28,7 +28,7 @@ path:
 
 ```toml
 [dependencies]
-sui = { package = "sinomo-ui", version = "0.6" }
+sui = { package = "sinomo-ui", version = "0.7" }
 ```
 
 `App::run()` and `App::run_with_handle(...)` are available. They build the
@@ -63,7 +63,7 @@ facade's platform or renderer:
 [dependencies]
 sui = {
     package = "sinomo-ui",
-    version = "0.6",
+    version = "0.7",
     default-features = false,
 }
 ```
@@ -85,7 +85,7 @@ Select the web platform without pulling the desktop feature:
 [dependencies]
 sui = {
     package = "sinomo-ui",
-    version = "0.6",
+    version = "0.7",
     default-features = false,
     features = ["web"],
 }
@@ -124,7 +124,7 @@ Android is experimental and uses the mobile feature:
 [dependencies]
 sui = {
     package = "sinomo-ui",
-    version = "0.6",
+    version = "0.7",
     default-features = false,
     features = ["mobile"],
 }
