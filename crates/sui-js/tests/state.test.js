@@ -126,17 +126,22 @@ test("watch() stops when its signal aborts", () => {
 test("state subscriptions are disposable", () => {
   const state = new sui.State(1);
   const seen = [];
-  {
-    using subscription = state.watch((value) => seen.push(value));
-    assert.equal(typeof subscription[Symbol.dispose], "function");
-    state.set(2);
-  }
+  const subscription = state.watch((value) => seen.push(value));
+  state.set(2);
+  subscription[Symbol.dispose]();
   state.set(3);
   assert.deepEqual(seen, [2]);
-
-  const subscription = state.watch((value) => seen.push(value));
-  subscription[Symbol.dispose]();
-  state.set(4);
-  assert.deepEqual(seen, [2]);
   assert.equal(subscription.unsubscribe(), false);
+});
+
+test("using disposes a subscription at scope exit", {
+  skip: Number.parseInt(process.versions.node, 10) < 24,
+}, async () => {
+  // Load the syntax only in Node versions that can parse it.
+  const { watchInScope } = await import("./watch-in-scope.js");
+  const state = new sui.State(1);
+  const seen = [];
+  watchInScope(state, (value) => seen.push(value), () => state.set(2));
+  state.set(3);
+  assert.deepEqual(seen, [2]);
 });

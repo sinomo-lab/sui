@@ -63,12 +63,11 @@ test("app.on returns a disposable subscription", () => {
   running.drain();
   assert.deepEqual(seen, [1]);
 
-  {
-    using disposable = app.on("ping", (payload) => seen.push(payload));
-    ui.emit("ping", 3);
-    running.drain();
-    assert.equal(disposable.active, true);
-  }
+  const disposable = app.on("ping", (payload) => seen.push(payload));
+  ui.emit("ping", 3);
+  running.drain();
+  assert.equal(disposable.active, true);
+  disposable[Symbol.dispose]();
   ui.emit("ping", 4);
   running.drain();
   assert.deepEqual(seen, [1, 3]);
