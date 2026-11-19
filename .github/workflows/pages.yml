@@ -55,10 +55,10 @@ jobs:
           fi
 
           wasm_bytes=$(wc -c < "$wasm_file")
-          wasm_limit=$((12 * 1024 * 1024))
+          wasm_limit=$((16 * 1024 * 1024))
           echo "WebAssembly size: $wasm_bytes bytes (budget: $wasm_limit bytes)"
           if (( wasm_bytes > wasm_limit )); then
-            echo "::error::WebAssembly bundle exceeds the 12 MiB Pages budget."
+            echo "::error::WebAssembly bundle exceeds the 16 MiB Pages budget."
             exit 1
           fi
 

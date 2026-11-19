@@ -17,7 +17,7 @@ Production build
   node crates/sui-demo/web/prepare-dist.mjs crates/sui-demo/web/dist
 
 The `web-release` profile optimizes for bundle size with thin LTO and one
-codegen unit. The Pages workflow uses the same profile and keeps a 12 MiB
+codegen unit. The Pages workflow uses the same profile and keeps a 16 MiB
 uncompressed Wasm budget. Native release builds retain their existing profile.
 
 Output goes to:
