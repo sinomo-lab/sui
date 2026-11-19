@@ -120,8 +120,8 @@ impl Backend {
             if capture.width() == 0 || capture.height() == 0 {
                 return Err("offscreen capture is empty".into());
             }
-            let pixels = capture.pixels();
-            if !pixels.chunks_exact(4).any(|pixel| pixel != &pixels[..4]) {
+            let (pixels, _) = capture.pixels().as_chunks::<4>();
+            if pixels.iter().all(|pixel| pixel == &pixels[0]) {
                 return Err("offscreen capture contains only a flat color".into());
             }
         }

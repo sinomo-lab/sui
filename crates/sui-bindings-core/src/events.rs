@@ -691,6 +691,37 @@ impl BindingImeEvent {
     }
 }
 
+impl BindingImeEvent {
+    /// Return the canonical JavaScript event action name.
+    pub fn js_name(&self) -> &'static str {
+        match self {
+            Self::CompositionStart => "compositionStart",
+            Self::CompositionUpdate { .. } => "compositionUpdate",
+            Self::CompositionCommit { .. } => "compositionCommit",
+            Self::CompositionEnd => "compositionEnd",
+        }
+    }
+}
+
+impl BindingWindowEvent {
+    /// Return the canonical JavaScript event action name.
+    pub fn js_name(&self) -> &'static str {
+        match self {
+            Self::CloseRequested => "closeRequested",
+            Self::Resized(_) => "resized",
+            Self::Moved(_) => "moved",
+            Self::ScaleFactorChanged { .. } => "scaleFactorChanged",
+            Self::Focused(_) => "focused",
+            Self::Occluded(_) => "occluded",
+            Self::SafeAreaChanged { .. } => "safeAreaChanged",
+            Self::ExternalFileHovered(_) => "externalFileHovered",
+            Self::ExternalFileHoverCancelled => "externalFileHoverCancelled",
+            Self::ExternalFileDropped(_) => "externalFileDropped",
+            Self::RedrawRequested => "redrawRequested",
+        }
+    }
+}
+
 #[cfg(test)]
 mod vocabulary_tests {
     use super::*;
@@ -777,37 +808,6 @@ mod vocabulary_tests {
         );
         for invalid in ["composition-start", "START", " start", ""] {
             assert!(BindingImeEvent::from_js_name(invalid, None, None, None).is_err());
-        }
-    }
-}
-
-impl BindingImeEvent {
-    /// Return the canonical JavaScript event action name.
-    pub fn js_name(&self) -> &'static str {
-        match self {
-            Self::CompositionStart => "compositionStart",
-            Self::CompositionUpdate { .. } => "compositionUpdate",
-            Self::CompositionCommit { .. } => "compositionCommit",
-            Self::CompositionEnd => "compositionEnd",
-        }
-    }
-}
-
-impl BindingWindowEvent {
-    /// Return the canonical JavaScript event action name.
-    pub fn js_name(&self) -> &'static str {
-        match self {
-            Self::CloseRequested => "closeRequested",
-            Self::Resized(_) => "resized",
-            Self::Moved(_) => "moved",
-            Self::ScaleFactorChanged { .. } => "scaleFactorChanged",
-            Self::Focused(_) => "focused",
-            Self::Occluded(_) => "occluded",
-            Self::SafeAreaChanged { .. } => "safeAreaChanged",
-            Self::ExternalFileHovered(_) => "externalFileHovered",
-            Self::ExternalFileHoverCancelled => "externalFileHoverCancelled",
-            Self::ExternalFileDropped(_) => "externalFileDropped",
-            Self::RedrawRequested => "redrawRequested",
         }
     }
 }
