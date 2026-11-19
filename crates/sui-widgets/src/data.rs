@@ -3382,6 +3382,7 @@ pub struct Table {
     row_height: Option<f32>,
     header_height: Option<f32>,
     scroll_y: f32,
+    scroll_thumb_drag: Option<ScrollThumbDrag>,
     column_widths: Vec<f32>,
     on_change: Option<Box<dyn FnMut(usize)>>,
     on_change_with_ctx: Option<Box<dyn FnMut(&mut EventCtx, usize)>>,
@@ -3407,6 +3408,7 @@ impl Table {
             row_height: None,
             header_height: None,
             scroll_y: 0.0,
+            scroll_thumb_drag: None,
             column_widths: Vec::new(),
             on_change: None,
             on_change_with_ctx: None,
@@ -3602,6 +3604,20 @@ impl Table {
         scroll_y.clamp(0.0, max_scroll)
     }
 
+    /// Scrolls to `scroll_y`, clamped to the content. Returns whether the
+    /// offset changed.
+    fn scroll_to(&mut self, ctx: &mut EventCtx, scroll_y: f32) -> bool {
+        let body = self.body_rect(ctx.bounds());
+        let next = self.clamp_scroll(body.height(), scroll_y);
+        if (next - self.scroll_y).abs() <= f32::EPSILON {
+            return false;
+        }
+        self.scroll_y = next;
+        ctx.request_paint();
+        ctx.request_semantics();
+        true
+    }
+
     fn row_at_position(&self, bounds: Rect, position: Point) -> Option<usize> {
         let body = self.body_rect(bounds);
         if !body.contains(position) {
@@ -3706,8 +3722,54 @@ impl Widget for Table {
             return;
         }
         let body = self.body_rect(ctx.bounds());
+        let scroll_thumb = VerticalScrollThumb::resolve(
+            &self.resolved_theme(),
+            ctx.bounds(),
+            body,
+            self.content_height(),
+            self.scroll_y,
+        );
 
         match event {
+            Event::Pointer(pointer)
+                if self
+                    .scroll_thumb_drag
+                    .is_some_and(|drag| drag.pointer_id == pointer.pointer_id)
+                    && matches!(
+                        pointer.kind,
+                        PointerEventKind::Move | PointerEventKind::Up | PointerEventKind::Cancel
+                    ) =>
+            {
+                let drag = self.scroll_thumb_drag.expect("checked thumb drag");
+                if pointer.kind == PointerEventKind::Move {
+                    if let Some(thumb) = scroll_thumb {
+                        self.scroll_to(
+                            ctx,
+                            thumb.scroll_for_pointer(pointer.position.y, drag.grab_offset),
+                        );
+                    }
+                } else {
+                    self.scroll_thumb_drag = None;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                }
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary)
+                    && scroll_thumb.is_some_and(|thumb| thumb.track.contains(pointer.position)) =>
+            {
+                self.scroll_thumb_drag =
+                    ScrollThumbDrag::begin(scroll_thumb, pointer.pointer_id, pointer.position);
+                if let (Some(drag), Some(thumb)) = (self.scroll_thumb_drag, scroll_thumb) {
+                    self.scroll_to(
+                        ctx,
+                        thumb.scroll_for_pointer(pointer.position.y, drag.grab_offset),
+                    );
+                }
+                ctx.request_pointer_capture(pointer.pointer_id);
+                ctx.set_handled();
+            }
             Event::Pointer(pointer) if pointer.kind == PointerEventKind::Move => {
                 let hovered = self.row_at_position(ctx.bounds(), pointer.position);
                 self.set_hovered(hovered, ctx);
@@ -3719,11 +3781,7 @@ impl Widget for Table {
                     .scroll_delta
                     .map(scroll_delta_to_offset)
                     .unwrap_or(pointer.delta);
-                let next = self.clamp_scroll(body.height(), self.scroll_y - delta.y);
-                if (next - self.scroll_y).abs() > f32::EPSILON {
-                    self.scroll_y = next;
-                    ctx.request_paint();
-                    ctx.request_semantics();
+                if self.scroll_to(ctx, self.scroll_y - delta.y) {
                     ctx.set_handled();
                 }
             }
@@ -4243,6 +4301,7 @@ pub struct VirtualTable {
     on_near_end_with_ctx: Option<Box<dyn FnMut(&mut EventCtx)>>,
     last_click: Option<(usize, Instant)>,
     column_resize: Option<VirtualTableColumnResize>,
+    scroll_thumb_drag: Option<ScrollThumbDrag>,
 }
 
 impl VirtualTable {
@@ -4290,6 +4349,7 @@ impl VirtualTable {
             on_near_end_with_ctx: None,
             last_click: None,
             column_resize: None,
+            scroll_thumb_drag: None,
         }
     }
 
@@ -5038,6 +5098,22 @@ impl VirtualTable {
         }
     }
 
+    /// Scrolls the rows to `scroll_y`, clamped to the content, as the scroll
+    /// thumb does. Returns whether the offset changed.
+    fn scroll_vertically_to(&mut self, ctx: &mut EventCtx, body: Rect, scroll_y: f32) -> bool {
+        let next = self.clamp_scroll(body.height(), scroll_y);
+        if (next - self.scroll_y).abs() <= f32::EPSILON {
+            return false;
+        }
+        self.scroll_y = next;
+        self.sync_retained_offset();
+        self.publish_retained_viewport(body);
+        self.maybe_notify_near_end(ctx, body.height());
+        ctx.request_paint();
+        ctx.request_semantics();
+        true
+    }
+
     fn maybe_notify_near_end(&mut self, ctx: &mut EventCtx, viewport_height: f32) {
         let remaining = (self.content_height() - viewport_height - self.scroll_y).max(0.0);
         if remaining > self.resolved_row_height() * 12.0 {
@@ -5064,8 +5140,56 @@ impl Widget for VirtualTable {
     fn event(&mut self, ctx: &mut EventCtx, event: &Event) {
         let bounds = ctx.bounds();
         let body = self.body_rect(bounds);
+        let scroll_thumb = VerticalScrollThumb::resolve(
+            &self.resolved_theme(),
+            bounds,
+            body,
+            self.content_height(),
+            self.scroll_y,
+        );
 
         match event {
+            Event::Pointer(pointer)
+                if self
+                    .scroll_thumb_drag
+                    .is_some_and(|drag| drag.pointer_id == pointer.pointer_id)
+                    && matches!(
+                        pointer.kind,
+                        PointerEventKind::Move | PointerEventKind::Up | PointerEventKind::Cancel
+                    ) =>
+            {
+                let drag = self.scroll_thumb_drag.expect("checked thumb drag");
+                if pointer.kind == PointerEventKind::Move {
+                    if let Some(thumb) = scroll_thumb {
+                        self.scroll_vertically_to(
+                            ctx,
+                            body,
+                            thumb.scroll_for_pointer(pointer.position.y, drag.grab_offset),
+                        );
+                    }
+                } else {
+                    self.scroll_thumb_drag = None;
+                    ctx.release_pointer_capture(pointer.pointer_id);
+                }
+                ctx.set_handled();
+            }
+            Event::Pointer(pointer)
+                if pointer.kind == PointerEventKind::Down
+                    && pointer.button == Some(PointerButton::Primary)
+                    && scroll_thumb.is_some_and(|thumb| thumb.track.contains(pointer.position)) =>
+            {
+                self.scroll_thumb_drag =
+                    ScrollThumbDrag::begin(scroll_thumb, pointer.pointer_id, pointer.position);
+                if let (Some(drag), Some(thumb)) = (self.scroll_thumb_drag, scroll_thumb) {
+                    self.scroll_vertically_to(
+                        ctx,
+                        body,
+                        thumb.scroll_for_pointer(pointer.position.y, drag.grab_offset),
+                    );
+                }
+                ctx.request_pointer_capture(pointer.pointer_id);
+                ctx.set_handled();
+            }
             Event::Pointer(pointer)
                 if pointer.kind == PointerEventKind::Move
                     && self
@@ -6179,6 +6303,101 @@ pub(crate) fn draw_surface(
     );
 }
 
+/// The vertical scroll bar a data view shows in the gutter beside its
+/// viewport: the track a press can land on and the thumb inside it.
+#[derive(Debug, Clone, Copy)]
+struct VerticalScrollThumb {
+    track: Rect,
+    thumb: Rect,
+    max_scroll: f32,
+}
+
+impl VerticalScrollThumb {
+    /// `None` when the content fits the viewport or there is no gutter.
+    fn resolve(
+        theme: &DefaultTheme,
+        bounds: Rect,
+        viewport: Rect,
+        content_height: f32,
+        scroll_y: f32,
+    ) -> Option<Self> {
+        if content_height <= viewport.height() || viewport.height() <= 0.0 {
+            return None;
+        }
+
+        let ratio = (viewport.height() / content_height).clamp(0.08, 1.0);
+        let metrics = theme.metrics;
+        let thumb_height = (viewport.height() * ratio)
+            .max(metrics.data_scroll_thumb_min_length)
+            .min(viewport.height());
+        let gutter_width =
+            (bounds.max_x() - metrics.data_viewport_padding.right - viewport.max_x())
+                .max(0.0)
+                .min(metrics.scroll_bar_thickness);
+        if gutter_width <= 0.0 {
+            return None;
+        }
+        let max_scroll = (content_height - viewport.height()).max(1.0);
+        let thumb_y = viewport.y() + ((viewport.height() - thumb_height) * (scroll_y / max_scroll));
+        let thumb_width = metrics.data_scroll_thumb_width.min(gutter_width).max(0.0);
+        let thumb_inset = metrics
+            .data_scroll_thumb_inset
+            .min((gutter_width - thumb_width).max(0.0));
+        Some(Self {
+            track: Rect::new(
+                viewport.max_x(),
+                viewport.y(),
+                gutter_width,
+                viewport.height(),
+            ),
+            thumb: Rect::new(
+                viewport.max_x() + gutter_width - thumb_inset - thumb_width,
+                thumb_y,
+                thumb_width,
+                thumb_height,
+            ),
+            max_scroll,
+        })
+    }
+
+    /// The scroll offset that puts the thumb's top `grab_offset` above
+    /// `pointer_y`.
+    fn scroll_for_pointer(&self, pointer_y: f32, grab_offset: f32) -> f32 {
+        let travel = self.track.height() - self.thumb.height();
+        if travel <= 0.0 {
+            return 0.0;
+        }
+        let fraction = ((pointer_y - grab_offset - self.track.y()) / travel).clamp(0.0, 1.0);
+        fraction * self.max_scroll
+    }
+}
+
+/// A pointer dragging a data view's scroll thumb.
+#[derive(Debug, Clone, Copy)]
+struct ScrollThumbDrag {
+    pointer_id: u64,
+    /// Distance from the thumb's top edge to the pointer.
+    grab_offset: f32,
+}
+
+impl ScrollThumbDrag {
+    /// Starts a drag for a press at `position`, or `None` when the press is
+    /// outside the scroll bar. A press on the track beside the thumb centers
+    /// the thumb on the pointer.
+    fn begin(thumb: Option<VerticalScrollThumb>, pointer_id: u64, position: Point) -> Option<Self> {
+        let thumb = thumb.filter(|thumb| thumb.track.contains(position))?;
+        let on_thumb = position.y >= thumb.thumb.y() && position.y <= thumb.thumb.max_y();
+        Some(Self {
+            pointer_id,
+            grab_offset: if on_thumb {
+                position.y - thumb.thumb.y()
+            } else {
+                thumb.thumb.height() * 0.5
+            },
+        })
+    }
+}
+
 fn draw_vertical_scroll_thumb(
     ctx: &mut PaintCtx,
     theme: &DefaultTheme,
@@ -6187,39 +6406,14 @@ fn draw_vertical_scroll_thumb(
     scroll_y: f32,
     color: Color,
 ) {
-    if content_height <= viewport.height() || viewport.height() <= 0.0 {
+    let Some(thumb) =
+        VerticalScrollThumb::resolve(theme, ctx.bounds(), viewport, content_height, scroll_y)
+    else {
         return;
-    }
-
-    let ratio = (viewport.height() / content_height).clamp(0.08, 1.0);
-    let metrics = theme.metrics;
-    let thumb_height = (viewport.height() * ratio)
-        .max(metrics.data_scroll_thumb_min_length)
-        .min(viewport.height());
-    let gutter_width =
-        (ctx.bounds().max_x() - metrics.data_viewport_padding.right - viewport.max_x())
-            .max(0.0)
-            .min(metrics.scroll_bar_thickness);
-    if gutter_width <= 0.0 {
-        return;
-    }
-    let max_scroll = (content_height - viewport.height()).max(1.0);
-    let thumb_y = viewport.y() + ((viewport.height() - thumb_height) * (scroll_y / max_scroll));
-    let thumb_width = metrics.data_scroll_thumb_width.min(gutter_width).max(0.0);
-    let thumb_inset = metrics
-        .data_scroll_thumb_inset
-        .min((gutter_width - thumb_width).max(0.0));
+    };
     ctx.fill(
-        Path::rounded_rect(
-            Rect::new(
-                viewport.max_x() + gutter_width - thumb_inset - thumb_width,
-                thumb_y,
-                thumb_width,
-                thumb_height,
-            ),
-            metrics.data_scroll_thumb_radius,
-        ),
-        color.with_alpha(metrics.data_scroll_thumb_opacity),
+        Path::rounded_rect(thumb.thumb, theme.metrics.data_scroll_thumb_radius),
+        color.with_alpha(theme.metrics.data_scroll_thumb_opacity),
     );
 }
 
@@ -7605,6 +7799,101 @@ mod tests {
             run.text,
             run.style.line_height,
             token.line_height
+        );
+    }
+
+    /// Presses at `from`, drags to `to`, and releases.
+    fn drag(runtime: &mut Runtime, window_id: sui_core::WindowId, from: Point, to: Point) {
+        for (kind, position, pressed) in [
+            (PointerEventKind::Down, from, true),
+            (PointerEventKind::Move, to, true),
+            (PointerEventKind::Up, to, false),
+        ] {
+            runtime
+                .handle_event(window_id, primary_pointer(kind, position, pressed))
+                .unwrap();
+        }
+    }
+
+    fn row_names(output: &RenderOutput) -> Vec<String> {
+        output
+            .semantics
+            .iter()
+            .filter(|node| node.role == SemanticsRole::ListItem)
+            .filter_map(|node| node.name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn virtual_table_scroll_thumb_drags_and_track_presses_scroll_the_rows() {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(360.0).height(160.0).child(
+                VirtualTable::new("Files")
+                    .columns([VirtualTableColumn::new("Name").min_width(160.0)])
+                    .row_count(100)
+                    .row_height(20.0)
+                    .header_height(24.0)
+                    .row_name(|index| format!("Row {index}")),
+            ),
+        );
+        let output = runtime.render(window_id).unwrap();
+        assert_eq!(row_names(&output)[0], "Row 0");
+        let thumb = vertical_scroll_thumb_rects(&output)[0];
+        let grab = Point::new(thumb.x() + 2.0, thumb.y() + 4.0);
+
+        // Dragging past the end of the track stops at the last rows.
+        drag(
+            &mut runtime,
+            window_id,
+            grab,
+            Point::new(grab.x, grab.y + 400.0),
+        );
+        let output = runtime.render(window_id).unwrap();
+        let moved = vertical_scroll_thumb_rects(&output)[0];
+        assert!(
+            moved.y() > thumb.y() + 20.0,
+            "the thumb follows the pointer"
+        );
+        assert_eq!(
+            row_names(&output).last().map(String::as_str),
+            Some("Row 99")
+        );
+
+        // A press on the track above the thumb jumps there.
+        let top = Point::new(moved.x() + 2.0, thumb.y() + 1.0);
+        drag(&mut runtime, window_id, top, top);
+        let output = runtime.render(window_id).unwrap();
+        assert_eq!(row_names(&output)[0], "Row 0");
+    }
+
+    #[test]
+    fn table_scroll_thumb_drag_scrolls_the_rows() {
+        let (mut runtime, window_id) = build_runtime(
+            SizedBox::new().width(320.0).height(160.0).child(
+                Table::new("Objects")
+                    .columns([TableColumn::new("Name")])
+                    .rows((0..60).map(|index| TableRow::new([format!("Object {index}")]))),
+            ),
+        );
+        let output = runtime.render(window_id).unwrap();
+        let thumb = vertical_scroll_thumb_rects(&output)[0];
+        let grab = Point::new(thumb.x() + 2.0, thumb.y() + 4.0);
+
+        drag(
+            &mut runtime,
+            window_id,
+            grab,
+            Point::new(grab.x, grab.y + 400.0),
+        );
+        let output = runtime.render(window_id).unwrap();
+        let moved = vertical_scroll_thumb_rects(&output)[0];
+        assert!(
+            moved.y() > thumb.y() + 20.0,
+            "the thumb follows the pointer"
+        );
+        assert!(
+            !text_runs_for(&output, "Object 59").is_empty(),
+            "the last row is shown"
         );
     }
 

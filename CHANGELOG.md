@@ -6,6 +6,16 @@ Versioning, with the usual expectation that the API may change during the
 
 ## [Unreleased]
 
+### Fixed
+
+- `VirtualTable` and `Table` scroll bars respond to the pointer: dragging the
+  thumb scrolls the rows, and a press on the track moves the thumb there.
+  The thumb was painted but ignored input.
+- A node graph paints each node's connection handles, handle labels,
+  selection ring, and resize handles with that node, so a node stacked above
+  covers them. They were painted over every node. A handle hidden under
+  another node is no longer hit through it.
+
 ### Docking
 
 - `DockWorkspaceState::add_panel`, `remove_panel`, and `update_panel` register,

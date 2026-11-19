@@ -3012,6 +3012,17 @@ where
         let foreground_start = node_foreground_start(&snapshot, &self.visible_node_indices);
         let (background_node_indices, foreground_node_indices) =
             self.visible_node_indices.split_at(foreground_start);
+        let emphasis =
+            |node: &Node<N>, handle: &Handle| self.handle_emphasis(&snapshot.graph, node, handle);
+        let overlay = NodeOverlayOptions {
+            appearance,
+            theme: &theme,
+            hovered_handle: self.hovered_handle.as_ref(),
+            nodes_resizable: self.config.nodes_resizable,
+            handle_labels: self.config.handle_labels,
+            focused_node,
+            emphasis: &emphasis,
+        };
         paint_nodes(
             ctx,
             &snapshot,
@@ -3026,6 +3037,7 @@ where
                 registry: &self.node_widget_registry,
                 retained_layer_owner: self.node_world_layer_active[0]
                     .then(|| self.node_world_layers[0].id()),
+                overlay,
             },
         );
         let retained_edges =
@@ -3074,23 +3086,7 @@ where
                 registry: &self.node_widget_registry,
                 retained_layer_owner: self.node_world_layer_active[1]
                     .then(|| self.node_world_layers[1].id()),
-            },
-        );
-        let emphasis =
-            |node: &Node<N>, handle: &Handle| self.handle_emphasis(&snapshot.graph, node, handle);
-        paint_node_overlays(
-            ctx,
-            &snapshot,
-            bounds,
-            NodeOverlayOptions {
-                appearance,
-                theme: &theme,
-                hovered_handle: self.hovered_handle.as_ref(),
-                nodes_resizable: self.config.nodes_resizable,
-                handle_labels: self.config.handle_labels,
-                focused_node,
-                indices: &self.visible_node_indices,
-                emphasis: &emphasis,
+                overlay,
             },
         );
         if let Some(Interaction::Marquee { start, current, .. }) = self.interaction {
@@ -3924,6 +3920,27 @@ fn hit_handle<'a, N, E>(
                 })
             })
         })
+        .filter(|hit| !node_covered_at(snapshot, bounds, position, hit.node))
+}
+
+/// Whether a node stacked above `node` covers `position`, hiding whatever
+/// `node` shows there.
+fn node_covered_at<N, E>(
+    snapshot: &GraphSnapshot<N, E>,
+    bounds: Rect,
+    position: Point,
+    node: &Node<N>,
+) -> bool {
+    let Some(top) = hit_node(snapshot, bounds, position).filter(|top| top.id != node.id) else {
+        return false;
+    };
+    let index_of = |id: &NodeId| snapshot.graph.nodes.iter().position(|node| &node.id == id);
+    let (Some(top_index), Some(node_index)) = (index_of(&top.id), index_of(&node.id)) else {
+        return false;
+    };
+    let mut order = [node_index, top_index];
+    sort_node_indices(snapshot, &mut order);
+    order[1] == top_index
 }
 
 /// The nearest connectable handle of `kind` within `radius` screen pixels of
@@ -5012,6 +5029,7 @@ struct NodePaintOptions<'a, N> {
     custom_nodes: &'a RetainedNodeWidgets<N>,
     registry: &'a NodeWidgetRegistry<N>,
     retained_layer_owner: Option<WidgetId>,
+    overlay: NodeOverlayOptions<'a, N>,
 }
 
 fn paint_nodes<N, E>(
@@ -5031,6 +5049,7 @@ fn paint_nodes<N, E>(
         custom_nodes,
         registry,
         retained_layer_owner,
+        overlay,
     } = options;
     let label_style = TextStyle {
         font_size: theme.text.sm.size,
@@ -5091,6 +5110,20 @@ fn paint_nodes<N, E>(
                     paint_group(ctx);
                 }
             });
+            // The retained layer must stay identical while the graph zooms,
+            // and overlays are sized in screen pixels, so this group's
+            // overlays follow all of its bodies instead of each its own.
+            for index in &indices[start..cursor] {
+                let Some(node) = snapshot.graph.nodes.get(*index) else {
+                    continue;
+                };
+                let rect = snapshot
+                    .viewport
+                    .flow_rect_to_screen(bounds, graph_node_bounds(&snapshot.graph, node));
+                if rect.intersection(bounds).is_some() {
+                    paint_node_overlay(ctx, snapshot, bounds, node, rect, overlay);
+                }
+            }
             continue;
         }
 
@@ -5149,6 +5182,7 @@ fn paint_nodes<N, E>(
                 &label_style,
             );
         }
+        paint_node_overlay(ctx, snapshot, bounds, node, rect, overlay);
     }
 }
 
@@ -5215,14 +5249,28 @@ struct NodeOverlayOptions<'a, N> {
     nodes_resizable: bool,
     handle_labels: bool,
     focused_node: Option<&'a NodeId>,
-    indices: &'a [usize],
     emphasis: &'a HandleEmphasisFn<'a, N>,
 }
 
-fn paint_node_overlays<N, E>(
+impl<N> Clone for NodeOverlayOptions<'_, N> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<N> Copy for NodeOverlayOptions<'_, N> {}
+
+/// Paints what sits on top of one node's body: its selection ring, resize
+/// handles, and connection handles with their labels.
+///
+/// It runs right after that node's body, so a node stacked above covers these
+/// along with the body they belong to. `rect` is the node's screen bounds.
+fn paint_node_overlay<N, E>(
     ctx: &mut PaintCtx,
     snapshot: &GraphSnapshot<N, E>,
     bounds: Rect,
+    node: &Node<N>,
+    rect: Rect,
     options: NodeOverlayOptions<'_, N>,
 ) {
     let NodeOverlayOptions {
@@ -5232,99 +5280,87 @@ fn paint_node_overlays<N, E>(
         nodes_resizable,
         handle_labels,
         focused_node,
-        indices,
         emphasis,
     } = options;
-    for index in indices {
-        let Some(node) = snapshot.graph.nodes.get(*index) else {
-            continue;
-        };
-        let rect = snapshot
+    if node.selected || focused_node == Some(&node.id) {
+        ctx.stroke(
+            Path::rounded_rect(rect, 5.0),
+            appearance.selection,
+            StrokeStyle::new(2.25),
+        );
+        if nodes_resizable && node.resizable {
+            for (_, point) in resize_handle_points(rect) {
+                let handle = Rect::new(point.x - 3.5, point.y - 3.5, 7.0, 7.0);
+                ctx.fill_rrect_bordered(
+                    handle,
+                    [0.0; 4],
+                    appearance.background,
+                    Border {
+                        width: 1.5,
+                        color: appearance.selection,
+                    },
+                );
+            }
+        }
+    }
+    for handle in &node.handles {
+        let position = snapshot
             .viewport
-            .flow_rect_to_screen(bounds, graph_node_bounds(&snapshot.graph, node));
-        if rect.intersection(bounds).is_none() {
-            continue;
-        }
-        if node.selected || focused_node == Some(&node.id) {
+            .flow_to_screen(bounds, handle_position(&snapshot.graph, node, handle));
+        let radius = handle_paint_radius(snapshot.viewport.zoom);
+        let hovered = hovered_handle.is_some_and(|(node_id, handle_id, kind)| {
+            node_id == &node.id && handle_id == &handle.id && *kind == handle.kind
+        });
+        let emphasis = emphasis(node, handle);
+        let color = handle.color.unwrap_or(match handle.kind {
+            HandleKind::Source => appearance.source_handle,
+            HandleKind::Target => appearance.target_handle,
+        });
+        if emphasis == HandleEmphasis::Available {
             ctx.stroke(
-                Path::rounded_rect(rect, 5.0),
-                appearance.selection,
-                StrokeStyle::new(2.25),
+                Path::circle(position, radius + 3.5),
+                appearance.selection.with_alpha(0.72),
+                StrokeStyle::new(1.5),
             );
-            if nodes_resizable && node.resizable {
-                for (_, point) in resize_handle_points(rect) {
-                    let handle = Rect::new(point.x - 3.5, point.y - 3.5, 7.0, 7.0);
-                    ctx.fill_rrect_bordered(
-                        handle,
-                        [0.0; 4],
-                        appearance.background,
-                        Border {
-                            width: 1.5,
-                            color: appearance.selection,
-                        },
-                    );
-                }
-            }
         }
-        for handle in &node.handles {
-            let position = snapshot
-                .viewport
-                .flow_to_screen(bounds, handle_position(&snapshot.graph, node, handle));
-            let radius = handle_paint_radius(snapshot.viewport.zoom);
-            let hovered = hovered_handle.is_some_and(|(node_id, handle_id, kind)| {
-                node_id == &node.id && handle_id == &handle.id && *kind == handle.kind
-            });
-            let emphasis = emphasis(node, handle);
-            let color = handle.color.unwrap_or(match handle.kind {
-                HandleKind::Source => appearance.source_handle,
-                HandleKind::Target => appearance.target_handle,
-            });
-            if emphasis == HandleEmphasis::Available {
-                ctx.stroke(
-                    Path::circle(position, radius + 3.5),
-                    appearance.selection.with_alpha(0.72),
-                    StrokeStyle::new(1.5),
-                );
-            }
-            if hovered {
-                ctx.fill(
-                    Path::circle(position, radius + 3.0),
-                    appearance.selection.with_alpha(0.22),
-                );
-            }
-            ctx.fill_rrect_bordered(
-                Rect::new(
-                    position.x - radius,
-                    position.y - radius,
-                    radius * 2.0,
-                    radius * 2.0,
-                ),
-                [radius; 4],
-                if !handle.connectable {
-                    color.with_alpha(0.38)
-                } else if emphasis == HandleEmphasis::Dimmed {
-                    color.with_alpha(0.25)
-                } else {
-                    color
-                },
-                Border {
-                    width: 1.25,
-                    color: appearance.background,
-                },
+        if hovered {
+            ctx.fill(
+                Path::circle(position, radius + 3.0),
+                appearance.selection.with_alpha(0.22),
             );
-            if handle_labels && let Some(label) = &handle.label {
-                paint_handle_label(
-                    ctx,
-                    theme,
-                    rect,
-                    position,
-                    radius,
-                    handle.position,
-                    label,
-                    snapshot.viewport.zoom,
-                    emphasis == HandleEmphasis::Dimmed,
-                );
-            }
+        }
+        ctx.fill_rrect_bordered(
+            Rect::new(
+                position.x - radius,
+                position.y - radius,
+                radius * 2.0,
+                radius * 2.0,
+            ),
+            [radius; 4],
+            if !handle.connectable {
+                color.with_alpha(0.38)
+            } else if emphasis == HandleEmphasis::Dimmed {
+                color.with_alpha(0.25)
+            } else {
+                color
+            },
+            Border {
+                width: 1.25,
+                color: appearance.background,
+            },
+        );
+        if handle_labels && let Some(label) = &handle.label {
+            paint_handle_label(
+                ctx,
+                theme,
+                rect,
+                position,
+                radius,
+                handle.position,
+                label,
+                snapshot.viewport.zoom,
+                emphasis == HandleEmphasis::Dimmed,
+            );
         }
     }
 }
@@ -7668,6 +7704,91 @@ mod tests {
         });
         assert!(fills.contains(&COLOR_PORT) && fills.contains(&NUMBER_PORT));
         Ok(())
+    }
+
+    /// `mix` with its `a` handle under `cover`, which is stacked above it.
+    fn covered_handle_state() -> NodeGraphState<(), ()> {
+        NodeGraphState::new(
+            vec![
+                Node::new("mix", Point::new(200.0, 100.0), ())
+                    .size(Size::new(180.0, 120.0))
+                    .handles([Handle::target("a", HandlePosition::Left)
+                        .label("a")
+                        .color(COLOR_PORT)]),
+                Node::new("cover", Point::new(120.0, 110.0), ()).size(Size::new(140.0, 100.0)),
+            ],
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_node_stacked_above_covers_the_handles_of_the_node_below() -> sui_core::Result<()> {
+        let (mut runtime, window_id) = build_runtime(covered_handle_state());
+        let output = runtime.render(window_id)?;
+        let bounds_of = |name: &str| {
+            output
+                .semantics
+                .iter()
+                .find(|node| node.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("{name} has semantics"))
+                .bounds
+        };
+        let handle = bounds_of("a");
+        let handle_center = Point::new(
+            handle.x() + handle.width() * 0.5,
+            handle.y() + handle.height() * 0.5,
+        );
+        let cover = bounds_of("cover");
+        assert!(cover.contains(handle_center), "the handle is under cover");
+
+        // Painting is back to front: the handle comes before the body that
+        // hides it.
+        let mut fills = Vec::new();
+        output.frame.scene.visit_commands(&mut |command| {
+            if let SceneCommand::FillRoundedRect {
+                rect,
+                brush: Brush::Solid(color),
+                ..
+            } = command
+            {
+                fills.push((*rect, *color));
+            }
+        });
+        let handle_fill = fills
+            .iter()
+            .position(|(_, color)| *color == COLOR_PORT)
+            .expect("the handle is painted");
+        let cover_body = fills
+            .iter()
+            .position(|(rect, _)| rect.size == cover.size && rect.origin == cover.origin)
+            .expect("the covering node's body is painted");
+        assert!(
+            handle_fill < cover_body,
+            "handle painted at {handle_fill}, the covering body at {cover_body}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_covered_handle_is_not_hit_through_the_node_above() {
+        let state = covered_handle_state();
+        let bounds = Rect::new(0.0, 0.0, 800.0, 600.0);
+        let graph = NodeGraph::new("Graph", state.clone());
+        let viewport = state.snapshot().viewport;
+        // The handle sits on the left edge of `mix`, halfway down.
+        let covered = viewport.flow_to_screen(bounds, Point::new(200.0, 160.0));
+        assert_eq!(
+            graph.hit_test(bounds, covered),
+            NodeGraphHit::Node(NodeId::new("cover"))
+        );
+
+        // Moved clear of the covering node, the same handle is hit again.
+        assert!(state.set_node_position(&NodeId::new("cover"), Point::new(500.0, 400.0)));
+        assert!(matches!(
+            graph.hit_test(bounds, covered),
+            NodeGraphHit::Handle { .. }
+        ));
     }
 
     #[test]
